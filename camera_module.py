@@ -81,6 +81,11 @@ def camera_worker(command_queue, frame_queue):
             else:
                 print("Error reading frame.")
                 is_running = False # Stop on error
+                # Send an error frame to notify the inference/UI process
+                try:
+                    frame_queue.put_nowait((-1.0, None))
+                except queue.Full:
+                    pass
 
         else:
             time.sleep(0.01) # Sleep to avoid high CPU usage when stopped

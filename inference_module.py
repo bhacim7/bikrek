@@ -4,18 +4,7 @@ import queue
 import numpy as np
 import traceback
 import json
-import onnxruntime as ort
 import config
-
-try:
-    import tensorrt as trt
-    import pycuda.driver as cuda
-    import pycuda.autoinit
-    TRT_AVAILABLE = True
-except ImportError:
-    TRT_AVAILABLE = False
-except Exception as e:
-    TRT_AVAILABLE = False
 
 class YoloModel:
     def __init__(self, model_path, img_width, img_height):
@@ -46,10 +35,23 @@ class YoloModel:
     def load_model(self):
         print(f"Loading YOLO model: {self.model_path}")
 
+        # Defer imports
+        try:
+            import tensorrt as trt
+            import pycuda.driver as cuda
+            import pycuda.autoinit
+            TRT_AVAILABLE = True
+            self.trt_module = trt
+            self.cuda_module = cuda
+        except Exception:
+            TRT_AVAILABLE = False
+
+        import onnxruntime as ort
+
         if self.model_path.endswith(".engine") and TRT_AVAILABLE:
             try:
-                TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
-                self.trt_runtime = trt.Runtime(TRT_LOGGER)
+                TRT_LOGGER = self.trt_module.Logger(self.trt_module.Logger.WARNING)
+                self.trt_runtime = self.trt_module.Runtime(TRT_LOGGER)
                 with open(self.model_path, "rb") as f:
                     self.trt_engine = self.trt_runtime.deserialize_cuda_engine(f.read())
                 if not self.trt_engine:
@@ -60,7 +62,7 @@ class YoloModel:
                 for i in range(self.trt_engine.num_io_tensors):
                     binding_name = self.trt_engine.get_tensor_name(i)
                     binding_shape = self.trt_engine.get_tensor_shape(binding_name)
-                    binding_is_input = self.trt_engine.get_tensor_mode(binding_name) == trt.TensorIOMode.INPUT
+                    binding_is_input = self.trt_engine.get_tensor_mode(binding_name) == self.trt_module.TensorIOMode.INPUT
 
                     if binding_is_input:
                         self.trt_input_binding_idx = i
@@ -73,19 +75,19 @@ class YoloModel:
                 self.trt_inputs = []
                 self.trt_outputs = []
                 self.trt_bindings = [None] * self.trt_engine.num_io_tensors
-                self.trt_stream = cuda.Stream()
+                self.trt_stream = self.cuda_module.Stream()
 
                 for i in range(self.trt_engine.num_io_tensors):
                     binding_name = self.trt_engine.get_tensor_name(i)
                     binding_shape = self.trt_engine.get_tensor_shape(binding_name)
                     binding_dtype = self.trt_engine.get_tensor_dtype(binding_name)
 
-                    size = trt.volume(binding_shape) * binding_dtype.itemsize
-                    host_mem = cuda.pagelocked_empty(trt.volume(binding_shape), dtype=trt.nptype(binding_dtype))
-                    device_mem = cuda.mem_alloc(size)
+                    size = self.trt_module.volume(binding_shape) * binding_dtype.itemsize
+                    host_mem = self.cuda_module.pagelocked_empty(self.trt_module.volume(binding_shape), dtype=self.trt_module.nptype(binding_dtype))
+                    device_mem = self.cuda_module.mem_alloc(size)
                     self.trt_bindings[i] = int(device_mem)
 
-                    if self.trt_engine.get_tensor_mode(binding_name) == trt.TensorIOMode.INPUT:
+                    if self.trt_engine.get_tensor_mode(binding_name) == self.trt_module.TensorIOMode.INPUT:
                         self.trt_inputs.append({'host': host_mem, 'device': device_mem})
                     else:
                         self.trt_outputs.append({'host': host_mem, 'device': device_mem})
@@ -197,9 +199,9 @@ class YoloModel:
 
         if self.model_type == "tensorrt":
             np.copyto(self.trt_inputs[0]['host'], input_image.flatten())
-            cuda.memcpy_htod_async(self.trt_inputs[0]['device'], self.trt_inputs[0]['host'], self.trt_stream)
+            self.cuda_module.memcpy_htod_async(self.trt_inputs[0]['device'], self.trt_inputs[0]['host'], self.trt_stream)
             self.trt_context.execute_v2(self.trt_bindings)
-            cuda.memcpy_dtoh_async(self.trt_outputs[0]['host'], self.trt_outputs[0]['device'], self.trt_stream)
+            self.cuda_module.memcpy_dtoh_async(self.trt_outputs[0]['host'], self.trt_outputs[0]['device'], self.trt_stream)
             self.trt_stream.synchronize()
 
             output_shape = self.trt_engine.get_tensor_shape(self.trt_engine.get_tensor_name(self.trt_output_binding_idx))
@@ -286,11 +288,10 @@ def inference_worker(command_queue, frame_queue, result_queue):
                             cv2.FONT_HERSHEY_SIMPLEX, 0.4, yolo_draw_color, 1)
 
             # 2. Downscale the frame to match what the UI expects (max 1920x1080)
-            # We resize it to 1080x720 (what the camera captures, or smaller if needed to save IPC).
-            # We can resize it slightly smaller if we want, e.g. 960x540. Let's keep 1080x720 for now
-            # since it's already a reasonable size, but we pass the *annotated* frame.
-            # Downscaling to e.g. 960x540 can significantly reduce IPC overhead.
-            downscaled_frame = cv2.resize(display_frame, (960, 540))
+            # The camera captures 1080x720 (3:2 aspect ratio).
+            # Resizing to 810x540 preserves the 3:2 ratio perfectly, preventing distortion
+            # while reducing IPC overhead compared to sending full 1080x720 frames.
+            downscaled_frame = cv2.resize(display_frame, (810, 540))
 
             # Send result even if empty so UI can update the video
             if result_queue.full():
