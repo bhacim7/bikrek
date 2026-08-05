@@ -1189,8 +1189,10 @@ class HavaSavunmaArayuz(QWidget):
         if not self.rpi_thread.is_connected or self.active_task == 'full_manual' or self.target_destroyed:
             return
 
-        center_x = frame.shape[1] // 2
-        center_y = frame.shape[0] // 2
+        # Target coordinates are based on the original 1080x720 camera resolution
+        # So we must calculate the center point relative to that resolution, not the frame (which may be downscaled)
+        center_x = 1080 // 2
+        center_y = 720 // 2
 
         error_yaw_pixel = target_x - center_x
         error_pitch_pixel = target_y - center_y
