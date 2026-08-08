@@ -58,6 +58,11 @@ class HavaSavunmaArayuz(QWidget):
 
         self.aiming_tolerance = 15
 
+        # Kameranın ham kare boyutu. İlk sonuç geldiğinde inference sürecinden
+        # gerçek değerlerle güncellenir; buradakiler yalnızca başlangıç değeridir.
+        self.frame_orig_w = 1080
+        self.frame_orig_h = 720
+
         self.current_yaw_angle = 0.0
         self.current_pitch_angle = 0.0
 
@@ -816,7 +821,9 @@ class HavaSavunmaArayuz(QWidget):
             return
         self.send_command_to_rpi({"action": "reset_angles"})
 
-    def close_event(self, event):
+    def close_event(self, event=None):
+        # aboutToQuit sinyali parametresiz yayılır, closeEvent ise bir olay geçirir;
+        # ikisinden de çağrılabilmesi için event isteğe bağlı tutuldu.
         self.stop_camera()
         if self.rpi_thread.isRunning():
             self.rpi_thread.request_stop()
@@ -826,7 +833,8 @@ class HavaSavunmaArayuz(QWidget):
         self.camera_cmd_q.put("QUIT")
         self.inference_cmd_q.put({"action": "QUIT"})
 
-        event.accept()
+        if event is not None:
+            event.accept()
 
     def update_frame(self):
         try:
@@ -840,7 +848,7 @@ class HavaSavunmaArayuz(QWidget):
                 if latest_result is None:
                     return # No new frame yet
 
-                frame_time, frame, detections, qr_data, qr_bbox = latest_result
+                frame_time, frame, detections, qr_data, qr_bbox, original_w, original_h = latest_result
 
                 # Check for camera error
                 if frame is None and frame_time == -1.0:
@@ -854,17 +862,19 @@ class HavaSavunmaArayuz(QWidget):
             display_frame = frame
             current_frame_time = time.time()
 
-            # Note: For tracking coordinates logic, we use the original camera resolution (1080x720)
-            # to calculate center and distances. Since the inference process sends us the downscaled 960x540 frame
-            # for display, but detection coords are based on the inference input (1056x1056 then re-scaled to original).
-            # Wait, the inference worker maps coords back to original 1080x720, and then resizes the image
-            # after drawing. Therefore, to ensure tracking PID logic remains correct without rewriting,
-            # we should calculate center_x/y based on a fixed 1080x720, not the downscaled frame shape.
-            original_h, original_w = 720, 1080
+            # Tespit koordinatları ve takip/PID matematiği kameranın HAM çözünürlüğünde
+            # yürür; gösterilen kare ise küçültülmüş olabilir. Ham boyutu inference
+            # sürecinden alıyoruz, böylece kamera hangi çözünürlüğü verirse versin
+            # nişan merkezi doğru kalır.
+            self.frame_orig_w = original_w
+            self.frame_orig_h = original_h
             center_x_frame, center_y_frame = original_w // 2, original_h // 2
 
             # Crosshair drawing on the downscaled frame for display
             h, w, ch = display_frame.shape
+            # Ham koordinatları gösterim karesine taşımak için ölçek katsayıları
+            draw_scale_x = w / original_w if original_w else 1.0
+            draw_scale_y = h / original_h if original_h else 1.0
             center_x_display, center_y_display = w // 2, h // 2
             crosshair_color = (0, 255, 0)
             crosshair_size = 10
@@ -1047,6 +1057,28 @@ class HavaSavunmaArayuz(QWidget):
                             self.target_info_label.setText("Hedef Bilgisi: Yok Edildi. Yeni angajman bekleniyor.")
                         self.target_lost_time = 0.0
 
+            # Tespit kutularını çiz: kilitli hedef kırmızı, aynı sınıftan diğerleri
+            # sarı, gerisi yeşil. Kutular ham çözünürlükte geldiği için gösterim
+            # karesine ölçeklenir.
+            for det in detections:
+                x, y, w_det, h_det = [int(v) for v in det['bbox']]
+                x = int(x * draw_scale_x)
+                y = int(y * draw_scale_y)
+                w_det = int(w_det * draw_scale_x)
+                h_det = int(h_det * draw_scale_y)
+
+                if self.current_tracked_target_class and det['class_name'] == self.current_tracked_target_class:
+                    if current_target_bbox_for_pid and det['bbox'] == current_target_bbox_for_pid:
+                        yolo_draw_color = (0, 0, 255)  # Kilitli hedef kırmızı
+                    else:
+                        yolo_draw_color = (0, 255, 255)  # Diğer aynı sınıftan hedefler sarı
+                else:
+                    yolo_draw_color = (0, 255, 0)  # Diğer hedefler yeşil
+
+                cv2.rectangle(display_frame, (x, y), (x + w_det, y + h_det), yolo_draw_color, 2)
+                cv2.putText(display_frame, f"YOLO: {det['class_name']} ({det['score']:.2f})", (x, y - 25),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, yolo_draw_color, 1)
+
             # Process Tracking
             if current_target_bbox_for_pid and not self.target_destroyed:
                 x_pid, y_pid, w_pid, h_pid = [int(v) for v in current_target_bbox_for_pid]
@@ -1189,10 +1221,10 @@ class HavaSavunmaArayuz(QWidget):
         if not self.rpi_thread.is_connected or self.active_task == 'full_manual' or self.target_destroyed:
             return
 
-        # Target coordinates are based on the original 1080x720 camera resolution
-        # So we must calculate the center point relative to that resolution, not the frame (which may be downscaled)
-        center_x = 1080 // 2
-        center_y = 720 // 2
+        # Hedef koordinatları kameranın ham çözünürlüğüne göredir; gösterilen kare
+        # küçültülmüş olabileceği için merkez, frame'den değil ham boyuttan alınır.
+        center_x = self.frame_orig_w // 2
+        center_y = self.frame_orig_h // 2
 
         error_yaw_pixel = target_x - center_x
         error_pitch_pixel = target_y - center_y

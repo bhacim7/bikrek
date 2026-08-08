@@ -116,7 +116,7 @@ class RPiCommunicator(QThread):
             print("HATA (RPiComm): Raspberry Pi'ye bağlı değil, komut gönderilemedi.")
             return False
         try:
-            message = (json.dumps(command_dict) + '\\n').encode('utf-8')
+            message = (json.dumps(command_dict) + '\n').encode('utf-8')
             print(f"HATA AYIKLAMA (RPiComm): Komut gönderildi: {message.decode('utf-8').strip()}")
             self.rpi_socket.sendall(message)
             return True
@@ -151,8 +151,8 @@ class RPiCommunicator(QThread):
 
             self.socket_buffer += chunk
 
-            if '\\n' in self.socket_buffer:
-                message, self.socket_buffer = self.socket_buffer.split('\\n', 1)
+            if '\n' in self.socket_buffer:
+                message, self.socket_buffer = self.socket_buffer.split('\n', 1)
                 try:
                     return json.loads(message)
                 except json.JSONDecodeError as e:

@@ -6,6 +6,10 @@ import traceback
 import json
 import config
 
+# UI'a gönderilen karenin genişliği. Yükseklik en-boy oranından hesaplanır.
+DISPLAY_WIDTH = 810
+
+
 class YoloModel:
     def __init__(self, model_path, img_width, img_height):
         self.model_path = model_path
@@ -256,8 +260,15 @@ def inference_worker(command_queue, frame_queue, result_queue):
 
             # Check for camera error signal
             if frame is None and frame_time == -1.0:
-                if not result_queue.full():
-                    result_queue.put_nowait((-1.0, None, [], None, None))
+                try:
+                    result_queue.put_nowait((-1.0, None, [], None, None, 0, 0))
+                except queue.Full:
+                    # Kuyruk doluysa yer aç: hata sinyali kaybolmamalı.
+                    try:
+                        result_queue.get_nowait()
+                        result_queue.put_nowait((-1.0, None, [], None, None, 0, 0))
+                    except (queue.Empty, queue.Full):
+                        pass
                 continue
 
             detections = []
@@ -276,22 +287,16 @@ def inference_worker(command_queue, frame_queue, result_queue):
                     # Detect QR for task 3
                     qr_data, qr_bbox, _ = qr_detector.detectAndDecode(frame)
 
-            # 1. Annotate the frame locally to avoid UI thread doing it
-            display_frame = frame.copy()
-            for det in detections:
-                x, y, w_det, h_det = [int(v) for v in det['bbox']]
-                # Default color here; we can refine colors later if needed,
-                # but to match old logic, we might just draw a basic box for UI.
-                yolo_draw_color = (0, 255, 0)
-                cv2.rectangle(display_frame, (x, y), (x + w_det, y + h_det), yolo_draw_color, 2)
-                cv2.putText(display_frame, f"YOLO: {det['class_name']} ({det['score']:.2f})", (x, y - 25),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, yolo_draw_color, 1)
-
-            # 2. Downscale the frame to match what the UI expects (max 1920x1080)
-            # The camera captures 1080x720 (3:2 aspect ratio).
-            # Resizing to 810x540 preserves the 3:2 ratio perfectly, preventing distortion
-            # while reducing IPC overhead compared to sending full 1080x720 frames.
-            downscaled_frame = cv2.resize(display_frame, (810, 540))
+            # Kareyi IPC yükünü azaltmak için küçült. Tespit kutuları HAM çözünürlükte
+            # kalır; kilitli hedefin rengini yalnızca UI bildiği için çizimi UI yapar.
+            # En-boy oranı korunur, böylece kamera hangi çözünürlüğü verirse versin
+            # görüntü bozulmaz ve UI tek bir ölçek katsayısıyla koordinat dönüştürebilir.
+            orig_height, orig_width = frame.shape[:2]
+            if orig_width > DISPLAY_WIDTH:
+                display_height = max(1, int(round(DISPLAY_WIDTH * orig_height / orig_width)))
+                downscaled_frame = cv2.resize(frame, (DISPLAY_WIDTH, display_height))
+            else:
+                downscaled_frame = frame
 
             # Send result even if empty so UI can update the video
             if result_queue.full():
@@ -300,7 +305,8 @@ def inference_worker(command_queue, frame_queue, result_queue):
                 except queue.Empty:
                     pass
             try:
-                result_queue.put_nowait((frame_time, downscaled_frame, detections, qr_data, qr_bbox))
+                result_queue.put_nowait(
+                    (frame_time, downscaled_frame, detections, qr_data, qr_bbox, orig_width, orig_height))
             except queue.Full:
                 pass
 

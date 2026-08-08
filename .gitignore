@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Sanal ortamlar
+.venv/
+venv/
+env/
+
+# IDE / arac ayarlari (kisiye ozel, paylasilmaz)
+.idea/
+.vscode/
+.claude/settings.local.json
+
+# Model ağırlıkları — büyük dosyalar, repoya girmemeli
+*.engine
+*.onnx
+*.pt
+*.weights
+
+# Kayıtlar / çıktılar
+*.mp4
+*.avi

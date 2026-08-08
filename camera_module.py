@@ -2,6 +2,8 @@ import cv2
 import time
 import queue
 
+import config
+
 def camera_worker(command_queue, frame_queue):
     """
     Multiprocessing worker to capture frames from the camera and put them in a queue.
@@ -16,7 +18,7 @@ def camera_worker(command_queue, frame_queue):
             cmd = command_queue.get_nowait()
             if cmd == "START":
                 if not is_running:
-                    camera_indices = [1, 2, 3, 4]
+                    camera_indices = config.CAMERA_INDICES
                     capture = None
                     for index in camera_indices:
                         print(f"Trying camera {index} with CAP_DSHOW...")
@@ -30,11 +32,20 @@ def camera_worker(command_queue, frame_queue):
                             print(f"Error opening camera {index} (CAP_DSHOW): {e}")
 
                     if capture and capture.isOpened():
-                        capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1080)
-                        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                        # FOURCC çözünürlükten ÖNCE ayarlanmalı; sonra ayarlanırsa
+                        # sürücü çoğu zaman çözünürlüğü sıfırlar.
+                        if config.CAMERA_USE_MJPG:
+                            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+
+                        capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
+                        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
                         actual_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
                         actual_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        print(f"Camera started. Resolution Set: {actual_width}x{actual_height}")
+                        actual_fps = capture.get(cv2.CAP_PROP_FPS)
+                        print(f"Camera started. Resolution Set: {actual_width}x{actual_height} @ {actual_fps:.0f} fps")
+                        if (actual_width, actual_height) != (config.CAMERA_WIDTH, config.CAMERA_HEIGHT):
+                            print(f"UYARI: Istenen cozunurluk {config.CAMERA_WIDTH}x{config.CAMERA_HEIGHT} "
+                                  f"alinamadi, kamera {actual_width}x{actual_height} veriyor.")
                         is_running = True
                     else:
                         print("ERROR: Could not open any camera.")
