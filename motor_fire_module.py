@@ -44,30 +44,43 @@ _manual_degrees_to_move = 0.0 # Manuel hareket için her adımda hareket edilece
 # !!! YAZILIMDAKİ AÇI FİZİKSEL HAREKETLERDEN FARKLI OLACAKTIR.
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-STEPS_PER_REVOLUTION = 200  # Bir tam tur için adım sayısı (örn: 1.8 derece/adım motor için 200 tam adım)
-MICROSTEPS = 32  # Sürücünüz 6400 Pulse/rev ise 32 olarak ayarlı kalmalı. Lütfen doğrulayın!
-# DİKKAT: Motor sürücünüzün (örn: DRV8825) üzerindeki MS1, MS2, MS3 pinlerinin ayarlarını kontrol edin!
-# Bu pinler mikro adımlama modunu belirler. Kodunuzdaki MICROSTEPS değeri, sürücünüzün fiziksel ayarlarıyla eşleşmelidir.
-# Örneğin, 1/32 mikro adımlama için tüm MS pinleri HIGH (veya sürücüye göre farklı) olmalıdır.
+# --- Donanım: Leadshine CS-M22323 kapalı çevrim step motor + CS-D508 sürücü ---
+# PULSES_PER_REV değerleri sürücünün SW1-SW4 DIP anahtarlarıyla seçilen ayarla
+# BİREBİR aynı olmalıdır. Kombinasyon tablosu sürücünün üstünde basılıdır.
+# GEAR_RATIO, motor turu : taret turu oranıdır (redüksiyon).
+PULSES_PER_REV_YAW = 3200
+PULSES_PER_REV_PITCH = 6400
+GEAR_RATIO_YAW = 3.0
+GEAR_RATIO_PITCH = 1.0
 
-# AYARLANDI: STEP_DELAY motorların adım kaçırmaması ve akıcı çalışması için çok küçük bir değere çekildi.
-# Bu değer, her bir adım darbesinin (HIGH veya LOW) süresidir.
-# Eğer motorlar hala adım atlıyorsa, bu değeri biraz artırmayı deneyin (örn: 0.0002 veya 0.0005).
-# Eğer çok yavaş hareket ediyorsa, daha da düşürmeyi deneyin (örn: 0.00005).
-STEP_DELAY = 0.001  # 100 mikrosaniye (0.001'den 0.0001'e düşürüldü)
+# Adım/derece bu iki değerden türetilir; DIP ayarını değiştirirsen yalnızca
+# yukarıdaki sayıyı güncellemen yeterli.
+STEPS_PER_DEGREE_YAW = PULSES_PER_REV_YAW * GEAR_RATIO_YAW / 360.0      # 26.667
+STEPS_PER_DEGREE_PITCH = PULSES_PER_REV_PITCH * GEAR_RATIO_PITCH / 360.0  # 17.778
 
-PULSE_TIME = 0.1  # Ateşleme rölesinin çekili kalma süresi (saniye) - control1.py ile uyumlu.
+# --- İvme (rampa) profili ---
+# Değerler Pi5 üzerinde bu motorlarla çalıştığı doğrulanmış teleop test betiğinden
+# alınmıştır. Her adımda sinyal MIN/MAX_DELAY kadar HIGH, sonra o kadar LOW kalır;
+# yani bunlar YARIM periyottur (0.00015 -> 3333 pulse/sn).
+# CS-M22323 (NEMA23) rotor ataleti yüksek olduğundan sabit hızda kalkış adım
+# kaçırmaya yol açar; hareket rampasız yapılmamalıdır.
+MIN_DELAY = 0.00015   # Maksimum hız
+MAX_DELAY = 0.0015    # Kalkış ve duruş hızı
+ACCEL_STEP = 0.00003  # Hızlanma ivmesi
+DECEL_STEP = 0.00008  # Frenleme ivmesi
 
-# Step motor için adım/derece oranı (kalibrasyon gerekli!)
-# Bu değerleri kalibrasyon testi ile güncelleyin!
-STEPS_PER_DEGREE_YAW = 17.777 # Yaklaşık 17.777
-STEPS_PER_DEGREE_PITCH = 17.777  # Yaklaşık 17.777
+PULSE_TIME = 0.1  # Ateşleme rölesinin çekili kalma süresi (saniye)
 
 # Motor yönleri için sabitler
 # DİKKAT: Bu değerler motor sürücünüzün DIR pininin nasıl çalıştığına bağlıdır.
-# Eğer motor yönleri tersse, bu değerleri ters çevirin (örn: DIR_CW = 0, DIR_CCW = 1).
 DIR_CW = 0  # Saat yönü (veya ileri/yukarı)
 DIR_CCW = 1  # Saat yönünün tersi (veya geri/aşağı)
+
+# Eksen başına yön çevirme. Beklenen konvansiyon: +yaw = sağ, +pitch = yukarı.
+# Montaj sonrası bir eksen ters dönüyorsa YALNIZCA o eksenin bayrağını True yap.
+# (DIR_CW/DIR_CCW ortak olduğu için tek başına eksen bazlı düzeltme yapamaz.)
+INVERT_YAW_DIR = False
+INVERT_PITCH_DIR = False
 
 # LGpio pin modları ve seviyeleri için sabitler
 LGPIO_HIGH = 1
@@ -191,6 +204,52 @@ def set_motors_enabled(enable):
         sys.stdout.flush()
 
 
+def _direction_value(steps, invert):
+    """
+    Adım işaretinden DIR pini değerini üretir; eksen bazlı çevirmeyi uygular.
+    Pozitif adım = ileri (yaw için sağ, pitch için yukarı).
+    """
+    is_forward = steps >= 0
+    if invert:
+        is_forward = not is_forward
+    return DIR_CW if is_forward else DIR_CCW
+
+
+def _ramped_step_loop(max_steps, abs_steps_yaw, abs_steps_pitch):
+    """
+    Yamuk (trapez) hız profiliyle adım darbeleri üretir.
+
+    Rampa HAREKET BAŞINA sıfırlanır; çağrılar arasında taşınmaz. PID komutları
+    arasında yön değişebildiği için bayat bir yüksek hızla kalkış tehlikelidir.
+    Küçük hareketlerde profil doğal olarak "yavaş ve güvenli"ye dönüşür, büyük
+    yönelimlerde tam hıza çıkar.
+
+    Yön pinlerinin çağrıdan ÖNCE ayarlanmış olması gerekir.
+    """
+    current_delay = MAX_DELAY
+
+    for i in range(max_steps):
+        remaining_steps = max_steps - i
+        # Mevcut hızdan duruş hızına inmek için kaç adım gerekiyor?
+        decel_steps_needed = (MAX_DELAY - current_delay) / DECEL_STEP
+
+        if remaining_steps > decel_steps_needed:
+            current_delay = max(MIN_DELAY, current_delay - ACCEL_STEP)
+        else:
+            current_delay = min(MAX_DELAY, current_delay + DECEL_STEP)
+
+        # Sadece ilgili motor için adım sinyali gönder
+        if i < abs_steps_yaw:
+            LGpio.gpio_write(lgh, YAW_STEP_PIN, LGPIO_HIGH)
+        if i < abs_steps_pitch:
+            LGpio.gpio_write(lgh, PITCH_STEP_PIN, LGPIO_HIGH)
+        time.sleep(current_delay)
+
+        LGpio.gpio_write(lgh, YAW_STEP_PIN, LGPIO_LOW)
+        LGpio.gpio_write(lgh, PITCH_STEP_PIN, LGPIO_LOW)
+        time.sleep(current_delay)
+
+
 def move_steppers_simultaneous(steps_yaw, steps_pitch):
     """
     İki step motoru aynı anda, belirtilen adım sayısı kadar döndürür.
@@ -204,11 +263,9 @@ def move_steppers_simultaneous(steps_yaw, steps_pitch):
         sys.stdout.flush()
         return
 
-    # Yön pinlerini ayarla
-    # Pozitif adımlar için DIR_CW, negatif adımlar için DIR_CCW.
-    # Eğer motor yönleri tersse, DIR_CW ve DIR_CCW sabitlerini yukarıda ters çevirin.
-    dir_yaw_gpio_value = DIR_CW if steps_yaw >= 0 else DIR_CCW
-    dir_pitch_gpio_value = DIR_CW if steps_pitch >= 0 else DIR_CCW
+    # Yön pinlerini ayarla. Eksen bazlı çevirme INVERT_*_DIR ile uygulanır.
+    dir_yaw_gpio_value = _direction_value(steps_yaw, INVERT_YAW_DIR)
+    dir_pitch_gpio_value = _direction_value(steps_pitch, INVERT_PITCH_DIR)
 
     try:
         LGpio.gpio_write(lgh, YAW_DIR_PIN, dir_yaw_gpio_value)
@@ -225,24 +282,10 @@ def move_steppers_simultaneous(steps_yaw, steps_pitch):
             return
 
         print(
-            f"DEBUG (move_steppers_simultaneous): Motorlar hareket ediyor. Yaw: {abs_steps_yaw} adım (Yön: {'CW' if dir_yaw_gpio_value == DIR_CW else 'CCW'}), Pitch: {abs_steps_pitch} adım (Yön: {'CW' if dir_pitch_gpio_value == DIR_CW else 'CCW'}). STEP_DELAY: {STEP_DELAY}")
+            f"DEBUG (move_steppers_simultaneous): Motorlar hareket ediyor. Yaw: {abs_steps_yaw} adım (Yön: {'CW' if dir_yaw_gpio_value == DIR_CW else 'CCW'}), Pitch: {abs_steps_pitch} adım (Yön: {'CW' if dir_pitch_gpio_value == DIR_CW else 'CCW'}). Rampa: {MAX_DELAY} -> {MIN_DELAY}")
         sys.stdout.flush()
 
-        # Her adım için STEP_DELAY'in yarısı kadar HIGH, yarısı kadar LOW
-        step_pulse_duration = STEP_DELAY / 2.0
-
-        for i in range(max_steps):
-            # Sadece ilgili motor için adım sinyali gönder
-            if i < abs_steps_yaw:
-                LGpio.gpio_write(lgh, YAW_STEP_PIN, LGPIO_HIGH)
-            if i < abs_steps_pitch:
-                LGpio.gpio_write(lgh, PITCH_STEP_PIN, LGPIO_HIGH)
-            time.sleep(step_pulse_duration)  # Adım sinyali HIGH kalma süresi
-
-            # Adım sinyalini LOW yap
-            LGpio.gpio_write(lgh, YAW_STEP_PIN, LGPIO_LOW)
-            LGpio.gpio_write(lgh, PITCH_STEP_PIN, LGPIO_LOW)
-            time.sleep(step_pulse_duration)  # Adımlar arası bekleme süresi (bir sonraki adıma kadar bekleme)
+        _ramped_step_loop(max_steps, abs_steps_yaw, abs_steps_pitch)
 
         print("DEBUG (move_steppers_simultaneous): Motor hareketi tamamlandı.")
         sys.stdout.flush()
@@ -567,17 +610,32 @@ def run_calibration_test(motor_type, degrees_to_move):
             sys.stdout.flush()
             return
 
-        current_steps_per_degree = STEPS_PER_DEGREE_YAW if motor_type == 'yaw' else STEPS_PER_DEGREE_PITCH
+        if motor_type == 'yaw':
+            current_steps_per_degree = STEPS_PER_DEGREE_YAW
+            pulses_per_rev = PULSES_PER_REV_YAW
+            current_ratio = GEAR_RATIO_YAW
+        else:
+            current_steps_per_degree = STEPS_PER_DEGREE_PITCH
+            pulses_per_rev = PULSES_PER_REV_PITCH
+            current_ratio = GEAR_RATIO_PITCH
+
         new_steps_per_degree = (current_steps_per_degree / actual_movement) * degrees_to_move
+        # STEPS_PER_DEGREE artık türetilmiş bir değer; elle düzenlenemez.
+        # Formüle giren gerçek parametre redüksiyon oranıdır, onu öneriyoruz.
+        implied_ratio = new_steps_per_degree * 360.0 / pulses_per_rev
 
         print(f"\n--- KALİBRASYON SONUCU ---")
-        print(f"Mevcut {motor_type} STEPS_PER_DEGREE: {current_steps_per_degree:.3f}")
-        print(f"Fiziksel olarak dönülen derece: {actual_movement:.1f}°")
-        print(f"ÖNERİLEN YENİ {motor_type} STEPS_PER_DEGREE: {new_steps_per_degree:.3f}")
-        print(
-            f"Lütfen motor_fire_module.py dosyasındaki 'STEPS_PER_DEGREE_{motor_type.upper()}' değerini bu yeni değerle güncelleyin.")
+        print(f"Mevcut {motor_type} STEPS_PER_DEGREE: {current_steps_per_degree:.3f} "
+              f"({pulses_per_rev} pulse/rev x {current_ratio} oran / 360)")
+        print(f"Fiziksel olarak dönülen derece: {actual_movement:.1f}° (hedef: {degrees_to_move}°)")
+        print(f"ÖNERİLEN {motor_type} STEPS_PER_DEGREE: {new_steps_per_degree:.3f}")
+        print(f"ÖNERİLEN GEAR_RATIO_{motor_type.upper()}: {implied_ratio:.4f}")
+        print(f"Lütfen motor_fire_module.py içindeki 'GEAR_RATIO_{motor_type.upper()}' değerini bununla güncelleyin.")
+        print("(Sapma çok büyükse önce sürücünün SW1-SW4 pulse/rev ayarını ve "
+              f"PULSES_PER_REV_{motor_type.upper()} = {pulses_per_rev} değerinin eşleştiğini doğrulayın.)")
         print("Bu testi birkaç kez tekrarlayarak ve ortalama alarak daha doğru bir değer bulabilirsiniz.")
-        print("Eğer motor yavaşlıyorsa veya titriyorsa, STEP_DELAY değerini artırmayı deneyin (örn: 0.0002 veya 0.0005).")
+        print("Motor adım kaçırıyorsa veya titriyorsa MAX_DELAY'i büyütün (örn: 0.002) "
+              "veya ACCEL_STEP'i küçültün (örn: 0.00002).")
         sys.stdout.flush()
 
     except ValueError:
@@ -633,26 +691,18 @@ def test_direct_yaw_movement_steps(steps, direction):
         sys.stdout.flush()
         return True
 
-    dir_gpio_value = DIR_CW if direction == 1 else DIR_CCW
+    dir_gpio_value = _direction_value(1 if direction == 1 else -1, INVERT_YAW_DIR)
 
     try:
         set_motors_enabled(True) # Test için motoru etkinleştir
         LGpio.gpio_write(lgh, YAW_DIR_PIN, dir_gpio_value)
         time.sleep(0.000001) # Yön sinyalinin oturması için kısa gecikme
 
-        step_pulse_duration = STEP_DELAY / 2.0
-
-        print(f"DEBUG (test_direct_yaw_movement_steps): Yaw motoru hareket ediyor. {steps} adım. STEP_DELAY: {STEP_DELAY}")
+        print(f"DEBUG (test_direct_yaw_movement_steps): Yaw motoru hareket ediyor. {steps} adım. Rampa: {MAX_DELAY} -> {MIN_DELAY}")
         sys.stdout.flush()
 
-        for i in range(steps):
-            LGpio.gpio_write(lgh, YAW_STEP_PIN, LGPIO_HIGH)
-            time.sleep(step_pulse_duration)
-            LGpio.gpio_write(lgh, YAW_STEP_PIN, LGPIO_LOW)
-            time.sleep(step_pulse_duration)
-            if i % 100 == 0: # Her 100 adımda bir çıktı ver
-                print(f"DEBUG (test_direct_yaw_movement_steps): Yaw motoru adım {i+1}/{steps}")
-                sys.stdout.flush()
+        # Gerçek hareket profilini test etmek için ana hareket fonksiyonuyla aynı rampa
+        _ramped_step_loop(steps, steps, 0)
 
         print("DEBUG (test_direct_yaw_movement_steps): Yaw motoru hareketi tamamlandı.")
         sys.stdout.flush()
@@ -687,26 +737,18 @@ def test_direct_pitch_movement_steps(steps, direction):
         sys.stdout.flush()
         return True
 
-    dir_gpio_value = DIR_CW if direction == 1 else DIR_CCW
+    dir_gpio_value = _direction_value(1 if direction == 1 else -1, INVERT_PITCH_DIR)
 
     try:
         set_motors_enabled(True) # Test için motoru etkinleştir
         LGpio.gpio_write(lgh, PITCH_DIR_PIN, dir_gpio_value)
         time.sleep(0.000001) # Yön sinyalinin oturması için kısa gecikme
 
-        step_pulse_duration = STEP_DELAY / 2.0
-
-        print(f"DEBUG (test_direct_pitch_movement_steps): Pitch motoru hareket ediyor. {steps} adım. STEP_DELAY: {STEP_DELAY}")
+        print(f"DEBUG (test_direct_pitch_movement_steps): Pitch motoru hareket ediyor. {steps} adım. Rampa: {MAX_DELAY} -> {MIN_DELAY}")
         sys.stdout.flush()
 
-        for i in range(steps):
-            LGpio.gpio_write(lgh, PITCH_STEP_PIN, LGPIO_HIGH)
-            time.sleep(step_pulse_duration)
-            LGpio.gpio_write(lgh, PITCH_STEP_PIN, LGPIO_LOW)
-            time.sleep(step_pulse_duration)
-            if i % 100 == 0: # Her 100 adımda bir çıktı ver
-                print(f"DEBUG (test_direct_pitch_movement_steps): Pitch motoru adım {i+1}/{steps}")
-                sys.stdout.flush()
+        # Gerçek hareket profilini test etmek için ana hareket fonksiyonuyla aynı rampa
+        _ramped_step_loop(steps, 0, steps)
 
         print("DEBUG (test_direct_pitch_movement_steps): Pitch motoru hareketi tamamlandı.")
         sys.stdout.flush()
