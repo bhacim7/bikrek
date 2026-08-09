@@ -90,3 +90,23 @@ FEEDFORWARD_VELOCITY_DEADBAND = 2.0
 # Feedforward katkısının üst sınırı (derece). Ani/hatalı bir hız tahmininin
 # tareti savurmasını engeller.
 FEEDFORWARD_MAX_DEGREE = 3.0
+
+# Hedefin dünya açısal hızı için üst sınır (derece/sn). Elde gezdirilen bir
+# balon bunu aşmaz. Bu sınır iki yerde koruma sağlar: feedforward ve hedef
+# kaybındaki tahmin. Sahada 90 iken, 0.6 sn kayıpta tahmin 54° savrulup
+# tareti ters yöne fırlatıyordu (-791 piksellik hayali hata).
+MAX_TARGET_RATE_DEG_S = 20.0
+
+# Hedef kaybolduğunda kaç kare tahminle devam edilsin. Kısa tutmak, hatalı bir
+# tahminin tareti savurma penceresini daraltır. 15 kare (0.6 sn) fazlaydı.
+MAX_MISSING_FRAMES = 5
+
+# --- Ölü bant (durusta titremeyi engeller) ---
+# PİKSEL cinsinden tanımlı, çünkü gürültü kaynağı YOLO kutu merkezidir ve o
+# piksel cinsinden oynar. Derece karşılığı kalibrasyondan türetilir.
+# Sahada 0.05 derece kullanılıyordu; bu 0.8 piksel eder, yani tespit
+# gürültüsünün altında — her gürültü hareket komutuna dönüşüp taret titriyordu.
+PID_DEADBAND_PIXELS = 5.0
+
+# Bu piksel karşılığından küçük çıkışlar hiç gönderilmez.
+MIN_OUTPUT_PIXELS = 3.0

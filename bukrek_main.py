@@ -86,14 +86,11 @@ class HavaSavunmaArayuz(QWidget):
         self.is_target_active = False
 
         self.missing_frames = 0
-        self.MAX_MISSING_FRAMES = 15
+        self.MAX_MISSING_FRAMES = config.MAX_MISSING_FRAMES
         # Tahmin bu kadar kare genişliğinden fazla dışarı taşarsa hedef kayıp
         # sayılır. Tahminin kontrolden çıkıp tareti savurmasına karşı emniyet.
         self.PREDICTION_LIMIT_FRAMES = 1.5
-        # Hedefin dünya açısal hızı için üst sınır (derece/sn). Gerçek bir
-        # balon bunu aşmaz; aşan bir tahmin hesap hatasıdır ve feedforward
-        # ile tahmine girmesi engellenmelidir.
-        self.MAX_TARGET_RATE_DEG_S = 90.0
+        self.MAX_TARGET_RATE_DEG_S = config.MAX_TARGET_RATE_DEG_S
         self.MAX_REACQUISITION_DISTANCE_PIXELS = 250
 
         # --- PID Kontrol Değişkenleri ---
@@ -157,12 +154,18 @@ class HavaSavunmaArayuz(QWidget):
         # pozisyon servosunda değil, bu yüzden uzak hedefe daha az çevrimde
         # ulaşmak için yükseltildi.
         self.MAX_OUTPUT_DEGREE = 15.0
-        self.MIN_OUTPUT_DEGREE_THRESHOLD = 0.03
+
+        # Ölü bant ve minimum çıkış, PİKSEL cinsinden tanımlanıp dereceye
+        # çevrilir. Gürültü kaynağı YOLO kutu merkezi olduğu için doğal birim
+        # pikseldir; ayrıca kalibrasyon değişince kendiliğinden ölçeklenir.
+        self.MIN_OUTPUT_DEGREE_THRESHOLD = (config.MIN_OUTPUT_PIXELS
+                                            * abs(config.DEGREES_PER_PIXEL_YAW))
+        self.pid_deadband_yaw = config.PID_DEADBAND_PIXELS * abs(config.DEGREES_PER_PIXEL_YAW)
+        self.pid_deadband_pitch = config.PID_DEADBAND_PIXELS * abs(config.DEGREES_PER_PIXEL_PITCH)
 
         self.DEGREES_PER_PIXEL_YAW = config.DEGREES_PER_PIXEL_YAW
         self.DEGREES_PER_PIXEL_PITCH = config.DEGREES_PER_PIXEL_PITCH
 
-        self.pid_output_deadband_degree = 0.05
 
         self.manual_step_size = 1.0
 
@@ -1805,10 +1808,10 @@ class HavaSavunmaArayuz(QWidget):
                         feedforward_pitch)
         self.last_error_pitch = error_pitch_degree
 
-        if abs(error_yaw_degree) < self.pid_output_deadband_degree:
+        if abs(error_yaw_degree) < self.pid_deadband_yaw:
             output_yaw = 0.0
             self.integral_yaw = 0.0
-        if abs(error_pitch_degree) < self.pid_output_deadband_degree:
+        if abs(error_pitch_degree) < self.pid_deadband_pitch:
             output_pitch = 0.0
             self.integral_pitch = 0.0
 
@@ -1888,10 +1891,10 @@ class HavaSavunmaArayuz(QWidget):
         output_pitch = actual_Kp_pitch * error_pitch_degree + actual_Ki_pitch * self.integral_pitch + actual_Kd_pitch * derivative_pitch
         self.last_error_pitch = error_pitch_degree
 
-        if abs(error_yaw_degree) < self.pid_output_deadband_degree:
+        if abs(error_yaw_degree) < self.pid_deadband_yaw:
             output_yaw = 0.0
             self.integral_yaw = 0.0
-        if abs(error_pitch_degree) < self.pid_output_deadband_degree:
+        if abs(error_pitch_degree) < self.pid_deadband_pitch:
             output_pitch = 0.0
             self.integral_pitch = 0.0
 

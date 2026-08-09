@@ -96,11 +96,20 @@ _servo_current_delay = MAX_DELAY
 # hatalı bir tespit gelirse taret sert savrulmasın.
 # Sınır yaw ekseninden türetilir; pitch daha az adım/derece istediği için aynı
 # darbe hızında ~90°/s'ye çıkar, pitch hareketleri kısa olduğundan kabul edilebilir.
-# 60 -> 120: düşük kazançta fark etmiyordu (komut edilen adım zaten 40 ms'lik
-# çevrime sığıyordu) ama KP yükseltildiğinde adımlar büyüyor. Manuel mod zaten
-# 125°/s'de sorunsuz çalışıyor.
-SERVO_MAX_DEG_PER_SEC = 120.0
-SERVO_MIN_DELAY = 1.0 / (2 * SERVO_MAX_DEG_PER_SEC * STEPS_PER_DEGREE_YAW)
+# Otonom tepe hız. Bu değer GÖRME döngüsünün takip edebileceği hızla sınırlıdır,
+# motorun yapabileceğiyle değil (manuel mod hâlâ 125°/s'de çalışır).
+#
+# Sahada 120°/s ile taret hedefi aşıp kaybediyordu: kamera + çıkarım gecikmesi
+# ~0.2 sn olduğu için taret o süre boyunca "kör" ilerliyor. 120°/s'de bu 24°
+# demek; dikey görüş açısı 56° olduğundan hedef kareden çıkıyor, döngü açılıyor
+# ve tahmin devreye girip tareti savuruyordu.
+SERVO_MAX_DEG_PER_SEC = 40.0
+
+# DİKKAT: gecikme, adım/derece oranı KÜÇÜK olan eksenden türetilmeli. İki eksen
+# ortak bir darbe saatini paylaştığı için, yaw'dan türetmek pitch'i 1.5 kat
+# hızlandırıyordu (120 yerine 180°/s) — sahada savrulan eksen tam da pitch'ti.
+_EN_HIZLI_EKSEN_ADIM_DERECE = min(STEPS_PER_DEGREE_YAW, STEPS_PER_DEGREE_PITCH)
+SERVO_MIN_DELAY = 1.0 / (2 * SERVO_MAX_DEG_PER_SEC * _EN_HIZLI_EKSEN_ADIM_DERECE)
 
 PULSE_TIME = 0.1  # Ateşleme rölesinin çekili kalma süresi (saniye)
 
