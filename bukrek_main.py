@@ -87,6 +87,13 @@ class HavaSavunmaArayuz(QWidget):
 
         self.missing_frames = 0
         self.MAX_MISSING_FRAMES = 15
+        # Tahmin bu kadar kare genişliğinden fazla dışarı taşarsa hedef kayıp
+        # sayılır. Tahminin kontrolden çıkıp tareti savurmasına karşı emniyet.
+        self.PREDICTION_LIMIT_FRAMES = 1.5
+        # Hedefin dünya açısal hızı için üst sınır (derece/sn). Gerçek bir
+        # balon bunu aşmaz; aşan bir tahmin hesap hatasıdır ve feedforward
+        # ile tahmine girmesi engellenmelidir.
+        self.MAX_TARGET_RATE_DEG_S = 90.0
         self.MAX_REACQUISITION_DISTANCE_PIXELS = 250
 
         # --- PID Kontrol Değişkenleri ---
@@ -527,12 +534,23 @@ class HavaSavunmaArayuz(QWidget):
         dunya_pitch = pitch_cap + (py - self.frame_orig_h // 2) * self.DEGREES_PER_PIXEL_PITCH
         return dunya_yaw, dunya_pitch
 
-    def _dunya_to_piksel(self, dunya_yaw, dunya_pitch):
-        """Dünya açısını, taretin ŞU ANKİ konumuna göre piksel konumuna çevirir."""
+    def _dunya_to_piksel(self, dunya_yaw, dunya_pitch, zaman):
+        """
+        Dünya açısını piksel konumuna çevirir.
+
+        DİKKAT: Dönüşüm, KARENİN ÇEKİLDİĞİ andaki taret açısını kullanmak
+        ZORUNDA. Bir karedeki piksel konumu, o kare çekilirken taretin nerede
+        olduğunu yansıtır. Burada "şu anki" açıyı kullanmak, process_tracking'in
+        aynı pikseli çekilme anındaki açıyla yorumlamasıyla çelişir; aradaki
+        fark (gecikme boyunca dönülen açı) her çevrimde tahmine eklenir, hız
+        tahminini büyütür ve tahmin katlanarak patlar. Sahada bu, hatanın
+        149 px'den 2093 px'e, oradan 3.541.501 px'e fırlaması olarak görüldü.
+        """
+        yaw_ref, pitch_ref = self._angle_at(zaman)
         px = (self.frame_orig_w // 2
-              + (dunya_yaw - self.current_yaw_angle) / self.DEGREES_PER_PIXEL_YAW)
+              + (dunya_yaw - yaw_ref) / self.DEGREES_PER_PIXEL_YAW)
         py = (self.frame_orig_h // 2
-              + (dunya_pitch - self.current_pitch_angle) / self.DEGREES_PER_PIXEL_PITCH)
+              + (dunya_pitch - pitch_ref) / self.DEGREES_PER_PIXEL_PITCH)
         return px, py
 
     def _update_current_angles(self, yaw, pitch):
@@ -1328,7 +1346,9 @@ class HavaSavunmaArayuz(QWidget):
                                             + self.target_world_yaw_rate * gecen)
                         tahmin_dunya_pitch = (self._son_gorulen_dunya_pitch
                                               + self.target_world_pitch_rate * gecen)
-                        px, py = self._dunya_to_piksel(tahmin_dunya_yaw, tahmin_dunya_pitch)
+                        px, py = self._dunya_to_piksel(
+                            tahmin_dunya_yaw, tahmin_dunya_pitch,
+                            self._capture_time or current_frame_time)
                         last_tracked_center_x = int(px)
                         last_tracked_center_y = int(py)
 
@@ -1394,11 +1414,27 @@ class HavaSavunmaArayuz(QWidget):
                                 tahmin_dunya_pitch = (self._son_gorulen_dunya_pitch
                                                       + self.target_world_pitch_rate * gecen)
                                 predicted_x, predicted_y = self._dunya_to_piksel(
-                                    tahmin_dunya_yaw, tahmin_dunya_pitch)
+                                    tahmin_dunya_yaw, tahmin_dunya_pitch,
+                                    self._capture_time or current_frame_time)
 
-                                _, _, w_last, h_last = self.current_tracked_target_bbox
-                                current_target_bbox_for_pid = (
-                                    int(predicted_x - w_last / 2), int(predicted_y - h_last / 2), w_last, h_last)
+                                # GÜVENLİK SINIRI: tahmin karenin makul bir
+                                # komşuluğunun dışına çıktıysa artık hedefi
+                                # temsil etmiyordur. Bu olduğunda tahminle
+                                # devam etmek tareti savuruyor; hedefi kayıp
+                                # saymak doğrusu.
+                                sinir_x = self.frame_orig_w * self.PREDICTION_LIMIT_FRAMES
+                                sinir_y = self.frame_orig_h * self.PREDICTION_LIMIT_FRAMES
+                                if (abs(predicted_x - self.frame_orig_w // 2) > sinir_x
+                                        or abs(predicted_y - self.frame_orig_h // 2) > sinir_y):
+                                    print(f"UYARI: Tahmin kare dışına taştı "
+                                          f"({predicted_x:.0f}, {predicted_y:.0f}); hedef kayıp sayılıyor.")
+                                    self.missing_frames = self.MAX_MISSING_FRAMES + 1
+                                    current_target_bbox_for_pid = None
+                                else:
+                                    _, _, w_last, h_last = self.current_tracked_target_bbox
+                                    current_target_bbox_for_pid = (
+                                        int(predicted_x - w_last / 2), int(predicted_y - h_last / 2),
+                                        w_last, h_last)
                             else:
                                 current_target_bbox_for_pid = None
                         else:
@@ -1724,6 +1760,13 @@ class HavaSavunmaArayuz(QWidget):
                                               + (1 - a_yaw) * self.target_world_yaw_rate)
                 self.target_world_pitch_rate = (a_pitch * ham_pitch_rate
                                                 + (1 - a_pitch) * self.target_world_pitch_rate)
+
+                # Fiziksel üst sınır. Gerçek bir hedef bu hızı aşmaz; aşan bir
+                # tahmin hesap hatasıdır ve sınırlanmazsa hem feedforward'ı hem
+                # kayıp anındaki tahmini katlanarak büyütür.
+                r = self.MAX_TARGET_RATE_DEG_S
+                self.target_world_yaw_rate = max(-r, min(r, self.target_world_yaw_rate))
+                self.target_world_pitch_rate = max(-r, min(r, self.target_world_pitch_rate))
         self._last_world_yaw = world_yaw
         self._last_world_pitch = world_pitch
         self._last_world_time = current_frame_time
