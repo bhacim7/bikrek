@@ -134,6 +134,13 @@ class HavaSavunmaArayuz(QWidget):
         # İşlenen karenin ÇEKİLME zamanı (time.time() değil!)
         self._capture_time = None
 
+        # Hedefin en son GERÇEKTEN görüldüğü andaki dünya açısı. Hedef
+        # kaybolduğunda tahmin bundan yürütülür; piksel uzayında tahmin
+        # taretin kendi hareketini hedefin hareketi sanıyordu.
+        self._son_gorulen_dunya_yaw = None
+        self._son_gorulen_dunya_pitch = None
+        self._son_gorulen_zaman = 0.0
+
         # Kalibrasyon sırasında PID askıya alınır (taret hedefi ortalamaya
         # çalışırsa ölçüm yapılamaz).
         self._calibrating = False
@@ -507,6 +514,27 @@ class HavaSavunmaArayuz(QWidget):
                 break
         return secilen[1], secilen[2]
 
+    def _piksel_to_dunya(self, px, py, zaman):
+        """
+        Bir piksel konumunu hedefin DÜNYA açısına çevirir.
+
+        Kare çekildiğindeki taret açısı kullanılır; böylece sonuç taretin
+        hareketinden bağımsızdır. Sabit bir hedefin dünya açısı, taret ne kadar
+        dönerse dönsün değişmez — tahmin bu yüzden dünya uzayında yapılmalıdır.
+        """
+        yaw_cap, pitch_cap = self._angle_at(zaman)
+        dunya_yaw = yaw_cap + (px - self.frame_orig_w // 2) * self.DEGREES_PER_PIXEL_YAW
+        dunya_pitch = pitch_cap + (py - self.frame_orig_h // 2) * self.DEGREES_PER_PIXEL_PITCH
+        return dunya_yaw, dunya_pitch
+
+    def _dunya_to_piksel(self, dunya_yaw, dunya_pitch):
+        """Dünya açısını, taretin ŞU ANKİ konumuna göre piksel konumuna çevirir."""
+        px = (self.frame_orig_w // 2
+              + (dunya_yaw - self.current_yaw_angle) / self.DEGREES_PER_PIXEL_YAW)
+        py = (self.frame_orig_h // 2
+              + (dunya_pitch - self.current_pitch_angle) / self.DEGREES_PER_PIXEL_PITCH)
+        return px, py
+
     def _update_current_angles(self, yaw, pitch):
         self.current_yaw_angle = yaw
         self.current_pitch_angle = pitch
@@ -647,6 +675,9 @@ class HavaSavunmaArayuz(QWidget):
         self._last_world_yaw = None
         self._last_world_pitch = None
         self._last_world_time = None
+        self._son_gorulen_dunya_yaw = None
+        self._son_gorulen_dunya_pitch = None
+        self._son_gorulen_zaman = 0.0
         self.current_pid_range = "TEK_SET"
         self.missing_frames = 0
 
@@ -1288,12 +1319,18 @@ class HavaSavunmaArayuz(QWidget):
                     last_tracked_center_x = self.current_tracked_target_bbox[0] + self.current_tracked_target_bbox[2] // 2 if self.current_tracked_target_bbox else center_x_frame
                     last_tracked_center_y = self.current_tracked_target_bbox[1] + self.current_tracked_target_bbox[3] // 2 if self.current_tracked_target_bbox else center_y_frame
 
-                    if self.missing_frames > 0 and self.last_target_x is not None and self.last_target_y is not None:
-                        time_since_last_known = current_frame_time - self.last_frame_time
-                        predicted_x_for_reacq = self.last_target_x + self.last_target_velocity_x * time_since_last_known
-                        predicted_y_for_reacq = self.last_target_y + self.last_target_velocity_y * time_since_last_known
-                        last_tracked_center_x = int(predicted_x_for_reacq)
-                        last_tracked_center_y = int(predicted_y_for_reacq)
+                    # Yeniden edinme arama merkezi de DÜNYA uzayında tahmin
+                    # edilir; piksel uzayında yapılırsa taretin kendi hareketi
+                    # hedefin hareketi sanılıp arama yanlış yere bakar.
+                    if self.missing_frames > 0 and self._son_gorulen_dunya_yaw is not None:
+                        gecen = current_frame_time - self._son_gorulen_zaman
+                        tahmin_dunya_yaw = (self._son_gorulen_dunya_yaw
+                                            + self.target_world_yaw_rate * gecen)
+                        tahmin_dunya_pitch = (self._son_gorulen_dunya_pitch
+                                              + self.target_world_pitch_rate * gecen)
+                        px, py = self._dunya_to_piksel(tahmin_dunya_yaw, tahmin_dunya_pitch)
+                        last_tracked_center_x = int(px)
+                        last_tracked_center_y = int(py)
 
                     for det in detections:
                         if det['class_name'] == self.current_tracked_target_class:
@@ -1326,6 +1363,14 @@ class HavaSavunmaArayuz(QWidget):
                         self.last_target_y = current_target_bbox_for_pid[1] + current_target_bbox_for_pid[3] // 2
                         self.last_frame_time = current_frame_time
 
+                        # GERÇEK tespitin dünya açısını sakla. Tahmin bundan
+                        # yürütülür; tahmin edilmiş konumlardan türetilmez ki
+                        # hata birikmesin.
+                        self._son_gorulen_dunya_yaw, self._son_gorulen_dunya_pitch = \
+                            self._piksel_to_dunya(self.last_target_x, self.last_target_y,
+                                                  self._capture_time or current_frame_time)
+                        self._son_gorulen_zaman = current_frame_time
+
                     else:
                         self.missing_frames += 1
 
@@ -1334,10 +1379,22 @@ class HavaSavunmaArayuz(QWidget):
                                 f"Durum: Hedef kaybedildi, tahminle takip etmeye çalışılıyor ({self.MAX_MISSING_FRAMES - self.missing_frames} kare kaldı).")
                             self.target_info_label.setText("Hedef: Takip Kayboldu. Tahminle hareket ediyor.")
 
-                            if self.last_target_x is not None and self.last_frame_time is not None and self.current_tracked_target_bbox is not None:
-                                time_since_last_detection = current_frame_time - self.last_frame_time
-                                predicted_x = self.last_target_x + self.last_target_velocity_x * time_since_last_detection
-                                predicted_y = self.last_target_y + self.last_target_velocity_y * time_since_last_detection
+                            # Tahmin DÜNYA uzayında yapılır. Piksel uzayında
+                            # yapılırsa taretin kendi dönüşü (120°/s'de 1881
+                            # piksel/sn) hedefin hareketi sanılır; hayali hedef
+                            # kareyi terk eder ve taret onu kovalar. Sahada
+                            # "saçma hareketler" olarak görülen davranış buydu.
+                            # Sabit bir hedefin dünya açısı taret dönse de
+                            # değişmez, dolayısıyla tahmin doğal olarak durur.
+                            if (self._son_gorulen_dunya_yaw is not None
+                                    and self.current_tracked_target_bbox is not None):
+                                gecen = current_frame_time - self._son_gorulen_zaman
+                                tahmin_dunya_yaw = (self._son_gorulen_dunya_yaw
+                                                    + self.target_world_yaw_rate * gecen)
+                                tahmin_dunya_pitch = (self._son_gorulen_dunya_pitch
+                                                      + self.target_world_pitch_rate * gecen)
+                                predicted_x, predicted_y = self._dunya_to_piksel(
+                                    tahmin_dunya_yaw, tahmin_dunya_pitch)
 
                                 _, _, w_last, h_last = self.current_tracked_target_bbox
                                 current_target_bbox_for_pid = (
