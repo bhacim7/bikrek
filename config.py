@@ -48,14 +48,14 @@ DEGREES_PER_PIXEL_PITCH = -0.015
 # PID oransal kazançları. Kilitlenme hızını belirleyen ana değişken budur.
 # Ölçümle doğrulanmış kalibrasyonla güvenli tavan ~0.9; üstünde salınım başlar.
 # Kalibrasyon yanlışsa tavan düşer, bu yüzden önce ölçüp sonra yükseltin.
-KP_YAW = 0.5
-KP_PITCH = 0.4
+KP_YAW = 0.7
+KP_PITCH = 0.6
 
 # Hız ileri-beslemesi (feedforward). Saf oransal denetim hareketli hedefte
 # kalıcı olarak geride kalır (10°/s hedefte KP=0.5 ile ~100 piksel). Bu terim
 # hedefin ölçüm gecikmesi boyunca kat edeceği yolu önceden telafi eder.
 # 0.0 = kapalı. Sahada 0'dan kademeli açın; titreme başlarsa geri düşürün.
-FEEDFORWARD_GAIN = 0.0
+FEEDFORWARD_GAIN = 0.3
 
 # Duyarga gecikmesi tahmini (saniye): kamera + çıkarım + açı raporu.
 # Feedforward'ın ne kadar ileriyi tahmin edeceğini belirler.
@@ -64,7 +64,19 @@ FEEDFORWARD_LEAD_TIME = 0.10
 # Hedef hızı kare-kare kutu merkezi farkından geliyor ve gürültülü. Bu üstel
 # yumuşatma katsayısı 0-1 arası: küçük değer daha çok yumuşatır (daha kararlı
 # ama daha tepkisiz), büyük değer ham hıza yakınlaşır.
+# Bu değer hız ARTARKEN kullanılır (gürültü sıçramalarını reddetmek için yavaş).
 VELOCITY_SMOOTHING = 0.3
+
+# Hız AZALIRKEN kullanılan katsayı — kasıtlı olarak daha büyük, yani daha hızlı
+# söner. Sebep: hedef durduğunda simetrik yumuşatma hız tahminini birkaç kare
+# boyunca yüksek tutuyor, feedforward itmeye devam ediyor ve taret hedefi geçip
+# geri dönüyordu. Asimetrik sönüm bu aşımı ölçümde 5 px'den 2 px'e indirdi.
+VELOCITY_DECAY_SMOOTHING = 0.6
+
+# Bu eşiğin altındaki hız tahmini feedforward'a verilmez (derece/sn).
+# Sabit hedefte tespit gürültüsünün ürettiği sahte hızın tareti titretmesini
+# engeller; hedef gerçekten dururken feedforward tam olarak sıfırlanır.
+FEEDFORWARD_VELOCITY_DEADBAND = 2.0
 
 # Feedforward katkısının üst sınırı (derece). Ani/hatalı bir hız tahmininin
 # tareti savurmasını engeller.

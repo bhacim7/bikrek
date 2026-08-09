@@ -1430,19 +1430,37 @@ class HavaSavunmaArayuz(QWidget):
         if self._last_world_time is not None:
             dt_world = current_frame_time - self._last_world_time
             if dt_world > 0:
-                a = config.VELOCITY_SMOOTHING
                 ham_yaw_rate = (world_yaw - self._last_world_yaw) / dt_world
                 ham_pitch_rate = (world_pitch - self._last_world_pitch) / dt_world
-                self.target_world_yaw_rate = a * ham_yaw_rate + (1 - a) * self.target_world_yaw_rate
-                self.target_world_pitch_rate = a * ham_pitch_rate + (1 - a) * self.target_world_pitch_rate
+
+                # ASİMETRİK yumuşatma: hız azalırken daha hızlı sön.
+                # Simetrik olduğunda hedef durduğu anda tahmin birkaç kare
+                # boyunca yüksek kalıyor, feedforward itmeye devam ediyor ve
+                # taret hedefi geçip geri dönüyordu. Hız artarken yavaş kalmak
+                # ise gürültü sıçramalarını reddetmek için gerekli.
+                a_yaw = (config.VELOCITY_DECAY_SMOOTHING
+                         if abs(ham_yaw_rate) < abs(self.target_world_yaw_rate)
+                         else config.VELOCITY_SMOOTHING)
+                a_pitch = (config.VELOCITY_DECAY_SMOOTHING
+                           if abs(ham_pitch_rate) < abs(self.target_world_pitch_rate)
+                           else config.VELOCITY_SMOOTHING)
+
+                self.target_world_yaw_rate = (a_yaw * ham_yaw_rate
+                                              + (1 - a_yaw) * self.target_world_yaw_rate)
+                self.target_world_pitch_rate = (a_pitch * ham_pitch_rate
+                                                + (1 - a_pitch) * self.target_world_pitch_rate)
         self._last_world_yaw = world_yaw
         self._last_world_pitch = world_pitch
         self._last_world_time = current_frame_time
 
-        feedforward_yaw = (self.target_world_yaw_rate
-                           * config.FEEDFORWARD_LEAD_TIME * config.FEEDFORWARD_GAIN)
-        feedforward_pitch = (self.target_world_pitch_rate
-                             * config.FEEDFORWARD_LEAD_TIME * config.FEEDFORWARD_GAIN)
+        # Ölü bant: hedef gerçekten dururken feedforward tam olarak sıfırlansın.
+        # Aksi halde tespit gürültüsünün ürettiği sahte hız tareti titretir.
+        db = config.FEEDFORWARD_VELOCITY_DEADBAND
+        ff_yaw_rate = self.target_world_yaw_rate if abs(self.target_world_yaw_rate) >= db else 0.0
+        ff_pitch_rate = self.target_world_pitch_rate if abs(self.target_world_pitch_rate) >= db else 0.0
+
+        feedforward_yaw = ff_yaw_rate * config.FEEDFORWARD_LEAD_TIME * config.FEEDFORWARD_GAIN
+        feedforward_pitch = ff_pitch_rate * config.FEEDFORWARD_LEAD_TIME * config.FEEDFORWARD_GAIN
 
         # Hatalı bir hız tahmininin tareti savurmasını engelle
         ff_limit = config.FEEDFORWARD_MAX_DEGREE
