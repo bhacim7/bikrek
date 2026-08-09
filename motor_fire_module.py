@@ -81,6 +81,24 @@ _manual_current_delay = MAX_DELAY
 MANUAL_COMMAND_TIMEOUT = 0.35
 _manual_last_command_time = 0.0
 
+# --- Otonom (pozisyon servosu) durumu ---
+# Otonom takipte hareket "şu kadar dön" komutlarıyla değil, "şu açıya git"
+# hedefiyle yürür. Kritik fark: yeni hedef eskisinin YERİNE GEÇER, dolayısıyla
+# komut kuyruğu ve bayat komut oluşamaz. Önceki bloklayan yapıda PC saniyede 25
+# komut gönderirken Pi her birini bloklayarak işliyordu; komutlar birikiyor ve
+# taret bayat komutları uygularken hedefi aşıyordu.
+_target_yaw = 0.0
+_target_pitch = 0.0
+_servo_active = False
+_servo_current_delay = MAX_DELAY
+
+# Otonom modda tepe hız sınırı. Manuel moddan (tam hız) kasıtlı olarak düşük:
+# hatalı bir tespit gelirse taret sert savrulmasın.
+# Sınır yaw ekseninden türetilir; pitch daha az adım/derece istediği için aynı
+# darbe hızında ~90°/s'ye çıkar, pitch hareketleri kısa olduğundan kabul edilebilir.
+SERVO_MAX_DEG_PER_SEC = 60.0
+SERVO_MIN_DELAY = 1.0 / (2 * SERVO_MAX_DEG_PER_SEC * STEPS_PER_DEGREE_YAW)
+
 PULSE_TIME = 0.1  # Ateşleme rölesinin çekili kalma süresi (saniye)
 
 # Motor yönleri için sabitler
@@ -222,12 +240,10 @@ def initialize_gpio():
                 f"DEBUG (motor_fire_module): FIRE_PIN ({FIRE_PIN}) başlangıçta RELAY_INACTIVE ({RELAY_INACTIVE}) yapıldı.")
             sys.stdout.flush()
 
-            # Acil durdurma pini. DİKKAT: lgpio'da callback kaydedebilmek için
-            # pin gpio_claim_input ile DEĞİL, gpio_claim_alert ile talep edilmeli.
-            # Aksi halde lgpio.callback() sessizce hiç tetiklenmez.
-            LGpio.gpio_claim_alert(lgh, EMERGENCY_STOP_PIN, LGpio.BOTH_EDGES, LGpio.SET_PULL_UP)
+            # Acil durdurma pini (giriş olarak ayarla, pull-up direnci ile)
+            LGpio.gpio_claim_input(lgh, EMERGENCY_STOP_PIN, LGpio.SET_PULL_UP)
             print(
-                f"DEBUG (motor_fire_module): EMERGENCY_STOP_PIN {EMERGENCY_STOP_PIN} alarm girişi olarak ayarlandı (PULL_UP, BOTH_EDGES).")
+                f"DEBUG (motor_fire_module): EMERGENCY_STOP_PIN {EMERGENCY_STOP_PIN} giriş olarak ayarlandı (PULL_UP).")
             sys.stdout.flush()
 
             _gpio_initialized = True
@@ -446,7 +462,7 @@ def set_manual_move_direction(yaw_direction, pitch_direction, degrees_to_move):
     :param degrees_to_move: Her adımda hareket edilecek derece miktarı.
     """
     global _yaw_moving_direction, _pitch_moving_direction, _manual_degrees_to_move
-    global _manual_last_command_time
+    global _manual_last_command_time, _servo_active
 
     degisti = (yaw_direction != _yaw_moving_direction or
                pitch_direction != _pitch_moving_direction)
@@ -456,6 +472,12 @@ def set_manual_move_direction(yaw_direction, pitch_direction, degrees_to_move):
     _manual_degrees_to_move = degrees_to_move
     # Watchdog'u besle: bu komut geldiği sürece hareket sürebilir.
     _manual_last_command_time = time.time()
+
+    # Manuel hareket başlarsa servoyu devreden çıkar. Aksi halde kullanıcı
+    # manuel sürdükten sonra servo, artık geçersiz olan ESKİ hedefine geri
+    # dönmeye çalışır. Servo yalnızca yeni bir hedef komutuyla tekrar devreye girer.
+    if yaw_direction != 0 or pitch_direction != 0:
+        _servo_active = False
 
     # Yalnızca yön DEĞİŞTİĞİNDE yazdır. Arayüz canlılık komutu gönderdiği için
     # her komutta yazdırmak (üstelik flush ile) SSH üzerinde ciddi yük yaratır.
@@ -538,6 +560,110 @@ def perform_manual_move_step():
         _simulated_pitch = (_simulated_pitch + 180) % 360 - 180
 
     return True
+
+
+def set_target_angles(yaw_angle, pitch_angle):
+    """
+    Otonom hedef açısını ayarlar. BLOKLAMAZ, yazdırmaz — sunucunun sıcak
+    yolunda (saniyede onlarca kez) çağrılabilir.
+
+    set_motor_angles ile farkı: o, hareketi çağıran iş parçacığında bloklayarak
+    tamamlar (menü testleri için uygundur). Bu ise yalnızca hedefi kaydeder;
+    hareketi perform_servo_step() ayrı bir döngüde yürütür. Yeni hedef eskisinin
+    yerine geçtiği için komut kuyruğu oluşamaz.
+    """
+    global _target_yaw, _target_pitch, _servo_active
+    _target_yaw = (float(yaw_angle) + 180) % 360 - 180
+    _target_pitch = (float(pitch_angle) + 180) % 360 - 180
+    _servo_active = True
+
+
+def perform_servo_step():
+    """
+    Hedef açıya doğru TEK BİR adım darbesi üretir. Rampa çağrılar arasında
+    korunur; yaklaşırken frenler, böylece hedefe mekanik olarak aşmadan oturur.
+
+    :return: Adım atıldıysa True, hedefe varılmış/servo kapalıysa False.
+    """
+    global _simulated_yaw, _simulated_pitch, _servo_current_delay, _servo_active
+
+    if not _servo_active:
+        _servo_current_delay = min(MAX_DELAY, _servo_current_delay + DECEL_STEP)
+        return False
+
+    # Kalan açıyı en kısa yol üzerinden hesapla
+    kalan_yaw_derece = (_target_yaw - _simulated_yaw + 180) % 360 - 180
+    kalan_pitch_derece = (_target_pitch - _simulated_pitch + 180) % 360 - 180
+
+    adim_yaw = int(round(kalan_yaw_derece * STEPS_PER_DEGREE_YAW))
+    adim_pitch = int(round(kalan_pitch_derece * STEPS_PER_DEGREE_PITCH))
+
+    if adim_yaw == 0 and adim_pitch == 0:
+        # Hedefe varıldı: servoyu kapat, rampayı duruş hızına sal.
+        # Ölü bant bir adımdır; bu, hedef etrafında titremeyi engeller.
+        _servo_active = False
+        _servo_current_delay = min(MAX_DELAY, _servo_current_delay + DECEL_STEP)
+        return False
+
+    # Yamuk profil: frenleme mesafesi kaldıysa yavaşla, yoksa hızlan.
+    kalan_adim = max(abs(adim_yaw), abs(adim_pitch))
+    frenleme_icin_gereken = (MAX_DELAY - _servo_current_delay) / DECEL_STEP
+    if kalan_adim > frenleme_icin_gereken:
+        _servo_current_delay = max(SERVO_MIN_DELAY, _servo_current_delay - ACCEL_STEP)
+    else:
+        _servo_current_delay = min(MAX_DELAY, _servo_current_delay + DECEL_STEP)
+
+    yaw_aktif = adim_yaw != 0
+    pitch_aktif = adim_pitch != 0
+    yon_yaw = 1 if adim_yaw > 0 else -1
+    yon_pitch = 1 if adim_pitch > 0 else -1
+
+    if not _gpio_initialized or lgh is None:
+        # Simülasyon modu
+        time.sleep(2 * _servo_current_delay)
+        if yaw_aktif:
+            _simulated_yaw = (_simulated_yaw + yon_yaw / STEPS_PER_DEGREE_YAW + 180) % 360 - 180
+        if pitch_aktif:
+            _simulated_pitch = (_simulated_pitch + yon_pitch / STEPS_PER_DEGREE_PITCH + 180) % 360 - 180
+        return True
+
+    if yaw_aktif:
+        LGpio.gpio_write(lgh, YAW_DIR_PIN, _direction_value(yon_yaw, INVERT_YAW_DIR))
+    if pitch_aktif:
+        LGpio.gpio_write(lgh, PITCH_DIR_PIN, _direction_value(yon_pitch, INVERT_PITCH_DIR))
+
+    if yaw_aktif:
+        LGpio.gpio_write(lgh, YAW_STEP_PIN, LGPIO_HIGH)
+    if pitch_aktif:
+        LGpio.gpio_write(lgh, PITCH_STEP_PIN, LGPIO_HIGH)
+    time.sleep(_servo_current_delay)
+
+    if yaw_aktif:
+        LGpio.gpio_write(lgh, YAW_STEP_PIN, LGPIO_LOW)
+    if pitch_aktif:
+        LGpio.gpio_write(lgh, PITCH_STEP_PIN, LGPIO_LOW)
+    time.sleep(_servo_current_delay)
+
+    if yaw_aktif:
+        _simulated_yaw = (_simulated_yaw + yon_yaw / STEPS_PER_DEGREE_YAW + 180) % 360 - 180
+    if pitch_aktif:
+        _simulated_pitch = (_simulated_pitch + yon_pitch / STEPS_PER_DEGREE_PITCH + 180) % 360 - 180
+
+    return True
+
+
+def perform_motion_step():
+    """
+    Hareketin TEK giriş noktası. STEP pinlerinin tek sahibi olmalıdır; iki ayrı
+    döngü aynı pinleri sürerse darbeler birbirine karışır.
+
+    Öncelik manueldedir: kullanıcı butona bastığında otonom hedef beklemez.
+
+    :return: Adım atıldıysa True, hareket yoksa False (çağıran kısa uyuyabilir).
+    """
+    if _yaw_moving_direction != 0 or _pitch_moving_direction != 0:
+        return perform_manual_move_step()
+    return perform_servo_step()
 
 
 def fire_weapon():

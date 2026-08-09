@@ -112,7 +112,11 @@ class HavaSavunmaArayuz(QWidget):
         self.last_target_velocity_x = 0.0
         self.last_target_velocity_y = 0.0
 
-        self.MAX_OUTPUT_DEGREE = 5.0
+        # Tek komutta istenebilecek en büyük açı değişimi. Bloklayan eski Pi
+        # yapısında büyük komut tehlikeliydi (uzun blok = kuyruk birikmesi);
+        # pozisyon servosunda değil, bu yüzden uzak hedefe daha az çevrimde
+        # ulaşmak için yükseltildi.
+        self.MAX_OUTPUT_DEGREE = 15.0
         self.MIN_OUTPUT_DEGREE_THRESHOLD = 0.03
 
         self.DEGREES_PER_PIXEL_YAW = 0.015

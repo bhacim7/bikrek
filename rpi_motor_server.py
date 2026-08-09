@@ -61,36 +61,20 @@ conn = None
 addr = None
 server_socket = None
 
-# lgpio.callback() nesnesi. Referans tutulmazsa çöp toplayıcı onu silebilir
-# ve acil durdurma sessizce çalışmaz hale gelir.
-emergency_stop_cb = None
-
 
 # Acil durdurma butonu için callback
 def emergency_stop_handler(chip, gpio, level, tick):
     # Butona basıldığında (LOW) veya bırakıldığında (HIGH) tetiklenebilir.
     # Genellikle basıldığında (LOW) durdurma işlemi yapılır.
-    if level != 0:
-        return
-
-    print("\n!!! ACİL DURDURMA BUTONUNA BASILDI !!! Tüm motorlar durduruluyor.")
-    sys.stdout.flush()
-
-    # Devam eden manuel hareketi de kes; yalnızca STEP pinlerini indirmek
-    # yetmez, hareket döngüsü yön değişkenlerine bakarak adım atmayı sürdürür.
-    try:
-        motor_fire_module.set_manual_move_direction(0, 0, 0)
-        motor_fire_module.stop_all_motors()
-    except Exception as e:
-        print(f"HATA (acil durdurma): Motorlar durdurulurken hata: {e}")
+    if level == 0:  # Butona basıldığında (LOW)
+        print("\n!!! ACİL DURDURMA BUTONUNA BASILDI !!! Tüm motorlar durduruluyor ve çıkılıyor.")
         sys.stdout.flush()
-
-    # GPIO temizliği BURADA YAPILMAZ. Bu fonksiyon lgpio'nun kendi callback
-    # iş parçacığından çağrılır; handle'ı burada kapatmak, hâlâ çalışmakta olan
-    # hareket ve açı gönderme iş parçacıklarının kapalı bir handle'a yazmasına
-    # yol açar. Bayrağı indirmek yeterli: ana döngü çıkar ve finally bloğundaki
-    # cleanup_on_exit() temizliği tek bir yerden yapar.
-    client_connected.clear()
+        motor_fire_module.stop_all_motors()  # Tüm motorları durdur ve devre dışı bırak
+        motor_fire_module.cleanup_gpio()  # GPIO kaynaklarını temizle
+        # Uygulamayı güvenli bir şekilde kapatmak için bir bayrak ayarla
+        global client_connected
+        client_connected.clear()  # Bağlantıyı kes
+        # sys.exit(1) # sys.exit() kullanmaktan kaçının, cleanup'ı engeller
 
 
 # Açıları periyodik olarak PC'ye göndermek için iş parçacığı
@@ -125,20 +109,23 @@ def angle_sender_loop():
 
 
 # Manuel hareket döngüsü (rpi_motor_server'da kalır, ancak motor_fire_module'den komutları alır)
-def manual_move_loop():
+def motion_loop():
     """
-    Manuel hareketi sürekli bir akış olarak yürütür.
+    Tüm motor hareketini sürekli bir akış olarak yürütür: hem manuel hem otonom.
 
-    perform_manual_move_step() artık tek bir adım darbesi üretir ve adım
-    zamanlamasını kendi içinde yapar; rampa çağrılar arasında korunduğu için
-    hız kademeli olarak tam hıza çıkar. Buraya ek bir bekleme KOYULMAMALIDIR,
-    aksi halde adım frekansı düşer ve hareket yavaşlar.
+    perform_motion_step() tek bir adım darbesi üretir ve adım zamanlamasını
+    kendi içinde yapar; rampa çağrılar arasında korunduğu için hız kademeli
+    olarak tepe hıza çıkar. Buraya ek bir bekleme KOYULMAMALIDIR, aksi halde
+    adım frekansı düşer ve hareket yavaşlar.
+
+    Hareketin bu döngüde yürümesi, komut işlemeyi bloklamamasını sağlar:
+    soket döngüsü motor dönerken de yeni komut okuyabilir.
     """
     while client_connected.is_set():
-        if not motor_fire_module.perform_manual_move_step():
+        if not motor_fire_module.perform_motion_step():
             # Hareket yok; boşta CPU yakmamak için kısa bekleme.
             time.sleep(0.005)
-    print("DEBUG (rpi_motor_server): Manuel hareket döngüsü sonlandı.")
+    print("DEBUG (rpi_motor_server): Hareket döngüsü sonlandı.")
     sys.stdout.flush()
 
 
@@ -166,11 +153,8 @@ def run_server():
 
             # Acil durdurma pini zaten initialize_gpio içinde INPUT ve PULL_UP olarak ayarlandı.
             # Burada sadece callback'i ekliyoruz.
-            # lgpio'da sabitin adı BOTH_EDGES'tir (EITHER_EDGE diye bir şey yok).
-            # Callback nesnesi referansı tutulmazsa çöp toplayıcı onu silebilir.
-            global emergency_stop_cb
-            emergency_stop_cb = LGpio.callback(lgh, motor_fire_module.EMERGENCY_STOP_PIN,
-                                               LGpio.BOTH_EDGES, emergency_stop_handler)
+            LGpio.callback(lgh, motor_fire_module.EMERGENCY_STOP_PIN, motor_fire_module.LGpio.EITHER_EDGE,
+                           emergency_stop_handler)
             print(
                 f"DEBUG (rpi_motor_server): Acil durdurma butonu (GPIO {motor_fire_module.EMERGENCY_STOP_PIN}) dinleniyor.")
             sys.stdout.flush()
@@ -203,15 +187,15 @@ def run_server():
     angle_sender_thread.daemon = True  # Ana program kapanınca bu thread de kapanır
 
     # Manuel hareket iş parçacığını başlat
-    manual_move_thread = threading.Thread(target=manual_move_loop)
+    manual_move_thread = threading.Thread(target=motion_loop)
     manual_move_thread.daemon = True
 
     try:
         conn, addr = server_socket.accept()
-        
+
         # NAGLE ALGORİTMASI DEVRE DIŞI BIRAKMA
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        
+
         conn.settimeout(0.01)  # Engellemeyen okuma için kısa zaman aşımı
         client_connected.set()
         print(f"DEBUG (rpi_motor_server): Bağlantı kabul edildi: {addr}")
@@ -289,7 +273,8 @@ def process_command(command):
         yaw = command.get("yaw", motor_fire_module.get_current_angles()[0])
         pitch = command.get("pitch", motor_fire_module.get_current_angles()[1])
 
-        motor_fire_module.set_motor_angles(yaw, pitch)
+        # Bloklamaz: yalnızca hedefi ayarlar, hareketi motion_loop yürütür.
+        motor_fire_module.set_target_angles(yaw, pitch)
 
         response = {"action": "set_angles", "status": "ok", "current_yaw": motor_fire_module.get_current_angles()[0],
                     "current_pitch": motor_fire_module.get_current_angles()[1]}
@@ -331,7 +316,9 @@ def process_command(command):
         target_yaw = current_yaw + delta_yaw
         target_pitch = current_pitch + delta_pitch
 
-        motor_fire_module.set_motor_angles(target_yaw, target_pitch)
+        # Bloklamaz. Yeni hedef eskisinin yerine geçtiği için PC saniyede
+        # onlarca komut gönderse bile kuyruk birikmesi olamaz.
+        motor_fire_module.set_target_angles(target_yaw, target_pitch)
 
         current_yaw, current_pitch = motor_fire_module.get_current_angles()
         response = {"action": "set_proportional_angles_delta", "status": "ok", "current_yaw": current_yaw,
