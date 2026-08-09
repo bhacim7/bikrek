@@ -11,6 +11,7 @@ import numpy as np
 import traceback
 import multiprocessing as mp
 import queue
+from collections import deque
 
 import config
 from rpi_communicator import RPiCommunicator
@@ -126,6 +127,12 @@ class HavaSavunmaArayuz(QWidget):
         self._last_world_yaw = None
         self._last_world_pitch = None
         self._last_world_time = None
+
+        # Zaman damgalı açı geçmişi (ölü zaman telafisi için). 20 Hz'de
+        # 120 kayıt ~6 saniye; kamera gecikmesi bunun çok altında.
+        self._angle_history = deque(maxlen=120)
+        # İşlenen karenin ÇEKİLME zamanı (time.time() değil!)
+        self._capture_time = None
 
         # Kalibrasyon sırasında PID askıya alınır (taret hedefi ortalamaya
         # çalışırsa ölçüm yapılamaz).
@@ -480,9 +487,32 @@ class HavaSavunmaArayuz(QWidget):
             self.connect_rpi_button.setEnabled(True)
             self._update_status_label("Durum: Raspberry Pi bağlantısı kesildi.")
 
+    def _angle_at(self, t):
+        """
+        Verilen ZAMANDAKİ taret açısını döndürür.
+
+        Bu, ölü zaman telafisinin çekirdeği: piksel hatası kamera karesinin
+        ÇEKİLDİĞİ anda geçerliydi, taret o zamandan beri hareket etti. Hatayı
+        o andaki açıya eklemek hedefin dünyadaki gerçek açısını verir.
+        Geçmiş yoksa mevcut açıya düşülür (eski davranış).
+        """
+        if not self._angle_history:
+            return self.current_yaw_angle, self.current_pitch_angle
+        # En yakın (zaman <= t) kaydı bul; yoksa en eskisini kullan
+        secilen = self._angle_history[0]
+        for kayit in self._angle_history:
+            if kayit[0] <= t:
+                secilen = kayit
+            else:
+                break
+        return secilen[1], secilen[2]
+
     def _update_current_angles(self, yaw, pitch):
         self.current_yaw_angle = yaw
         self.current_pitch_angle = pitch
+        # Ölü zaman telafisi için açı geçmişi (PC saati ile damgalanır;
+        # kamera karesinin zaman damgası da aynı saatten gelir).
+        self._angle_history.append((time.time(), yaw, pitch))
         self.update_info_panel(f"Mevcut Yaw: {self.current_yaw_angle:.1f}°, Pitch: {self.current_pitch_angle:.1f}°")
 
     def _process_rpi_response(self, response_data):
@@ -1179,6 +1209,9 @@ class HavaSavunmaArayuz(QWidget):
 
             display_frame = frame
             current_frame_time = time.time()
+            # Karenin ÇEKİLME zamanı (kamera sürecinde, aynı PC saatiyle
+            # damgalanır). Ölü zaman telafisi buna dayanıyor.
+            self._capture_time = frame_time
 
             # Kalibrasyon güvenlik ağı: hedef ölçüm sırasında kaybolursa
             # _calibration_tick hiç çağrılmaz ve PID kalıcı olarak askıda
@@ -1561,11 +1594,31 @@ class HavaSavunmaArayuz(QWidget):
         error_yaw_pixel = target_x - center_x
         error_pitch_pixel = target_y - center_y
 
-        error_yaw_degree = error_yaw_pixel * self.DEGREES_PER_PIXEL_YAW
-        error_pitch_degree = error_pitch_pixel * self.DEGREES_PER_PIXEL_PITCH
+        # Piksel hatasının derece karşılığı. DİKKAT: bu hata, kamera karesinin
+        # ÇEKİLDİĞİ andaki durumu yansıtır; "şu an"ı değil.
+        capture_error_yaw = error_yaw_pixel * self.DEGREES_PER_PIXEL_YAW
+        capture_error_pitch = error_pitch_pixel * self.DEGREES_PER_PIXEL_PITCH
 
         self.is_aimed_at_target = abs(error_yaw_pixel) <= self.aiming_tolerance and \
                                   abs(error_pitch_pixel) <= self.aiming_tolerance
+
+        # --- ÖLÜ ZAMAN TELAFİSİ ---
+        # Kamera + çıkarım gecikmesi boyunca (~100-200 ms) taret hareket etmeye
+        # devam eder. Bayat hatayı taretin ŞU ANKİ açısına eklemek, o sürede kat
+        # edilen yolu İKİ KEZ saymak demektir; taret hedefi aşar ve geri döner.
+        # Ölçümde bu, gecikmeyle büyüyen 150-340 pikselllik aşım üretiyordu.
+        #
+        # Doğrusu: hatayı kare çekildiğindeki açıya ekleyip hedefin DÜNYA
+        # açısını bulmak, sonra düzeltmeyi taretin şu anki açısına göre
+        # hesaplamak. Böylece aşım gecikmeden bağımsız hale gelir.
+        capture_t = self._capture_time if self._capture_time is not None else current_frame_time
+        yaw_at_capture, pitch_at_capture = self._angle_at(capture_t)
+
+        world_yaw = yaw_at_capture + capture_error_yaw
+        world_pitch = pitch_at_capture + capture_error_pitch
+
+        error_yaw_degree = (world_yaw - self.current_yaw_angle + 180) % 360 - 180
+        error_pitch_degree = (world_pitch - self.current_pitch_angle + 180) % 360 - 180
 
         if self.is_aimed_at_target and self.active_task in ['task2', 'task3'] and not self.target_destroyed:
             current_time = time.time()
@@ -1590,8 +1643,8 @@ class HavaSavunmaArayuz(QWidget):
         # Türevi hedefin gerçek açısal hızını verir. (Piksel hızını kullanmak
         # işe yaramaz: takip çalışırken hedef karede merkezde kalır, piksel hızı
         # sıfıra yakın çıkar.) Gürültüye karşı EMA ile yumuşatılır.
-        world_yaw = self.current_yaw_angle + error_yaw_degree
-        world_pitch = self.current_pitch_angle + error_pitch_degree
+        # world_yaw / world_pitch yukarıda ölü zaman telafisiyle zaten hesaplandı
+        # (hedefin dünyadaki açısı); burada yalnızca türevi alınıyor.
         if self._last_world_time is not None:
             dt_world = current_frame_time - self._last_world_time
             if dt_world > 0:

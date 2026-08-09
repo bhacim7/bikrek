@@ -52,11 +52,13 @@ DEGREES_PER_PIXEL_PITCH = -0.0772
 # PID oransal kazançları. Kilitlenme hızını belirleyen ana değişken budur.
 # Ölçümle doğrulanmış kalibrasyonla güvenli tavan ~0.9; üstünde salınım başlar.
 # Kalibrasyon yanlışsa tavan düşer, bu yüzden önce ölçüp sonra yükseltin.
-# DİKKAT: Kalibrasyon düzeltildikten sonra bu değerler GERÇEK anlamını taşıyor.
-# Aynı KP artık 4.3 kat daha güçlü etki ediyor, bu yüzden 0.7'den 0.5'e çekildi.
-# Sorunsuz çalışırsa kademeli olarak 0.7'ye kadar çıkılabilir.
-KP_YAW = 0.5
-KP_PITCH = 0.4
+# Ölü zaman telafisi eklendikten sonra bu değerler tekrar yükseltilebildi.
+# Daha önce 0.5 bile salınım yapıyordu çünkü bayat hata şimdiki açıya
+# ekleniyor ve kat edilen yol iki kez sayılıyordu; aşım gecikmeyle büyüyordu.
+# Telafiyle aşım gecikmeden bağımsız hale geldi (ölçümde 10-11 piksel).
+# Temiz çalışırsa 0.9'a kadar denenebilir.
+KP_YAW = 0.7
+KP_PITCH = 0.6
 
 # Hız ileri-beslemesi (feedforward). Saf oransal denetim hareketli hedefte
 # kalıcı olarak geride kalır (10°/s hedefte KP=0.5 ile ~100 piksel). Bu terim
