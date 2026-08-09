@@ -97,6 +97,13 @@ FEEDFORWARD_MAX_DEGREE = 3.0
 # tareti ters yöne fırlatıyordu (-791 piksellik hayali hata).
 MAX_TARGET_RATE_DEG_S = 20.0
 
+# Bir aday hedefe kilitlenmeden önce ard arda kaç karede aynı yerde görülmeli.
+# YOLO tek tük yanlış pozitif üretiyor; sahada tavanda çıkan hayalet tespit
+# (güven 0.59) gerçek balondan (0.44) yüksek çıktı ve hedef seçme kuralı
+# "kareye en yakın tespit" olduğu için hayalet kazandı. Hayalet 2 kare sürdü;
+# 3 kare onay istemek bunu eler, gerçek hedefe ~0.1 sn gecikme ekler.
+LOCK_CONFIRM_FRAMES = 3
+
 # Hedef kaybolduğunda kaç kare tahminle devam edilsin. Kısa tutmak, hatalı bir
 # tahminin tareti savurma penceresini daraltır. 15 kare (0.6 sn) fazlaydı.
 MAX_MISSING_FRAMES = 5

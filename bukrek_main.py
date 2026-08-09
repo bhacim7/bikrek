@@ -91,6 +91,12 @@ class HavaSavunmaArayuz(QWidget):
         # sayılır. Tahminin kontrolden çıkıp tareti savurmasına karşı emniyet.
         self.PREDICTION_LIMIT_FRAMES = 1.5
         self.MAX_TARGET_RATE_DEG_S = config.MAX_TARGET_RATE_DEG_S
+
+        # Kilitlenmeden önce adayın ard arda kaç karede aynı yerde görüldüğü.
+        # Hayalet tespitleri birkaç kare sürüyor; gerçek hedef sürekli görünür.
+        self._aday_ardisik = 0
+        self._aday_konum = None
+        self.LOCK_CONFIRM_TOL_PX = 120  # aday "aynı yerde" sayılma toleransı
         self.MAX_REACQUISITION_DISTANCE_PIXELS = 250
 
         # --- PID Kontrol Değişkenleri ---
@@ -1489,7 +1495,38 @@ class HavaSavunmaArayuz(QWidget):
                             self.target_info_label.setText(f"Hedef Bilgisi: Kırmızı Balon Yok.")
                             self._update_status_label("Durum: Yeni hedef bekleniyor...")
 
+                    # --- Hayalet tespite karşı zamansal onay ---
+                    # YOLO tek tük yanlış pozitif üretiyor. Sahada tavanda
+                    # red_balloon (0.59) hayaleti gerçek balondan (0.44) YÜKSEK
+                    # güvenle çıktı; hedef seçme kuralı "kareye en yakın tespit"
+                    # olduğu ve hayalet tam merkezde olduğu için kilitlenildi ve
+                    # taret gerçek balona gitmedi. Hayalet yalnızca 2 kare sürdü.
+                    # Bu yüzden bir aday, ard arda birkaç karede aynı yerde
+                    # görülmeden kilitlenmeye alınmıyor.
                     if candidate_target:
+                        cx = candidate_target['bbox'][0] + candidate_target['bbox'][2] // 2
+                        cy = candidate_target['bbox'][1] + candidate_target['bbox'][3] // 2
+                        if (self._aday_konum is not None
+                                and abs(cx - self._aday_konum[0]) <= self.LOCK_CONFIRM_TOL_PX
+                                and abs(cy - self._aday_konum[1]) <= self.LOCK_CONFIRM_TOL_PX):
+                            self._aday_ardisik += 1
+                        else:
+                            self._aday_ardisik = 1
+                        self._aday_konum = (cx, cy)
+
+                        if self._aday_ardisik < config.LOCK_CONFIRM_FRAMES:
+                            # Henüz doğrulanmadı: kilitlenme yok, hareket yok.
+                            self._update_status_label(
+                                f"Durum: Aday hedef doğrulanıyor "
+                                f"({self._aday_ardisik}/{config.LOCK_CONFIRM_FRAMES})...")
+                            candidate_target = None
+                    else:
+                        self._aday_ardisik = 0
+                        self._aday_konum = None
+
+                    if candidate_target:
+                        self._aday_ardisik = 0
+                        self._aday_konum = None
                         self.current_tracked_target_class = candidate_target['class_name']
                         self.current_tracked_target_bbox = candidate_target['bbox']
                         self.target_destroyed = False

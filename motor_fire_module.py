@@ -103,7 +103,12 @@ _servo_current_delay = MAX_DELAY
 # ~0.2 sn olduğu için taret o süre boyunca "kör" ilerliyor. 120°/s'de bu 24°
 # demek; dikey görüş açısı 56° olduğundan hedef kareden çıkıyor, döngü açılıyor
 # ve tahmin devreye girip tareti savuruyordu.
-SERVO_MAX_DEG_PER_SEC = 40.0
+# Sahada ölçüldü: duyarga gecikmesi ~0.16 sn (taret 7.27s'de hareket etti,
+# piksel hatası 7.43s'de tepki verdi). 40°/s ile kilitlenme temiz ve aşmasız
+# oldu, yani marj var. 70'e çıkarıldı: kör ilerleme yaw 7.5°, pitch 11.2°
+# (dikey görüşün %20'si) — hâlâ hedefi kareden çıkarmayacak seviyede.
+# Yavaş gelirse artır, aşma/kayıp başlarsa düşür: ayarlanacak ilk yer burası.
+SERVO_MAX_DEG_PER_SEC = 70.0
 
 # DİKKAT: gecikme, adım/derece oranı KÜÇÜK olan eksenden türetilmeli. İki eksen
 # ortak bir darbe saatini paylaştığı için, yaw'dan türetmek pitch'i 1.5 kat
