@@ -39,16 +39,21 @@ class RPiCommunicator(QThread):
             except queue.Empty:
                 pass  # Kuyruk boş, devam et
 
-            # Yanıtları dinle (engellemeyen veya kısa engellemeli)
-            response = self._receive_response_non_blocking()
-            if response:
+            # Yanıtları dinle: bir okumada birden fazla mesaj gelebilir.
+            responses = self._receive_response_non_blocking()
+            latest_angles = None
+            for response in responses:
                 self.response_received_signal.emit(response)
-                # Eğer bir açı güncellemesi ise, sinyali doğrudan yay
+                # Eğer bir açı güncellemesi ise, en sonuncusunu sakla
                 if response.get("action") in ["get_angles", "set_angles", "move_by_direction",
                                               "set_proportional_angles_delta"] and response.get("status") == "ok":
-                    yaw = response.get("current_yaw", 0.0)
-                    pitch = response.get("current_pitch", 0.0)
-                    self.angles_update_signal.emit(yaw, pitch)
+                    latest_angles = (response.get("current_yaw", 0.0),
+                                     response.get("current_pitch", 0.0))
+
+            # Açı sinyalini paket başına yalnızca bir kez yay: ara değerleri
+            # yaymak arayüzü gereksiz yere meşgul eder, en güncel olan yeterli.
+            if latest_angles is not None:
+                self.angles_update_signal.emit(latest_angles[0], latest_angles[1])
 
             # CPU kullanımını azaltmak için küçük bir gecikme
             time.sleep(0.001)
@@ -134,36 +139,46 @@ class RPiCommunicator(QThread):
 
     def _receive_response_non_blocking(self):
         """
-        Soket bağlantısından yanıtı engellemeyen bir şekilde okur.
-        Tam bir JSON mesajı alınana kadar tamponlar.
+        Soketten okur ve tamponda BİRİKMİŞ TÜM tam mesajları döndürür.
+
+        Önceki sürüm her çağrıda yalnızca BİR mesaj ayrıştırıyordu. RPi hem her
+        komuta yanıt hem de periyodik açı güncellemesi gönderdiği için mesajlar
+        tüketilebildiğinden hızlı birikiyor, arayüzdeki açı giderek bayatlıyor,
+        tampon sınırı aşılınca da toptan siliniyordu (açı güncellemeleri
+        kayboluyordu). Tamponu her seferinde boşaltmak açıyı anlık tutar.
+
+        :return: Ayrıştırılmış mesaj sözlüklerinin listesi (boş olabilir).
         """
         if not self.is_connected or self.rpi_socket is None:
-            return None
+            return []
 
+        messages = []
         try:
             # Engellemeyen okuma için zaman aşımını 0.01 saniyeye ayarla
             self.rpi_socket.settimeout(0.01)
-            chunk = self.rpi_socket.recv(1024).decode('utf-8')
+            chunk = self.rpi_socket.recv(8192).decode('utf-8')
             if not chunk:
                 print("HATA AYIKLAMA (RPiComm): _receive_response_non_blocking: Sunucu bağlantıyı kapattı (boş parça).")
                 self._disconnect_rpi()
-                return None
+                return []
 
             self.socket_buffer += chunk
 
-            if '\n' in self.socket_buffer:
+            # Tampondaki TÜM tam mesajları çıkar
+            while '\n' in self.socket_buffer:
                 message, self.socket_buffer = self.socket_buffer.split('\n', 1)
+                if not message.strip():
+                    continue
                 try:
-                    return json.loads(message)
+                    messages.append(json.loads(message))
                 except json.JSONDecodeError as e:
                     print(f"HATA (RPiComm): JSON ayrıştırma hatası: {e}. Hatalı veri: '{message[:100]}...'")
                     self.status_update_signal.emit(f"Hata: RPi yanıtı ayrıştırılamadı: {e}")
-                    return None
 
-            if len(self.socket_buffer) > 4096:
-                print("UYARI (RPiComm): Tampon çok büyüdü, '\\n' bulunamadı. Tampon temizleniyor.")
+            # Kalan parçada hâlâ satır sonu yoksa ve çok büyümüşse, bozuk veri; at.
+            if len(self.socket_buffer) > 8192:
+                print("UYARI (RPiComm): Tampon çok büyüdü, satır sonu bulunamadı. Tampon temizleniyor.")
                 self.socket_buffer = ""
-                return None
 
         except socket.timeout:
             pass  # Veri yok, normal
@@ -176,7 +191,7 @@ class RPiCommunicator(QThread):
             print(f"HATA (RPiComm): Yanıt alınırken beklenmedik hata: {e}")
             traceback.print_exc()
             self._disconnect_rpi()
-        return None
+        return messages
 
     def request_stop(self):
         self.stop_requested = True

@@ -52,6 +52,10 @@ PORT = 12345  # PC uygulamasındaki port ile aynı olmalı
 client_connected = threading.Event()
 client_connected.clear()
 
+# Saniyede onlarca kez gelen komutlar; her birini yazdırmak (flush ile) SSH
+# üzerinde işlemeyi yavaşlatır ve komut kuyruğunun birikmesine yol açar.
+_SESSIZ_KOMUTLAR = ("move_by_direction", "set_proportional_angles_delta")
+
 # Global bağlantı değişkenleri
 conn = None
 addr = None
@@ -86,7 +90,9 @@ def angle_sender_loop():
             }
             if conn:
                 conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
-            time.sleep(0.07)  # Her 100ms'de bir açıları gönder
+            # 20 Hz. Manuel modda taret 120 derece/sn'ye çıkabildiği için daha
+            # seyrek gönderim arayüzdeki açıyı gözle görülür şekilde geriletir.
+            time.sleep(0.05)
         except BrokenPipeError:
             print("UYARI (rpi_motor_server): Açı gönderilirken bağlantı kesildi (BrokenPipeError).")
             sys.stdout.flush()
@@ -104,21 +110,18 @@ def angle_sender_loop():
 
 # Manuel hareket döngüsü (rpi_motor_server'da kalır, ancak motor_fire_module'den komutları alır)
 def manual_move_loop():
-    while client_connected.is_set():
-        # motor_fire_module'deki global değişkenleri kullanarak hareket et
-        # Bu değerler set_manual_move_direction tarafından ayarlanır
-        yaw_dir = motor_fire_module._yaw_moving_direction
-        pitch_dir = motor_fire_module._pitch_moving_direction
-        degrees_to_move = motor_fire_module._manual_degrees_to_move
+    """
+    Manuel hareketi sürekli bir akış olarak yürütür.
 
-        if (yaw_dir != 0 or pitch_dir != 0) and degrees_to_move > 0:
-            # Bu fonksiyon artık motor_fire_module içinde adım hesaplamasını yapıyor
-            motor_fire_module.perform_manual_move_step()  # Artık parametre almıyor
-            # Manuel hareket komutları arasındaki gecikme.
-            # PC tarafı 30ms'de bir komut gönderiyorsa, burası da ona yakın olmalı.
-            time.sleep(0.03)  # 30ms gecikme
-        else:
-            time.sleep(0.01)  # Hareket yoksa kısa bir bekleme
+    perform_manual_move_step() artık tek bir adım darbesi üretir ve adım
+    zamanlamasını kendi içinde yapar; rampa çağrılar arasında korunduğu için
+    hız kademeli olarak tam hıza çıkar. Buraya ek bir bekleme KOYULMAMALIDIR,
+    aksi halde adım frekansı düşer ve hareket yavaşlar.
+    """
+    while client_connected.is_set():
+        if not motor_fire_module.perform_manual_move_step():
+            # Hareket yok; boşta CPU yakmamak için kısa bekleme.
+            time.sleep(0.005)
     print("DEBUG (rpi_motor_server): Manuel hareket döngüsü sonlandı.")
     sys.stdout.flush()
 
@@ -211,8 +214,12 @@ def run_server():
                     line, buffer = buffer.split('\n', 1)
                     try:
                         command = json.loads(line)
-                        print(f"DEBUG (rpi_motor_server): Komut alındı: {command}")
-                        sys.stdout.flush()
+                        # Yüksek frekanslı komutlar (manuel hareket, PID) yazdırılmaz:
+                        # her satırda flush yapmak SSH üzerinde komut işlemeyi
+                        # yavaşlatıp kuyruk birikmesine yol açıyordu.
+                        if command.get("action") not in _SESSIZ_KOMUTLAR:
+                            print(f"DEBUG (rpi_motor_server): Komut alındı: {command}")
+                            sys.stdout.flush()
                         process_command(command)
                     except json.JSONDecodeError:
                         print(f"HATA (rpi_motor_server): Geçersiz JSON alındı: {line}")
@@ -296,9 +303,7 @@ def process_command(command):
         current_yaw, current_pitch = motor_fire_module.get_current_angles()
         response = {"action": "move_by_direction", "status": "ok", "current_yaw": current_yaw,
                     "current_pitch": current_pitch}
-        print(
-            f"DEBUG (rpi_motor_server): 'move_by_direction' komutu işlendi. Yaw Yön: {yaw_dir}, Pitch Yön: {pitch_dir}, Derece: {degrees_to_move}")
-        sys.stdout.flush()
+        # Yazdırılmıyor: yön değişimini motor_fire_module zaten bir kez raporluyor.
     elif action == "set_proportional_angles_delta":
         delta_yaw = command.get("delta_yaw", 0.0)
         delta_pitch = command.get("delta_pitch", 0.0)
@@ -312,9 +317,7 @@ def process_command(command):
         current_yaw, current_pitch = motor_fire_module.get_current_angles()
         response = {"action": "set_proportional_angles_delta", "status": "ok", "current_yaw": current_yaw,
                     "current_pitch": current_pitch}
-        print(
-            f"DEBUG (rpi_motor_server): 'set_proportional_angles_delta' komutu işlendi. Delta Yaw: {delta_yaw:.2f}, Delta Pitch: {delta_pitch:.2f}")
-        sys.stdout.flush()
+        # Yazdırılmıyor: PID saniyede onlarca kez bu komutu gönderiyor.
     else:
         print(f"UYARI (rpi_motor_server): Bilinmeyen komut alındı: {command}")
         sys.stdout.flush()

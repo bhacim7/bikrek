@@ -69,6 +69,18 @@ MAX_DELAY = 0.0015    # Kalkış ve duruş hızı
 ACCEL_STEP = 0.00003  # Hızlanma ivmesi
 DECEL_STEP = 0.00008  # Frenleme ivmesi
 
+# --- Manuel (sürekli) hareket durumu ---
+# Manuel modda hareket, ayrık "N derece git" bloklarıyla değil, yön sıfırlanana
+# kadar süren tek bir akış olarak yürür. Rampa bu yüzden çağrılar arasında
+# KORUNUR; aksi halde her komutta sıfırlanır ve tam hıza hiç ulaşılamaz.
+_manual_current_delay = MAX_DELAY
+
+# Watchdog: arayüz çökerse, ağ koparsa veya "dur" komutu kaybolursa taret
+# sonsuza kadar dönmemeli. Bu süre boyunca yeni komut gelmezse hareket durur.
+# Arayüz hareket ederken periyodik "canlıyım" komutu gönderir.
+MANUAL_COMMAND_TIMEOUT = 0.35
+_manual_last_command_time = 0.0
+
 PULSE_TIME = 0.1  # Ateşleme rölesinin çekili kalma süresi (saniye)
 
 # Motor yönleri için sabitler
@@ -432,53 +444,98 @@ def set_manual_move_direction(yaw_direction, pitch_direction, degrees_to_move):
     :param degrees_to_move: Her adımda hareket edilecek derece miktarı.
     """
     global _yaw_moving_direction, _pitch_moving_direction, _manual_degrees_to_move
+    global _manual_last_command_time
+
+    degisti = (yaw_direction != _yaw_moving_direction or
+               pitch_direction != _pitch_moving_direction)
+
     _yaw_moving_direction = yaw_direction
     _pitch_moving_direction = pitch_direction
     _manual_degrees_to_move = degrees_to_move
-    print(
-        f"DEBUG (motor_fire_module): Manuel hareket yönleri ayarlandı: Yaw {yaw_direction}, Pitch {pitch_direction}, Derece: {degrees_to_move}")
-    sys.stdout.flush()
+    # Watchdog'u besle: bu komut geldiği sürece hareket sürebilir.
+    _manual_last_command_time = time.time()
+
+    # Yalnızca yön DEĞİŞTİĞİNDE yazdır. Arayüz canlılık komutu gönderdiği için
+    # her komutta yazdırmak (üstelik flush ile) SSH üzerinde ciddi yük yaratır.
+    if degisti:
+        print(f"DEBUG (motor_fire_module): Manuel yön: Yaw {yaw_direction}, Pitch {pitch_direction}")
+        sys.stdout.flush()
 
 
 def perform_manual_move_step():
     """
-    Manuel hareket yönlerine ve _manual_degrees_to_move değerine göre tek bir adım hareketi gerçekleştirir.
-    Bu fonksiyon rpi_motor_server'daki ayrı bir thread tarafından sürekli çağrılmalıdır.
+    Manuel modda TEK BİR adım darbesi üretir ve açıyı o kadar ilerletir.
+
+    Önceki sürüm her çağrıda "1 derece git" şeklinde bloklayan bir hareket
+    yapıyordu; rampa her seferinde sıfırlandığı için tam hıza hiç ulaşılamıyor
+    ve elde edilen hız donanım tavanının ~%8'inde kalıyordu. Şimdi hareket
+    sürekli bir akış: rampa çağrılar arasında korunuyor, hız kademeli olarak
+    MIN_DELAY'e çıkıyor.
+
+    Bu fonksiyon rpi_motor_server'daki manual_move_loop tarafından sıkı bir
+    döngüde çağrılmalıdır; adım zamanlamasının kendisi burada yapılır.
+
+    :return: Adım atıldıysa True, hareket yoksa False (çağıran kısa uyuyabilir).
     """
-    global _simulated_yaw, _simulated_pitch
+    global _simulated_yaw, _simulated_pitch, _manual_current_delay
+
+    # Watchdog: komut akışı kesildiyse hareketi durdur.
+    komut_bayat = (time.time() - _manual_last_command_time) > MANUAL_COMMAND_TIMEOUT
+
+    hareket_var = ((_yaw_moving_direction != 0 or _pitch_moving_direction != 0)
+                   and _manual_degrees_to_move > 0
+                   and not komut_bayat)
+
+    if not hareket_var:
+        # Duruş: bir sonraki kalkışın yavaş hızdan başlaması için rampayı geri sal.
+        _manual_current_delay = min(MAX_DELAY, _manual_current_delay + DECEL_STEP)
+        return False
+
+    # Hızlan
+    _manual_current_delay = max(MIN_DELAY, _manual_current_delay - ACCEL_STEP)
+
+    yaw_aktif = _yaw_moving_direction != 0
+    pitch_aktif = _pitch_moving_direction != 0
 
     if not _gpio_initialized or lgh is None:
-        # Simülasyon modunda
-        _simulated_yaw += _yaw_moving_direction * _manual_degrees_to_move
-        _simulated_pitch += _pitch_moving_direction * _manual_degrees_to_move
+        # Simülasyon modu: adım süresi kadar bekle, açıyı bir adım ilerlet.
+        time.sleep(2 * _manual_current_delay)
+        if yaw_aktif:
+            _simulated_yaw += _yaw_moving_direction / STEPS_PER_DEGREE_YAW
+            _simulated_yaw = (_simulated_yaw + 180) % 360 - 180
+        if pitch_aktif:
+            _simulated_pitch += _pitch_moving_direction / STEPS_PER_DEGREE_PITCH
+            _simulated_pitch = (_simulated_pitch + 180) % 360 - 180
+        return True
+
+    # Yön pinlerini ayarla (yalnızca aktif eksenler için)
+    if yaw_aktif:
+        LGpio.gpio_write(lgh, YAW_DIR_PIN, _direction_value(_yaw_moving_direction, INVERT_YAW_DIR))
+    if pitch_aktif:
+        LGpio.gpio_write(lgh, PITCH_DIR_PIN, _direction_value(_pitch_moving_direction, INVERT_PITCH_DIR))
+
+    # Tek darbe
+    if yaw_aktif:
+        LGpio.gpio_write(lgh, YAW_STEP_PIN, LGPIO_HIGH)
+    if pitch_aktif:
+        LGpio.gpio_write(lgh, PITCH_STEP_PIN, LGPIO_HIGH)
+    time.sleep(_manual_current_delay)
+
+    if yaw_aktif:
+        LGpio.gpio_write(lgh, YAW_STEP_PIN, LGPIO_LOW)
+    if pitch_aktif:
+        LGpio.gpio_write(lgh, PITCH_STEP_PIN, LGPIO_LOW)
+    time.sleep(_manual_current_delay)
+
+    # Açıyı atılan adım kadar ilerlet
+    if yaw_aktif:
+        _simulated_yaw += _yaw_moving_direction / STEPS_PER_DEGREE_YAW
         _simulated_yaw = (_simulated_yaw + 180) % 360 - 180
+    if pitch_aktif:
+        _simulated_pitch += _pitch_moving_direction / STEPS_PER_DEGREE_PITCH
         _simulated_pitch = (_simulated_pitch + 180) % 360 - 180
-        print(
-            f"DEBUG (motor_fire_module - manual): Simüle edilmiş manuel adım. Mevcut Yaw: {_simulated_yaw:.3f}°, Pitch: {_simulated_pitch:.3f}°")
-        sys.stdout.flush()
-        return
 
-    # Gerçek motor hareketi
-    # Manuel hareket yönüne göre adım sayılarını hesapla (işareti doğru ayarla)
-    steps_yaw = int(round(_yaw_moving_direction * _manual_degrees_to_move * STEPS_PER_DEGREE_YAW))
-    steps_pitch = int(round(_pitch_moving_direction * _manual_degrees_to_move * STEPS_PER_DEGREE_PITCH))
-    print(f"DEBUG (motor_fire_module - manual): Hesaplanan Adım: Yaw {steps_yaw}, Pitch {steps_pitch} (Her adımda {_manual_degrees_to_move} derece)")
-    sys.stdout.flush()
-
-    if steps_yaw != 0 or steps_pitch != 0:
-        # Motorlar zaten etkinleştirildi, tekrar etkinleştirmeye gerek yok.
-        move_steppers_simultaneous(steps_yaw, steps_pitch)
-
-        # SİMUULE EDİLMİŞ AÇILARI GERÇEKLEŞEN ADIMLARA GÖRE GÜNCELLE
-        _simulated_yaw += steps_yaw / STEPS_PER_DEGREE_YAW
-        _simulated_pitch += steps_pitch / STEPS_PER_DEGREE_PITCH
-
-        # Açıları -180 ile 180 aralığında tut
-        _simulated_yaw = (_simulated_yaw + 180) % 360 - 180
-        _simulated_pitch = (_simulated_pitch + 180) % 360 - 180
-        print(
-            f"DEBUG (motor_fire_module - manual): Simüle edilmiş açılar güncellendi: Yaw {_simulated_yaw:.3f}°, Pitch {_simulated_pitch:.3f}°")
-        sys.stdout.flush()
+    return True
 
 
 def fire_weapon():

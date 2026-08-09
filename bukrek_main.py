@@ -122,6 +122,13 @@ class HavaSavunmaArayuz(QWidget):
 
         self.manual_step_size = 1.0
 
+        # Manuel yön komutu, yön değişince gönderilir. Bu aralıkta bir de
+        # "canlıyım" tekrarı gider; Pi tarafındaki watchdog bununla beslenir.
+        # MANUAL_COMMAND_TIMEOUT (0.35 sn) değerinden belirgin küçük olmalı.
+        self.manual_keepalive_interval = 0.1
+        self._last_manual_direction = (0, 0)
+        self._last_manual_send_time = 0.0
+
         # Açı komutları için minimum gönderme aralığı
         self.last_angle_command_send_time = time.time()
         self.angle_command_minimum_interval = 0.04
@@ -705,8 +712,8 @@ class HavaSavunmaArayuz(QWidget):
                 self.manual_movement_timer.stop()
             self._update_status_label("Durum: Manuel hareket durduruldu.")
             if self.rpi_thread.is_connected:
-                self.send_command_to_rpi(
-                    {"action": "move_by_direction", "yaw_direction": 0, "pitch_direction": 0, "degrees_to_move": 0})
+                # force=True: duruş komutu her koşulda gitmeli.
+                self._send_manual_direction(0, 0, force=True)
 
     def _update_manual_directions_from_states(self):
         self.manual_yaw_direction = 0
@@ -727,18 +734,43 @@ class HavaSavunmaArayuz(QWidget):
         if self.movement_states['pitch_up'] and self.movement_states['pitch_down']:
             self.manual_pitch_direction = 0
 
+    def _send_manual_direction(self, yaw_dir, pitch_dir, force=False):
+        """
+        Manuel yön komutunu gönderir; yalnızca yön DEĞİŞTİĞİNDE veya canlılık
+        aralığı dolduğunda.
+
+        Önceden bu komut 10 ms'de bir koşulsuz gönderiliyordu (saniyede 100
+        komut). Pi bunun ancak onda birini tüketebildiği için kuyruk birikiyor,
+        "dur" komutu birikmiş hareket komutlarının arkasında kalıyor ve buton
+        bırakıldıktan sonra taret dönmeye devam ediyordu.
+
+        Periyodik tekrar, Pi tarafındaki watchdog'u beslemek için gereklidir:
+        komut akışı kesilirse (arayüz çöker, ağ kopar) taret kendiliğinden
+        durur. Bu yüzden aralık MANUAL_COMMAND_TIMEOUT'tan belirgin küçük olmalı.
+        """
+        simdi = time.time()
+        degisti = (yaw_dir, pitch_dir) != self._last_manual_direction
+        canlilik_zamani = (simdi - self._last_manual_send_time) >= self.manual_keepalive_interval
+
+        if not (force or degisti or canlilik_zamani):
+            return
+
+        hareket_var = yaw_dir != 0 or pitch_dir != 0
+        self.send_command_to_rpi({
+            "action": "move_by_direction",
+            "yaw_direction": yaw_dir,
+            "pitch_direction": pitch_dir,
+            "degrees_to_move": self.manual_step_size if hareket_var else 0,
+        })
+        self._last_manual_direction = (yaw_dir, pitch_dir)
+        self._last_manual_send_time = simdi
+
     def _continuously_update_motor_position(self):
         if self.active_task != 'full_manual' or not self.rpi_thread.is_connected:
             self._stop_all_manual_movement()
             return
 
-        if self.manual_yaw_direction != 0 or self.manual_pitch_direction != 0:
-            self.send_command_to_rpi(
-                {"action": "move_by_direction", "yaw_direction": self.manual_yaw_direction,
-                 "pitch_direction": self.manual_pitch_direction, "degrees_to_move": self.manual_step_size})
-        else:
-            self.send_command_to_rpi(
-                {"action": "move_by_direction", "yaw_direction": 0, "pitch_direction": 0, "degrees_to_move": 0})
+        self._send_manual_direction(self.manual_yaw_direction, self.manual_pitch_direction)
 
     def _stop_all_manual_movement(self):
         for key in self.movement_states:
@@ -749,8 +781,8 @@ class HavaSavunmaArayuz(QWidget):
         self.manual_pitch_direction = 0
         self._update_status_label("Durum: Manuel hareket durduruldu.")
         if self.rpi_thread.is_connected:
-            self.send_command_to_rpi(
-                {"action": "move_by_direction", "yaw_direction": 0, "pitch_direction": 0, "degrees_to_move": 0})
+            # force=True: duruş komutu her koşulda gitmeli.
+            self._send_manual_direction(0, 0, force=True)
 
     def update_info_panel(self, text):
         self.info_label.setText(f"<h2 style='color: white; text-align: center;'>{text}</h2>")
