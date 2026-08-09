@@ -42,14 +42,21 @@ CAMERA_USE_MJPG = True
 # DEĞİŞİRSE YENİDEN ÖLÇÜLMELİ — arayüzdeki "Derece/Piksel Ölç" butonu bu değeri
 # hesaplar. Yanlış değer PID'in efektif kazancını ölçekler: çok büyükse taret
 # hedefi aşıp salınır, çok küçükse yavaş yaklaşır.
-DEGREES_PER_PIXEL_YAW = 0.015
-DEGREES_PER_PIXEL_PITCH = -0.015
+# Sahada ölçüldü (iki bağımsız koşum, dört örnek; koşumlar arası uyum %1-2).
+# İma edilen görüş açısı: 82° yatay / 56° dikey — 16:9 geniş açı kamerayla tutarlı.
+# Önceki 0.015 değeri gerçeğin 4.3 katı küçüğüydü; bu yüzden efektif döngü
+# kazancı 0.16'da kalıyor ve takip yavaş oluyordu.
+DEGREES_PER_PIXEL_YAW = 0.0638
+DEGREES_PER_PIXEL_PITCH = -0.0772
 
 # PID oransal kazançları. Kilitlenme hızını belirleyen ana değişken budur.
 # Ölçümle doğrulanmış kalibrasyonla güvenli tavan ~0.9; üstünde salınım başlar.
 # Kalibrasyon yanlışsa tavan düşer, bu yüzden önce ölçüp sonra yükseltin.
-KP_YAW = 0.7
-KP_PITCH = 0.6
+# DİKKAT: Kalibrasyon düzeltildikten sonra bu değerler GERÇEK anlamını taşıyor.
+# Aynı KP artık 4.3 kat daha güçlü etki ediyor, bu yüzden 0.7'den 0.5'e çekildi.
+# Sorunsuz çalışırsa kademeli olarak 0.7'ye kadar çıkılabilir.
+KP_YAW = 0.5
+KP_PITCH = 0.4
 
 # Hız ileri-beslemesi (feedforward). Saf oransal denetim hareketli hedefte
 # kalıcı olarak geride kalır (10°/s hedefte KP=0.5 ile ~100 piksel). Bu terim
