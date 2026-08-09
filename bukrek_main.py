@@ -895,9 +895,12 @@ class HavaSavunmaArayuz(QWidget):
     # ortaladığı için hata sıfıra gidiyor, tam manuel modda ise görev None
     # olduğu için tespit hiç çalışmıyor ve piksel bilgisi yok.
 
-    CALIBRATION_ANGLE = 4.0        # Her adımda verilecek test açısı (derece)
+    # Test açısı KADEMELİ büyütülür: derece/piksel önceden bilinmediği için tek
+    # bir açı her sisteme uymaz. Küçük açı yeterli piksel kayması üretmezse
+    # (redüksiyon beklenenden büyükse) sıradaki daha büyük açı denenir.
+    CALIBRATION_ANGLE_STEPS = (4.0, 12.0, 30.0, 70.0)
     CALIBRATION_ARRIVE_TOL = 0.25  # Hedef açıya varmış sayılma toleransı (derece)
-    CALIBRATION_TIMEOUT = 20.0     # Tüm ölçümün üst sınırı (saniye)
+    CALIBRATION_TIMEOUT = 45.0     # Tüm ölçümün üst sınırı (saniye)
     CALIBRATION_MIN_SHIFT_PX = 15  # Bu kadar kaymadıysa ölçüm güvenilmez
 
     def start_calibration(self):
@@ -920,6 +923,7 @@ class HavaSavunmaArayuz(QWidget):
         self._cal_target_angle = None
         self._cal_ref_px = None
         self._cal_ref_angle = None
+        self._cal_step_idx = 0  # Hangi test açısındayız (kademeli büyütme)
         self._update_status_label("Kalibrasyon: Hedefi SABİT tutun, ölçüm başlıyor...")
         print("KALİBRASYON: başladı. Hedefi olabildiğince sabit tutun.")
 
@@ -959,6 +963,12 @@ class HavaSavunmaArayuz(QWidget):
 
             faz = self._cal_phase
 
+            # Tahmin edilmiş konumla ölçüm yapma. Hedef birkaç karedir
+            # görülmüyorsa update_frame bbox'ı TAHMİN ediyor; o konum taretin
+            # hareketini yansıtmaz ve kayma yapay olarak sıfıra yakın çıkar.
+            if getattr(self, 'missing_frames', 0) > 0:
+                return
+
             # --- Komut gönderme fazları ---
             if faz.endswith('_gonder'):
                 eksen = 'yaw' if faz.startswith('yaw') else 'pitch'
@@ -966,12 +976,13 @@ class HavaSavunmaArayuz(QWidget):
                 self._cal_ref_px = target_x if eksen == 'yaw' else target_y
                 self._cal_ref_angle = (self.current_yaw_angle if eksen == 'yaw'
                                        else self.current_pitch_angle)
-                if not self._cal_komut_gonder(eksen, yon * self.CALIBRATION_ANGLE):
+                aci = self.CALIBRATION_ANGLE_STEPS[self._cal_step_idx]
+                if not self._cal_komut_gonder(eksen, yon * aci):
                     self._bitir_kalibrasyon("Hata: Açı komutu gönderilemedi.")
                     return
                 self._cal_phase = faz.replace('_gonder', '_bekle')
                 self._update_status_label(
-                    f"Kalibrasyon: {eksen.upper()} ölçülüyor, hedefi sabit tutun...")
+                    f"Kalibrasyon: {eksen.upper()} ölçülüyor ({aci:.0f}°), hedefi sabit tutun...")
                 return
 
             # --- Varış bekleme fazları ---
@@ -986,10 +997,21 @@ class HavaSavunmaArayuz(QWidget):
                 kayma_px = self._cal_ref_px - simdiki_px
                 aci_farki = (simdiki_aci - self._cal_ref_angle + 180) % 360 - 180
 
+                print(f"KALİBRASYON [{eksen}]: komut {aci_farki:+.2f}° -> "
+                      f"piksel {self._cal_ref_px:.0f} -> {simdiki_px:.0f} "
+                      f"(kayma {kayma_px:+.0f} px)")
+
                 if abs(kayma_px) < self.CALIBRATION_MIN_SHIFT_PX:
+                    # Kayma yetersiz: daha büyük açıyla tekrar dene.
+                    if self._cal_step_idx + 1 < len(self.CALIBRATION_ANGLE_STEPS):
+                        self._cal_step_idx += 1
+                        yeni = self.CALIBRATION_ANGLE_STEPS[self._cal_step_idx]
+                        print(f"KALİBRASYON: kayma yetersiz, {yeni:.0f}° ile tekrar deneniyor.")
+                        self._cal_phase = faz.replace('_bekle', '_gonder')
+                        return
                     self._bitir_kalibrasyon(
-                        f"Hata: {eksen.upper()} kayması çok küçük ({kayma_px:.0f} px). "
-                        "Hedef görüşten çıkmış veya taret hareket etmemiş olabilir.")
+                        f"Hata: {eksen.upper()} en büyük açıda bile yeterli kayma üretmedi "
+                        f"({kayma_px:.0f} px). Taret fiziksel olarak hareket ediyor mu?")
                     return
 
                 self._cal_samples.append((eksen, aci_farki / kayma_px))
