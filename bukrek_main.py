@@ -839,13 +839,20 @@ class HavaSavunmaArayuz(QWidget):
         self.no_fire_end_input.setText("0.0")
         self._update_status_label("Durum: Ateşsiz Bölge Temizlendi.")
 
-    def send_angle_command(self, yaw, pitch):
+    def send_angle_command(self, yaw, pitch, force=False):
+        """
+        Mutlak açı komutu gönderir.
+
+        :param force: Hız sınırını atla. Kalibrasyon gibi TEK SEFERLİK ve
+            gönderildiğinden emin olunması gereken komutlar için gereklidir;
+            aksi halde PID'in az önce gönderdiği komut yüzünden sessizce düşer.
+        """
         if not self.rpi_thread.is_connected:
             self._update_status_label("Hata: Raspberry Pi'ye bağlı değil, açı komutu gönderilemedi.")
             return False
 
         current_time = time.time()
-        if current_time - self.last_angle_command_send_time < 0.1:
+        if not force and current_time - self.last_angle_command_send_time < 0.1:
             return False
 
         command = {"action": "set_angles", "yaw": yaw, "pitch": pitch}
@@ -888,8 +895,10 @@ class HavaSavunmaArayuz(QWidget):
     # ortaladığı için hata sıfıra gidiyor, tam manuel modda ise görev None
     # olduğu için tespit hiç çalışmıyor ve piksel bilgisi yok.
 
-    CALIBRATION_ANGLE = 3.0      # Her eksende verilecek test açısı (derece)
-    CALIBRATION_SETTLE_FRAMES = 12  # Hareketin oturması için beklenecek kare
+    CALIBRATION_ANGLE = 4.0        # Her adımda verilecek test açısı (derece)
+    CALIBRATION_ARRIVE_TOL = 0.25  # Hedef açıya varmış sayılma toleransı (derece)
+    CALIBRATION_TIMEOUT = 20.0     # Tüm ölçümün üst sınırı (saniye)
+    CALIBRATION_MIN_SHIFT_PX = 15  # Bu kadar kaymadıysa ölçüm güvenilmez
 
     def start_calibration(self):
         """Derece/piksel ölçümünü başlatır."""
@@ -904,67 +913,133 @@ class HavaSavunmaArayuz(QWidget):
             return
 
         self._calibrating = True
-        self._cal_phase = 'yaw_basla'
-        self._cal_wait = 0
-        self._cal_start_px = None
+        self._cal_phase = 'yaw_ileri_gonder'
+        self._cal_start_time = time.time()
+        self._cal_samples = []
         self._cal_results = {}
+        self._cal_target_angle = None
+        self._cal_ref_px = None
+        self._cal_ref_angle = None
         self._update_status_label("Kalibrasyon: Hedefi SABİT tutun, ölçüm başlıyor...")
-        print("KALİBRASYON: başladı. Hedefi sabit tutun.")
+        print("KALİBRASYON: başladı. Hedefi olabildiğince sabit tutun.")
+
+    def _cal_ekseni_varmis_mi(self, eksen):
+        """Taret komut edilen açıya gerçekten vardı mı?"""
+        mevcut = self.current_yaw_angle if eksen == 'yaw' else self.current_pitch_angle
+        fark = (self._cal_target_angle - mevcut + 180) % 360 - 180
+        return abs(fark) <= self.CALIBRATION_ARRIVE_TOL
+
+    def _cal_komut_gonder(self, eksen, delta):
+        """Test açısını gönderir; hız sınırını atlar ve gönderildiğini doğrular."""
+        if eksen == 'yaw':
+            self._cal_target_angle = self.current_yaw_angle + delta
+            gonderildi = self.send_angle_command(self._cal_target_angle,
+                                                 self.current_pitch_angle, force=True)
+        else:
+            self._cal_target_angle = self.current_pitch_angle + delta
+            gonderildi = self.send_angle_command(self.current_yaw_angle,
+                                                 self._cal_target_angle, force=True)
+        return gonderildi
 
     def _calibration_tick(self, target_x, target_y):
         """
-        Kalibrasyon durum makinesi. process_tracking yerine, her karede bir kez
-        çağrılır (PID askıdayken).
+        Kalibrasyon durum makinesi; PID askıdayken her karede bir çağrılır.
+
+        Her eksende hareket İLERİ ve GERİ yapılır, iki ölçüm ortalanır: hedef
+        elde tutulduğu için sabit yönlü kayma kaçınılmaz, çift yönlü ölçüm bunu
+        büyük ölçüde iptal eder.
+
+        Ayrıca nominal komut açısı değil, açı raporundan okunan GERÇEKLEŞEN açı
+        farkı kullanılır; böylece komut tam uygulanmasa da ölçüm doğru kalır.
         """
         try:
-            if self._cal_phase == 'yaw_basla':
-                self._cal_start_px = target_x
-                self.send_angle_command(self.current_yaw_angle + self.CALIBRATION_ANGLE,
-                                        self.current_pitch_angle)
-                self._cal_wait = 0
-                self._cal_phase = 'yaw_bekle'
-                self._update_status_label("Kalibrasyon: Yaw ölçülüyor, hedefi sabit tutun...")
+            if time.time() - self._cal_start_time > self.CALIBRATION_TIMEOUT:
+                self._bitir_kalibrasyon("Hata: Kalibrasyon zaman aşımına uğradı.")
+                return
 
-            elif self._cal_phase == 'yaw_bekle':
-                self._cal_wait += 1
-                if self._cal_wait >= self.CALIBRATION_SETTLE_FRAMES:
-                    kayma_px = self._cal_start_px - target_x
-                    if abs(kayma_px) < 5:
-                        self._bitir_kalibrasyon(
-                            "Hata: Yaw'da piksel kayması ölçülemedi (hedef görüşten çıkmış olabilir).")
-                        return
-                    self._cal_results['yaw'] = self.CALIBRATION_ANGLE / kayma_px
-                    self._cal_start_px = target_y
-                    self.send_angle_command(self.current_yaw_angle,
-                                            self.current_pitch_angle + self.CALIBRATION_ANGLE)
-                    self._cal_wait = 0
-                    self._cal_phase = 'pitch_bekle'
-                    self._update_status_label("Kalibrasyon: Pitch ölçülüyor...")
+            faz = self._cal_phase
 
-            elif self._cal_phase == 'pitch_bekle':
-                self._cal_wait += 1
-                if self._cal_wait >= self.CALIBRATION_SETTLE_FRAMES:
-                    kayma_px = self._cal_start_px - target_y
-                    if abs(kayma_px) < 5:
-                        self._bitir_kalibrasyon(
-                            "Hata: Pitch'te piksel kayması ölçülemedi.")
-                        return
-                    self._cal_results['pitch'] = self.CALIBRATION_ANGLE / kayma_px
+            # --- Komut gönderme fazları ---
+            if faz.endswith('_gonder'):
+                eksen = 'yaw' if faz.startswith('yaw') else 'pitch'
+                yon = 1.0 if '_ileri_' in faz else -1.0
+                self._cal_ref_px = target_x if eksen == 'yaw' else target_y
+                self._cal_ref_angle = (self.current_yaw_angle if eksen == 'yaw'
+                                       else self.current_pitch_angle)
+                if not self._cal_komut_gonder(eksen, yon * self.CALIBRATION_ANGLE):
+                    self._bitir_kalibrasyon("Hata: Açı komutu gönderilemedi.")
+                    return
+                self._cal_phase = faz.replace('_gonder', '_bekle')
+                self._update_status_label(
+                    f"Kalibrasyon: {eksen.upper()} ölçülüyor, hedefi sabit tutun...")
+                return
+
+            # --- Varış bekleme fazları ---
+            if faz.endswith('_bekle'):
+                eksen = 'yaw' if faz.startswith('yaw') else 'pitch'
+                if not self._cal_ekseni_varmis_mi(eksen):
+                    return  # Henüz varmadı, bir sonraki kareyi bekle
+
+                simdiki_px = target_x if eksen == 'yaw' else target_y
+                simdiki_aci = (self.current_yaw_angle if eksen == 'yaw'
+                               else self.current_pitch_angle)
+                kayma_px = self._cal_ref_px - simdiki_px
+                aci_farki = (simdiki_aci - self._cal_ref_angle + 180) % 360 - 180
+
+                if abs(kayma_px) < self.CALIBRATION_MIN_SHIFT_PX:
+                    self._bitir_kalibrasyon(
+                        f"Hata: {eksen.upper()} kayması çok küçük ({kayma_px:.0f} px). "
+                        "Hedef görüşten çıkmış veya taret hareket etmemiş olabilir.")
+                    return
+
+                self._cal_samples.append((eksen, aci_farki / kayma_px))
+
+                # Sıradaki faza geç
+                sirali = {
+                    'yaw_ileri_bekle': 'yaw_geri_gonder',
+                    'yaw_geri_bekle': 'pitch_ileri_gonder',
+                    'pitch_ileri_bekle': 'pitch_geri_gonder',
+                    'pitch_geri_bekle': None,
+                }
+                self._cal_phase = sirali[faz]
+                if self._cal_phase is None:
                     self._rapor_kalibrasyon()
         except Exception as e:
             self._bitir_kalibrasyon(f"Hata: Kalibrasyon başarısız: {str(e)[:40]}")
 
     def _rapor_kalibrasyon(self):
-        y = self._cal_results['yaw']
-        p = self._cal_results['pitch']
-        mesaj = f"Kalibrasyon bitti: YAW={y:.5f}  PITCH={p:.5f}"
-        self._update_status_label(f"Durum: {mesaj}")
-        print("=" * 60)
-        print("KALİBRASYON SONUCU — config.py içine yazın:")
-        print(f"  DEGREES_PER_PIXEL_YAW   = {y:.5f}")
-        print(f"  DEGREES_PER_PIXEL_PITCH = {p:.5f}")
-        print(f"(mevcut: {self.DEGREES_PER_PIXEL_YAW:.5f} / {self.DEGREES_PER_PIXEL_PITCH:.5f})")
-        print("=" * 60)
+        yaw_ler = [v for e, v in self._cal_samples if e == 'yaw']
+        pitch_ler = [v for e, v in self._cal_samples if e == 'pitch']
+        if not yaw_ler or not pitch_ler:
+            self._bitir_kalibrasyon("Hata: Yeterli ölçüm toplanamadı.")
+            return
+
+        y = sum(yaw_ler) / len(yaw_ler)
+        p = sum(pitch_ler) / len(pitch_ler)
+
+        # Makullük kontrolü: derece/piksel x kare genişliği = yatay görüş açısı.
+        # Tipik kameralar 40-110 derece arasındadır; dışarısı ölçüm hatasına işaret eder.
+        fov_yatay = abs(y) * self.frame_orig_w
+        fov_dikey = abs(p) * self.frame_orig_h
+        makul = 30.0 <= fov_yatay <= 120.0
+
+        self._update_status_label(f"Durum: Kalibrasyon bitti: YAW={y:.5f} PITCH={p:.5f}")
+        print("=" * 64)
+        print("KALİBRASYON SONUCU")
+        print(f"  yaw ölçümleri  : {', '.join(f'{v:.5f}' for v in yaw_ler)}")
+        print(f"  pitch ölçümleri: {', '.join(f'{v:.5f}' for v in pitch_ler)}")
+        print(f"  ima edilen görüş açısı: yatay {fov_yatay:.0f}°, dikey {fov_dikey:.0f}°")
+        if not makul:
+            print("  !! UYARI: Görüş açısı makul aralık (30-120°) dışında.")
+            print("     Ölçüm sırasında hedef kaymış olabilir; tekrarlayın.")
+        print("  config.py içine yazın:")
+        print(f"    DEGREES_PER_PIXEL_YAW   = {y:.5f}")
+        print(f"    DEGREES_PER_PIXEL_PITCH = {p:.5f}")
+        print(f"  (mevcut: {self.DEGREES_PER_PIXEL_YAW:.5f} / {self.DEGREES_PER_PIXEL_PITCH:.5f})")
+        print("  NOT: KP ile derece/piksel ÇARPILARAK döngü kazancını verir.")
+        print(f"       Bu değer {abs(y / self.DEGREES_PER_PIXEL_YAW):.1f} kat değişiyorsa")
+        print(f"       KP_YAW da o oranda düşürülmelidir, yoksa taret salınır.")
+        print("=" * 64)
         self._bitir_kalibrasyon(None)
 
     def _bitir_kalibrasyon(self, hata_mesaji):
@@ -1021,6 +1096,13 @@ class HavaSavunmaArayuz(QWidget):
 
             display_frame = frame
             current_frame_time = time.time()
+
+            # Kalibrasyon güvenlik ağı: hedef ölçüm sırasında kaybolursa
+            # _calibration_tick hiç çağrılmaz ve PID kalıcı olarak askıda
+            # kalırdı. Bu kontrol her karede çalıştığı için o durumu yakalar.
+            if self._calibrating and (current_frame_time - self._cal_start_time
+                                      > self.CALIBRATION_TIMEOUT):
+                self._bitir_kalibrasyon("Hata: Kalibrasyon zaman aşımına uğradı (hedef kayboldu?).")
 
             # Tespit koordinatları ve takip/PID matematiği kameranın HAM çözünürlüğünde
             # yürür; gösterilen kare ise küçültülmüş olabilir. Ham boyutu inference
