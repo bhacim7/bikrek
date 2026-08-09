@@ -96,7 +96,10 @@ _servo_current_delay = MAX_DELAY
 # hatalı bir tespit gelirse taret sert savrulmasın.
 # Sınır yaw ekseninden türetilir; pitch daha az adım/derece istediği için aynı
 # darbe hızında ~90°/s'ye çıkar, pitch hareketleri kısa olduğundan kabul edilebilir.
-SERVO_MAX_DEG_PER_SEC = 60.0
+# 60 -> 120: düşük kazançta fark etmiyordu (komut edilen adım zaten 40 ms'lik
+# çevrime sığıyordu) ama KP yükseltildiğinde adımlar büyüyor. Manuel mod zaten
+# 125°/s'de sorunsuz çalışıyor.
+SERVO_MAX_DEG_PER_SEC = 120.0
 SERVO_MIN_DELAY = 1.0 / (2 * SERVO_MAX_DEG_PER_SEC * STEPS_PER_DEGREE_YAW)
 
 PULSE_TIME = 0.1  # Ateşleme rölesinin çekili kalma süresi (saniye)

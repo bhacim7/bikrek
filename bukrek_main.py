@@ -89,11 +89,13 @@ class HavaSavunmaArayuz(QWidget):
         self.MAX_REACQUISITION_DISTANCE_PIXELS = 250
 
         # --- PID Kontrol Değişkenleri ---
-        self.KP_YAW = 0.3
+        # Kazançlar ve derece/piksel artık config.py'da: saha ayarı tek dosyadan
+        # yapılabilsin ve kalibrasyon aracının ürettiği değerin bir yeri olsun.
+        self.KP_YAW = config.KP_YAW
         self.KI_YAW = 0.0001
         self.KD_YAW = 0.001
 
-        self.KP_PITCH = 0.2
+        self.KP_PITCH = config.KP_PITCH
         self.KI_PITCH = 0.0001
         self.KD_PITCH = 0.001
 
@@ -112,6 +114,23 @@ class HavaSavunmaArayuz(QWidget):
         self.last_target_velocity_x = 0.0
         self.last_target_velocity_y = 0.0
 
+        # Hedefin DÜNYA açısal hızı (derece/sn) — feedforward için.
+        # DİKKAT: piksel hızı (last_target_velocity_*) bu iş için KULLANILAMAZ.
+        # Takip çalışırken hedef karede merkeze yakın kalır, yani hedef dünyada
+        # hızla kaysa bile piksel hızı sıfıra yakındır. Doğru sinyal hedefin
+        # dünyadaki açısı: taret_açısı + piksel_hatasının_derece_karşılığı.
+        # (Piksel hızı yeniden-edinme tahmininde kullanılmaya devam ediyor;
+        #  orada görüntü uzayında olması doğru.)
+        self.target_world_yaw_rate = 0.0
+        self.target_world_pitch_rate = 0.0
+        self._last_world_yaw = None
+        self._last_world_pitch = None
+        self._last_world_time = None
+
+        # Kalibrasyon sırasında PID askıya alınır (taret hedefi ortalamaya
+        # çalışırsa ölçüm yapılamaz).
+        self._calibrating = False
+
         # Tek komutta istenebilecek en büyük açı değişimi. Bloklayan eski Pi
         # yapısında büyük komut tehlikeliydi (uzun blok = kuyruk birikmesi);
         # pozisyon servosunda değil, bu yüzden uzak hedefe daha az çevrimde
@@ -119,8 +138,8 @@ class HavaSavunmaArayuz(QWidget):
         self.MAX_OUTPUT_DEGREE = 15.0
         self.MIN_OUTPUT_DEGREE_THRESHOLD = 0.03
 
-        self.DEGREES_PER_PIXEL_YAW = 0.015
-        self.DEGREES_PER_PIXEL_PITCH = -0.015
+        self.DEGREES_PER_PIXEL_YAW = config.DEGREES_PER_PIXEL_YAW
+        self.DEGREES_PER_PIXEL_PITCH = config.DEGREES_PER_PIXEL_PITCH
 
         self.pid_output_deadband_degree = 0.05
 
@@ -260,6 +279,11 @@ class HavaSavunmaArayuz(QWidget):
                                 hover_color="#138496", pressed_color="#117a8b")
         control_layout.addWidget(self.reset_angles_button)
 
+        self.calibrate_button = QPushButton("Derece/Piksel Ölç", self)
+        self.apply_button_style(self.calibrate_button, font_size=14, padding=6, bg_color="#6f42c1",
+                                hover_color="#5a32a3", pressed_color="#4e2a8e")
+        control_layout.addWidget(self.calibrate_button)
+
         control_group_box.setLayout(control_layout)
         right_layout.addWidget(control_group_box)
 
@@ -374,6 +398,7 @@ class HavaSavunmaArayuz(QWidget):
         self.fire_weapon_button.clicked.connect(self.fire_weapon)
         self.connect_rpi_button.clicked.connect(self.connect_rpi_threaded)
         self.reset_angles_button.clicked.connect(self.reset_rpi_angles)
+        self.calibrate_button.clicked.connect(self.start_calibration)
         self.apply_no_fire_zone_button.clicked.connect(self.apply_no_fire_zone_settings)
         self.clear_no_fire_zone_button.clicked.connect(self.clear_no_fire_zone_settings)
         self.task3_start_button.clicked.connect(self.start_task3_engagement)
@@ -587,6 +612,11 @@ class HavaSavunmaArayuz(QWidget):
         self.last_frame_time = None
         self.last_target_velocity_x = 0.0
         self.last_target_velocity_y = 0.0
+        self.target_world_yaw_rate = 0.0
+        self.target_world_pitch_rate = 0.0
+        self._last_world_yaw = None
+        self._last_world_pitch = None
+        self._last_world_time = None
         self.current_pid_range = "TEK_SET"
         self.missing_frames = 0
 
@@ -851,6 +881,100 @@ class HavaSavunmaArayuz(QWidget):
         except Exception as e:
             self._update_status_label(f"Hata: Ateşleme hatası: {str(e)[:50]}...")
 
+    # --- Derece/piksel kalibrasyonu ---
+    # Bilinen bir açı komutu verilir, hedefin görüntüde kaç piksel kaydığı
+    # ölçülür: derece/piksel = verilen_açı / kayan_piksel.
+    # Mevcut modlarla bu ölçülemiyordu: Aşama 1'de taret hedefi aktif olarak
+    # ortaladığı için hata sıfıra gidiyor, tam manuel modda ise görev None
+    # olduğu için tespit hiç çalışmıyor ve piksel bilgisi yok.
+
+    CALIBRATION_ANGLE = 3.0      # Her eksende verilecek test açısı (derece)
+    CALIBRATION_SETTLE_FRAMES = 12  # Hareketin oturması için beklenecek kare
+
+    def start_calibration(self):
+        """Derece/piksel ölçümünü başlatır."""
+        if not self.rpi_thread.is_connected:
+            self._update_status_label("Hata: Kalibrasyon için RPi bağlantısı gerekli.")
+            return
+        if self.active_task != 'task1':
+            self._update_status_label("Hata: Kalibrasyon için önce Aşama 1'i başlatın.")
+            return
+        if self.current_tracked_target_class is None:
+            self._update_status_label("Hata: Kalibrasyon için kilitli bir hedef gerekli.")
+            return
+
+        self._calibrating = True
+        self._cal_phase = 'yaw_basla'
+        self._cal_wait = 0
+        self._cal_start_px = None
+        self._cal_results = {}
+        self._update_status_label("Kalibrasyon: Hedefi SABİT tutun, ölçüm başlıyor...")
+        print("KALİBRASYON: başladı. Hedefi sabit tutun.")
+
+    def _calibration_tick(self, target_x, target_y):
+        """
+        Kalibrasyon durum makinesi. process_tracking yerine, her karede bir kez
+        çağrılır (PID askıdayken).
+        """
+        try:
+            if self._cal_phase == 'yaw_basla':
+                self._cal_start_px = target_x
+                self.send_angle_command(self.current_yaw_angle + self.CALIBRATION_ANGLE,
+                                        self.current_pitch_angle)
+                self._cal_wait = 0
+                self._cal_phase = 'yaw_bekle'
+                self._update_status_label("Kalibrasyon: Yaw ölçülüyor, hedefi sabit tutun...")
+
+            elif self._cal_phase == 'yaw_bekle':
+                self._cal_wait += 1
+                if self._cal_wait >= self.CALIBRATION_SETTLE_FRAMES:
+                    kayma_px = self._cal_start_px - target_x
+                    if abs(kayma_px) < 5:
+                        self._bitir_kalibrasyon(
+                            "Hata: Yaw'da piksel kayması ölçülemedi (hedef görüşten çıkmış olabilir).")
+                        return
+                    self._cal_results['yaw'] = self.CALIBRATION_ANGLE / kayma_px
+                    self._cal_start_px = target_y
+                    self.send_angle_command(self.current_yaw_angle,
+                                            self.current_pitch_angle + self.CALIBRATION_ANGLE)
+                    self._cal_wait = 0
+                    self._cal_phase = 'pitch_bekle'
+                    self._update_status_label("Kalibrasyon: Pitch ölçülüyor...")
+
+            elif self._cal_phase == 'pitch_bekle':
+                self._cal_wait += 1
+                if self._cal_wait >= self.CALIBRATION_SETTLE_FRAMES:
+                    kayma_px = self._cal_start_px - target_y
+                    if abs(kayma_px) < 5:
+                        self._bitir_kalibrasyon(
+                            "Hata: Pitch'te piksel kayması ölçülemedi.")
+                        return
+                    self._cal_results['pitch'] = self.CALIBRATION_ANGLE / kayma_px
+                    self._rapor_kalibrasyon()
+        except Exception as e:
+            self._bitir_kalibrasyon(f"Hata: Kalibrasyon başarısız: {str(e)[:40]}")
+
+    def _rapor_kalibrasyon(self):
+        y = self._cal_results['yaw']
+        p = self._cal_results['pitch']
+        mesaj = f"Kalibrasyon bitti: YAW={y:.5f}  PITCH={p:.5f}"
+        self._update_status_label(f"Durum: {mesaj}")
+        print("=" * 60)
+        print("KALİBRASYON SONUCU — config.py içine yazın:")
+        print(f"  DEGREES_PER_PIXEL_YAW   = {y:.5f}")
+        print(f"  DEGREES_PER_PIXEL_PITCH = {p:.5f}")
+        print(f"(mevcut: {self.DEGREES_PER_PIXEL_YAW:.5f} / {self.DEGREES_PER_PIXEL_PITCH:.5f})")
+        print("=" * 60)
+        self._bitir_kalibrasyon(None)
+
+    def _bitir_kalibrasyon(self, hata_mesaji):
+        self._calibrating = False
+        self._cal_phase = None
+        self.reset_pid_state()
+        if hata_mesaji:
+            self._update_status_label(hata_mesaji)
+            print(f"KALİBRASYON: {hata_mesaji}")
+
     def reset_rpi_angles(self):
         if not self.rpi_thread.is_connected:
             self._update_status_label("Hata: Raspberry Pi'ye bağlı değil, açılar sıfırlanamaz.")
@@ -998,6 +1122,7 @@ class HavaSavunmaArayuz(QWidget):
                             if delta_time_for_velocity > 0:
                                 self.last_target_velocity_x = (current_target_bbox_for_pid[0] + current_target_bbox_for_pid[2] // 2 - self.last_target_x) / delta_time_for_velocity
                                 self.last_target_velocity_y = (current_target_bbox_for_pid[1] + current_target_bbox_for_pid[3] // 2 - self.last_target_y) / delta_time_for_velocity
+
 
                         self.last_target_x = current_target_bbox_for_pid[0] + current_target_bbox_for_pid[2] // 2
                         self.last_target_y = current_target_bbox_for_pid[1] + current_target_bbox_for_pid[3] // 2
@@ -1257,6 +1382,12 @@ class HavaSavunmaArayuz(QWidget):
         if not self.rpi_thread.is_connected or self.active_task == 'full_manual' or self.target_destroyed:
             return
 
+        # Kalibrasyon sırasında taret hedefi ortalamamalı; ölçüm bilinen bir açı
+        # komutuna karşılık gelen piksel kaymasına dayanıyor.
+        if self._calibrating:
+            self._calibration_tick(target_x, target_y)
+            return
+
         # Hedef koordinatları kameranın ham çözünürlüğüne göredir; gösterilen kare
         # küçültülmüş olabileceği için merkez, frame'den değil ham boyuttan alınır.
         center_x = self.frame_orig_w // 2
@@ -1284,8 +1415,39 @@ class HavaSavunmaArayuz(QWidget):
         delta_time = current_frame_time - self.pid_update_time
         self.pid_update_time = current_frame_time
 
-        feedforward_yaw = 0.0
-        feedforward_pitch = 0.0
+        # --- Hız ileri-beslemesi ---
+        # Saf oransal denetim hareketli hedefte kalıcı olarak geride kalır:
+        # çıkış ancak hata sıfırdan farklıysa üretilir, dolayısıyla kayan bir
+        # hedefte hata hiç kapanmaz. Bu terim, hedefin ölçüm gecikmesi boyunca
+        # kat edeceği yolu önceden ekleyerek o gecikmeyi telafi eder.
+        #
+        # Hedefin DÜNYA açısı = taretin açısı + hatanın derece karşılığı.
+        # Türevi hedefin gerçek açısal hızını verir. (Piksel hızını kullanmak
+        # işe yaramaz: takip çalışırken hedef karede merkezde kalır, piksel hızı
+        # sıfıra yakın çıkar.) Gürültüye karşı EMA ile yumuşatılır.
+        world_yaw = self.current_yaw_angle + error_yaw_degree
+        world_pitch = self.current_pitch_angle + error_pitch_degree
+        if self._last_world_time is not None:
+            dt_world = current_frame_time - self._last_world_time
+            if dt_world > 0:
+                a = config.VELOCITY_SMOOTHING
+                ham_yaw_rate = (world_yaw - self._last_world_yaw) / dt_world
+                ham_pitch_rate = (world_pitch - self._last_world_pitch) / dt_world
+                self.target_world_yaw_rate = a * ham_yaw_rate + (1 - a) * self.target_world_yaw_rate
+                self.target_world_pitch_rate = a * ham_pitch_rate + (1 - a) * self.target_world_pitch_rate
+        self._last_world_yaw = world_yaw
+        self._last_world_pitch = world_pitch
+        self._last_world_time = current_frame_time
+
+        feedforward_yaw = (self.target_world_yaw_rate
+                           * config.FEEDFORWARD_LEAD_TIME * config.FEEDFORWARD_GAIN)
+        feedforward_pitch = (self.target_world_pitch_rate
+                             * config.FEEDFORWARD_LEAD_TIME * config.FEEDFORWARD_GAIN)
+
+        # Hatalı bir hız tahmininin tareti savurmasını engelle
+        ff_limit = config.FEEDFORWARD_MAX_DEGREE
+        feedforward_yaw = max(-ff_limit, min(ff_limit, feedforward_yaw))
+        feedforward_pitch = max(-ff_limit, min(ff_limit, feedforward_pitch))
 
         self.integral_yaw += error_yaw_degree * delta_time
         self.integral_yaw = max(min(self.integral_yaw, 20.0), -20.0)
