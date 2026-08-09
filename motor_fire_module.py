@@ -95,13 +95,76 @@ LGPIO_OUTPUT = 1
 RELAY_ACTIVE = LGPIO_HIGH # Varsayılan olarak HIGH ile aktif olduğunu varsayıyoruz
 RELAY_INACTIVE = LGPIO_LOW # Varsayılan olarak LOW ile pasif olduğunu varsayıyoruz
 
+# --- GPIO çip (gpiochip) seçimi ---
+# 40 pinli başlığın hangi /dev/gpiochipN cihazına düştüğü karta ve çekirdek
+# sürümüne göre DEĞİŞİR. Pi 4'te 0, Pi 5'te çekirdeğe göre 4 veya 15 olabiliyor.
+# Bu yüzden numara sabit yazılmaz, çipin etiketinden bulunur.
+# Otomatik bulma başarısız olursa buraya numarayı elle yaz (örn: 15).
+GPIOCHIP_OVERRIDE = None
+
+# 40 pinli başlığı sağlayan denetleyicilerin etiketleri.
+# pinctrl-rp1  -> Pi 5 (RP1 yonga seti)
+# pinctrl-bcm* -> Pi 4 ve öncesi
+_GPIOCHIP_LABELS = ('pinctrl-rp1', 'pinctrl-bcm2712', 'pinctrl-bcm2711', 'pinctrl-bcm2835')
+_GPIOCHIP_SCAN_LIMIT = 32  # /dev/gpiochip0 .. gpiochip31 taranır
+
+# Otomatik bulmanın sonucu (teşhis için saklanır)
+_resolved_gpiochip = None
+
+
+def _find_gpiochip(lg):
+    """
+    40 pinli başlığa karşılık gelen gpiochip numarasını bulur.
+
+    Numara yerine etiketle eşleştirmek, çekirdek güncellemesi chip
+    numaralarını kaydırdığında kodun kendiliğinden uyum sağlamasını verir.
+    Bulunamazsa, 40+ hatlı ilk çipe düşülür; o da yoksa None döner.
+    """
+    if GPIOCHIP_OVERRIDE is not None:
+        print(f"DEBUG (motor_fire_module): GPIOCHIP_OVERRIDE ayarlı, chip {GPIOCHIP_OVERRIDE} kullanılıyor.")
+        sys.stdout.flush()
+        return GPIOCHIP_OVERRIDE
+
+    fallback = None
+    for n in range(_GPIOCHIP_SCAN_LIMIT):
+        try:
+            handle = lg.gpiochip_open(n)
+        except Exception:
+            continue  # Bu numarada cihaz yok, sıradakine bak
+
+        try:
+            # gpio_get_chip_info -> [status, lines, name, label]
+            info = lg.gpio_get_chip_info(handle)
+            lines = int(info[1])
+            label = str(info[3])
+            print(f"DEBUG (motor_fire_module): gpiochip{n} bulundu: '{label}' ({lines} hat)")
+            sys.stdout.flush()
+
+            if label in _GPIOCHIP_LABELS:
+                return n
+            if lines >= 40 and fallback is None:
+                fallback = n
+        except Exception as e:
+            print(f"UYARI (motor_fire_module): gpiochip{n} bilgisi okunamadı: {e}")
+            sys.stdout.flush()
+        finally:
+            try:
+                lg.gpiochip_close(handle)
+            except Exception:
+                pass
+
+    if fallback is not None:
+        print(f"UYARI (motor_fire_module): Bilinen etiket bulunamadı, 40+ hatlı gpiochip{fallback} kullanılacak.")
+        sys.stdout.flush()
+    return fallback
+
 
 def initialize_gpio():
     """
     Tüm motor ve ateşleme GPIO pinlerini başlatır ve motorları etkinleştirir.
     Bu fonksiyon sadece rpi_motor_server.py tarafından bir kez çağrılmalıdır.
     """
-    global lgh, LGpio, _gpio_initialized, RELAY_ACTIVE, RELAY_INACTIVE
+    global lgh, LGpio, _gpio_initialized, RELAY_ACTIVE, RELAY_INACTIVE, _resolved_gpiochip
     print("DEBUG (motor_fire_module): initialize_gpio() çağrıldı.")
     sys.stdout.flush()
     if sys.platform == 'linux':
@@ -109,10 +172,18 @@ def initialize_gpio():
             import lgpio
             LGpio = lgpio
 
-            lgh = LGpio.gpiochip_open(0)  # Genellikle ilk GPIO çipi (chip 0) kullanılır
+            chip = _find_gpiochip(LGpio)
+            if chip is None:
+                raise RuntimeError(
+                    "40 pinli başlığa ait gpiochip bulunamadı. 'gpiodetect' çıktısında "
+                    f"etiketi {_GPIOCHIP_LABELS} olan çipi bulup numarasını "
+                    "motor_fire_module.py içindeki GPIOCHIP_OVERRIDE değerine yazın.")
+            _resolved_gpiochip = chip
+
+            lgh = LGpio.gpiochip_open(chip)
             if lgh < 0:
-                raise RuntimeError(f"LGpio handle açılamadı, hata kodu: {lgh}")
-            print(f"DEBUG (motor_fire_module): LGpio handle ({lgh}) başarıyla açıldı.")
+                raise RuntimeError(f"LGpio handle açılamadı (gpiochip{chip}), hata kodu: {lgh}")
+            print(f"DEBUG (motor_fire_module): gpiochip{chip} açıldı, LGpio handle: {lgh}")
             sys.stdout.flush()
 
             # Röle aktif/pasif değerleri, rölenizin tetikleme mantığına göre ayarlanmalı
