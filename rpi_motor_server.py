@@ -61,20 +61,36 @@ conn = None
 addr = None
 server_socket = None
 
+# lgpio.callback() nesnesi. Referans tutulmazsa çöp toplayıcı onu silebilir
+# ve acil durdurma sessizce çalışmaz hale gelir.
+emergency_stop_cb = None
+
 
 # Acil durdurma butonu için callback
 def emergency_stop_handler(chip, gpio, level, tick):
     # Butona basıldığında (LOW) veya bırakıldığında (HIGH) tetiklenebilir.
     # Genellikle basıldığında (LOW) durdurma işlemi yapılır.
-    if level == 0:  # Butona basıldığında (LOW)
-        print("\n!!! ACİL DURDURMA BUTONUNA BASILDI !!! Tüm motorlar durduruluyor ve çıkılıyor.")
+    if level != 0:
+        return
+
+    print("\n!!! ACİL DURDURMA BUTONUNA BASILDI !!! Tüm motorlar durduruluyor.")
+    sys.stdout.flush()
+
+    # Devam eden manuel hareketi de kes; yalnızca STEP pinlerini indirmek
+    # yetmez, hareket döngüsü yön değişkenlerine bakarak adım atmayı sürdürür.
+    try:
+        motor_fire_module.set_manual_move_direction(0, 0, 0)
+        motor_fire_module.stop_all_motors()
+    except Exception as e:
+        print(f"HATA (acil durdurma): Motorlar durdurulurken hata: {e}")
         sys.stdout.flush()
-        motor_fire_module.stop_all_motors()  # Tüm motorları durdur ve devre dışı bırak
-        motor_fire_module.cleanup_gpio()  # GPIO kaynaklarını temizle
-        # Uygulamayı güvenli bir şekilde kapatmak için bir bayrak ayarla
-        global client_connected
-        client_connected.clear()  # Bağlantıyı kes
-        # sys.exit(1) # sys.exit() kullanmaktan kaçının, cleanup'ı engeller
+
+    # GPIO temizliği BURADA YAPILMAZ. Bu fonksiyon lgpio'nun kendi callback
+    # iş parçacığından çağrılır; handle'ı burada kapatmak, hâlâ çalışmakta olan
+    # hareket ve açı gönderme iş parçacıklarının kapalı bir handle'a yazmasına
+    # yol açar. Bayrağı indirmek yeterli: ana döngü çıkar ve finally bloğundaki
+    # cleanup_on_exit() temizliği tek bir yerden yapar.
+    client_connected.clear()
 
 
 # Açıları periyodik olarak PC'ye göndermek için iş parçacığı
@@ -150,8 +166,11 @@ def run_server():
 
             # Acil durdurma pini zaten initialize_gpio içinde INPUT ve PULL_UP olarak ayarlandı.
             # Burada sadece callback'i ekliyoruz.
-            LGpio.callback(lgh, motor_fire_module.EMERGENCY_STOP_PIN, motor_fire_module.LGpio.EITHER_EDGE,
-                           emergency_stop_handler)
+            # lgpio'da sabitin adı BOTH_EDGES'tir (EITHER_EDGE diye bir şey yok).
+            # Callback nesnesi referansı tutulmazsa çöp toplayıcı onu silebilir.
+            global emergency_stop_cb
+            emergency_stop_cb = LGpio.callback(lgh, motor_fire_module.EMERGENCY_STOP_PIN,
+                                               LGpio.BOTH_EDGES, emergency_stop_handler)
             print(
                 f"DEBUG (rpi_motor_server): Acil durdurma butonu (GPIO {motor_fire_module.EMERGENCY_STOP_PIN}) dinleniyor.")
             sys.stdout.flush()

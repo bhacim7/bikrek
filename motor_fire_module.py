@@ -222,10 +222,12 @@ def initialize_gpio():
                 f"DEBUG (motor_fire_module): FIRE_PIN ({FIRE_PIN}) başlangıçta RELAY_INACTIVE ({RELAY_INACTIVE}) yapıldı.")
             sys.stdout.flush()
 
-            # Acil durdurma pini (giriş olarak ayarla, pull-up direnci ile)
-            LGpio.gpio_claim_input(lgh, EMERGENCY_STOP_PIN, LGpio.SET_PULL_UP)
+            # Acil durdurma pini. DİKKAT: lgpio'da callback kaydedebilmek için
+            # pin gpio_claim_input ile DEĞİL, gpio_claim_alert ile talep edilmeli.
+            # Aksi halde lgpio.callback() sessizce hiç tetiklenmez.
+            LGpio.gpio_claim_alert(lgh, EMERGENCY_STOP_PIN, LGpio.BOTH_EDGES, LGpio.SET_PULL_UP)
             print(
-                f"DEBUG (motor_fire_module): EMERGENCY_STOP_PIN {EMERGENCY_STOP_PIN} giriş olarak ayarlandı (PULL_UP).")
+                f"DEBUG (motor_fire_module): EMERGENCY_STOP_PIN {EMERGENCY_STOP_PIN} alarm girişi olarak ayarlandı (PULL_UP, BOTH_EDGES).")
             sys.stdout.flush()
 
             _gpio_initialized = True
