@@ -79,8 +79,8 @@ DIR_CCW = 1  # Saat yönünün tersi (veya geri/aşağı)
 # Eksen başına yön çevirme. Beklenen konvansiyon: +yaw = sağ, +pitch = yukarı.
 # Montaj sonrası bir eksen ters dönüyorsa YALNIZCA o eksenin bayrağını True yap.
 # (DIR_CW/DIR_CCW ortak olduğu için tek başına eksen bazlı düzeltme yapamaz.)
-INVERT_YAW_DIR = True   # Sahada dogrulandi: montaj yonu ters, cevrildi.
-INVERT_PITCH_DIR = False
+INVERT_YAW_DIR = True    # Sahada dogrulandi: montaj yonu ters, cevrildi.
+INVERT_PITCH_DIR = True  # Sahada dogrulandi: montaj yonu ters, cevrildi.
 
 # LGpio pin modları ve seviyeleri için sabitler
 LGPIO_HIGH = 1
