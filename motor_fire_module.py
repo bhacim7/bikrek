@@ -728,10 +728,20 @@ def reset_current_angles():
     Taretin mevcut simüle edilmiş açılarını 0.0 yaw ve 0.0 pitch olarak sıfırlar.
     Bu, taretin mevcut konumunu yeni 'sıfır' noktası olarak ayarlamak için kullanılır.
     """
-    global _simulated_yaw, _simulated_pitch
+    global _simulated_yaw, _simulated_pitch, _target_yaw, _target_pitch, _servo_active
     _simulated_yaw = 0.0
     _simulated_pitch = 0.0
-    print("DEBUG (motor_fire_module): Taret açıları 0.0 yaw, 0.0 pitch olarak sıfırlandı.")
+
+    # Servo hedefi de sıfırlanmalı, yoksa taret FIRLAR: servo
+    # (_target - _simulated) farkına bakıyor. Hedef 30°'deyken mevcut açıyı
+    # sıfırlamak, servoya "30° gitmem lazım" dedirtir. Pozisyon servosuna
+    # geçişte ortaya çıkan bir yan etkiydi; eski bloklayan yapıda hedef diye
+    # bir durum yoktu.
+    _target_yaw = 0.0
+    _target_pitch = 0.0
+    _servo_active = False
+
+    print("DEBUG (motor_fire_module): Taret açıları ve servo hedefi 0.0 olarak sıfırlandı.")
     sys.stdout.flush()
 
 

@@ -1459,8 +1459,20 @@ class HavaSavunmaArayuz(QWidget):
                     candidate_target = None
                     minimum_distance = float('inf')
 
+                    # Aday havuzunu önce GÜVENE göre ayıkla. Eski kural yalnızca
+                    # "kareye en yakın" idi ve güveni hiç dikkate almıyordu;
+                    # sahada tavandaki hayalet (0.66) tam merkezde olduğu için
+                    # gerçek balonu (0.81) yenmişti. Belirgin şekilde daha
+                    # güvenli bir tespit varsa, zayıf olanlar yarışa girmiyor.
+                    def guvene_gore_ayikla(liste):
+                        if not liste:
+                            return liste
+                        en_iyi = max(d['score'] for d in liste)
+                        esik = en_iyi - config.ACQUIRE_CONFIDENCE_MARGIN
+                        return [d for d in liste if d['score'] >= esik]
+
                     if self.active_task == 'task1':
-                        for det in detections:
+                        for det in guvene_gore_ayikla(detections):
                             x, y, det_w, det_h = det['bbox']
                             det_center_x = x + det_w // 2
                             det_center_y = y + det_h // 2
@@ -1479,7 +1491,7 @@ class HavaSavunmaArayuz(QWidget):
 
                     elif self.active_task == 'task2':
                         red_balloons = [d for d in detections if d['class_name'] == 'red_balloon']
-                        for det in red_balloons:
+                        for det in guvene_gore_ayikla(red_balloons):
                             x, y, det_w, det_h = det['bbox']
                             det_center_x = x + det_w // 2
                             det_center_y = y + det_h // 2

@@ -9,6 +9,69 @@ import config
 # UI'a gönderilen karenin genişliği. Yükseklik en-boy oranından hesaplanır.
 DISPLAY_WIDTH = 810
 
+# --- Sınıf adından renk çıkarımı (hayalet filtresi için) ---
+# Anahtar: sınıf adında aranacak parça. Değer: HSV aralıkları listesi.
+# OpenCV HSV'de H 0-179 aralığındadır; kırmızı iki uçta olduğu için iki aralık.
+# NOT: Kırmızı aralık sahada ölçülmüş veriyle doğrulandı. Mavi ve yeşil
+# aralıklar tipik değerlerdir, sahada doğrulanmadı; bu yüzden eşik gevşek
+# tutuldu (yanlışlıkla gerçek tespit elemekten kaçınmak için).
+_RENK_ARALIKLARI = {
+    'red':  [((0, 120, 80), (10, 255, 255)), ((170, 120, 80), (179, 255, 255))],
+    'kir':  [((0, 120, 80), (10, 255, 255)), ((170, 120, 80), (179, 255, 255))],
+    'blue': [((100, 100, 60), (130, 255, 255))],
+    'mav':  [((100, 100, 60), (130, 255, 255))],
+    'yes':  [((40, 90, 50), (85, 255, 255))],
+}
+
+
+def _sinif_rengi(class_name):
+    """Sınıf adından renk anahtarını çıkarır; bilinmiyorsa None."""
+    ad = class_name.lower()
+    for anahtar in _RENK_ARALIKLARI:
+        if ad.startswith(anahtar) or anahtar in ad:
+            return anahtar
+    return None
+
+
+def _renk_tutarli_mi(frame, bbox, renk):
+    """
+    Kutunun içinde sınıfın belirttiği renk gerçekten var mı?
+
+    YOLO bu sahnede düz tavanda 'red_balloon' üretiyor (sahada güven 0.66'ya
+    kadar çıktı). Sınıfın adı rengi söylediğine göre, kutuda o renkten eser
+    olmaması tespitin sahte olduğunun güçlü göstergesidir. Ölçümde gerçek
+    balon kutuları ortalama %77, hayaletler %0.1 renk içeriyordu.
+    """
+    x, y, w, h = [int(v) for v in bbox]
+    yuk, gen = frame.shape[:2]
+    # Kenar payı bırak: kutu sınırları arka planı kapsayabilir
+    pay_x, pay_y = max(1, w // 8), max(1, h // 8)
+    x0, y0 = max(0, x + pay_x), max(0, y + pay_y)
+    x1, y1 = min(gen, x + w - pay_x), min(yuk, y + h - pay_y)
+    if x1 <= x0 or y1 <= y0:
+        return True  # Ölçemiyorsak elemeyiz
+
+    kirp = frame[y0:y1, x0:x1]
+    hsv = cv2.cvtColor(kirp, cv2.COLOR_BGR2HSV)
+    maske = None
+    for alt, ust in _RENK_ARALIKLARI[renk]:
+        m = cv2.inRange(hsv, np.array(alt, np.uint8), np.array(ust, np.uint8))
+        maske = m if maske is None else cv2.bitwise_or(maske, m)
+    oran = float(np.count_nonzero(maske)) / maske.size
+    return oran >= config.DETECTION_COLOR_MIN_RATIO
+
+
+def renk_filtresi(frame, detections):
+    """Sınıfının rengini içermeyen tespitleri eler."""
+    if not config.DETECTION_COLOR_CHECK or frame is None:
+        return detections
+    kalan = []
+    for det in detections:
+        renk = _sinif_rengi(det['class_name'])
+        if renk is None or _renk_tutarli_mi(frame, det['bbox'], renk):
+            kalan.append(det)
+    return kalan
+
 
 class YoloModel:
     def __init__(self, model_path, img_width, img_height):
@@ -286,6 +349,11 @@ def inference_worker(command_queue, frame_queue, result_queue):
 
                     # Detect QR for task 3
                     qr_data, qr_bbox, _ = qr_detector.detectAndDecode(frame)
+
+                # Hayalet eleme: sınıfının rengini içermeyen tespitleri at.
+                # Burada yapılıyor çünkü ham çözünürlüklü kare yalnızca bu
+                # süreçte mevcut ve kutu koordinatları da bu kareye göre.
+                detections = renk_filtresi(frame, detections)
 
             # Kareyi IPC yükünü azaltmak için küçült. Tespit kutuları HAM çözünürlükte
             # kalır; kilitli hedefin rengini yalnızca UI bildiği için çizimi UI yapar.

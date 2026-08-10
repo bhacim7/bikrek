@@ -46,8 +46,8 @@ CAMERA_USE_MJPG = True
 # İma edilen görüş açısı: 82° yatay / 56° dikey — 16:9 geniş açı kamerayla tutarlı.
 # Önceki 0.015 değeri gerçeğin 4.3 katı küçüğüydü; bu yüzden efektif döngü
 # kazancı 0.16'da kalıyor ve takip yavaş oluyordu.
-DEGREES_PER_PIXEL_YAW = 0.0638
-DEGREES_PER_PIXEL_PITCH = -0.0772
+DEGREES_PER_PIXEL_YAW = 0.05350
+DEGREES_PER_PIXEL_PITCH = -0.05547
 
 # PID oransal kazançları. Kilitlenme hızını belirleyen ana değişken budur.
 # Ölçümle doğrulanmış kalibrasyonla güvenli tavan ~0.9; üstünde salınım başlar.
@@ -117,3 +117,21 @@ PID_DEADBAND_PIXELS = 5.0
 
 # Bu piksel karşılığından küçük çıkışlar hiç gönderilmez.
 MIN_OUTPUT_PIXELS = 3.0
+
+# --- Hayalet tespit filtresi (renk tutarlılığı) ---
+# Sınıf adı bir renk belirtiyorsa (red_balloon gibi), kutunun içinde gerçekten
+# o renk olmalı. Sahada ölçüldü: tek balonlu sahnede karelerin %41.7'sinde
+# hayalet tespit vardı (tavanda red_balloon 0.66 güvenle). Kutu içeriği:
+#   gerçek balon  : ortalama %77 kırmızı (en zayıf örnek bile %17)
+#   hayalet       : ortalama %0.1 kırmızı
+# %5 eşikle 813 gerçek tespitin hiçbiri kaybolmadı, 338 hayaletin %99'u elendi.
+DETECTION_COLOR_CHECK = True
+DETECTION_COLOR_MIN_RATIO = 0.05
+
+# --- Hedef seçiminde güven skoru ---
+# Aday seçimi "kareye en yakın tespit" kuralıyla yapılıyor ve güveni hiç
+# dikkate almıyordu; sahada tavandaki hayalet (0.66) tam merkezde olduğu için
+# gerçek balonu (0.81) yenmişti. Artık önce belirgin şekilde daha güvenli
+# tespitler ayıklanıyor, sonra kalanlar arasında merkeze yakınlık karar veriyor.
+# Bu marj kadar düşük güvenli adaylar, daha iyisi varken değerlendirmeye alınmaz.
+ACQUIRE_CONFIDENCE_MARGIN = 0.15
