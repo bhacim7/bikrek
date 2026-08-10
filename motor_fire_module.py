@@ -113,7 +113,7 @@ _servo_bres_pitch = 0.0
 # oldu, yani marj var. 70'e çıkarıldı: kör ilerleme yaw 7.5°, pitch 11.2°
 # (dikey görüşün %20'si) — hâlâ hedefi kareden çıkarmayacak seviyede.
 # Yavaş gelirse artır, aşma/kayıp başlarsa düşür: ayarlanacak ilk yer burası.
-SERVO_MAX_DEG_PER_SEC = 70.0
+SERVO_MAX_DEG_PER_SEC = 100.0
 
 # Sabit bir alt gecikme YETERSİZ kalıyordu. İki eksen ortak darbe saatini
 # paylaşıyor; gecikmeyi adım/derece oranı küçük olan eksenden (pitch)
