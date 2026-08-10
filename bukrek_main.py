@@ -7,6 +7,7 @@ from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QFont
 from PyQt5.QtCore import QTimer, Qt, QCoreApplication, QThread, pyqtSignal
 
 import time
+import math
 import numpy as np
 import traceback
 import multiprocessing as mp
@@ -144,6 +145,9 @@ class HavaSavunmaArayuz(QWidget):
         # milisaniye geriye bakar, bu fazlasıyla yeterli.
         self._angle_history = deque(maxlen=200)
         self._son_aci_etiketi = 0.0
+        # Feedforward degisim hizi siniri icin onceki degerler
+        self._ff_onceki_yaw = 0.0
+        self._ff_onceki_pitch = 0.0
         # İşlenen karenin ÇEKİLME zamanı (time.time() değil!)
         self._capture_time = None
 
@@ -758,6 +762,8 @@ class HavaSavunmaArayuz(QWidget):
         self.reset_pid_state()
 
     def reset_pid_state(self):
+        self._ff_onceki_yaw = 0.0
+        self._ff_onceki_pitch = 0.0
         self.integral_yaw = 0.0
         self.last_error_yaw = 0.0
         self.integral_pitch = 0.0
@@ -1892,19 +1898,71 @@ class HavaSavunmaArayuz(QWidget):
         self._last_world_pitch = world_pitch
         self._last_world_time = current_frame_time
 
-        # Ölü bant: hedef gerçekten dururken feedforward tam olarak sıfırlansın.
-        # Aksi halde tespit gürültüsünün ürettiği sahte hız tareti titretir.
-        db = config.FEEDFORWARD_VELOCITY_DEADBAND
-        ff_yaw_rate = self.target_world_yaw_rate if abs(self.target_world_yaw_rate) >= db else 0.0
-        ff_pitch_rate = self.target_world_pitch_rate if abs(self.target_world_pitch_rate) >= db else 0.0
+        # --- Feedforward kapıları ---
+        # Üç ayrı kapı var; üçü de aynı gerçeğe dayanıyor: hız tahmininin
+        # güvenilirliği duruma göre çok değişiyor ve feedforward güvenilmez
+        # olduğu anda zarar veriyor.
 
-        feedforward_yaw = ff_yaw_rate * config.FEEDFORWARD_LEAD_TIME * config.FEEDFORWARD_GAIN
-        feedforward_pitch = ff_pitch_rate * config.FEEDFORWARD_LEAD_TIME * config.FEEDFORWARD_GAIN
+        # 1) YUMUŞAK ÖLÜ BANT. Sert eşik, hız eşiği geçtiği anda feedforward'ı
+        #    sıfırdan tam değerine sıçratıyordu (4 °/s eşikte 0.7° = 13 piksel).
+        #    Hedef yön değiştirirken hız sıfırdan geçtiği için bu sıçrama her
+        #    yön değişiminde yaşanıyor ve sahada "bir anda salınım başlıyor"
+        #    olarak görülüyordu. Artık ölü bant ile iki katı arasında 0'dan
+        #    1'e doğrusal olarak açılıyor.
+        db = config.FEEDFORWARD_VELOCITY_DEADBAND
+
+        def _db_katsayi(hiz):
+            m = abs(hiz)
+            if m <= db:
+                return 0.0
+            if m >= 2 * db:
+                return 1.0
+            return (m - db) / db
+
+        # 2) HATA KAPISI. Feedforward'ın işi, KİLİTLİ takipte hedefin ölçüm
+        #    gecikmesi boyunca kat ettiği yolu telafi etmek. Hata büyükken
+        #    (edinme manevrası) taret tepe hızında dönüyor ve tam o anda açı
+        #    telemetrisi en güvenilmez halinde: Pi adım atarken gönderici iş
+        #    parçacığı gecikiyor, 15 ms'lik bir gecikme 89 °/s'de 1.3° = 25
+        #    piksel açı hatası demek. Bu hata hız tahminine sızıyor, sızıntı
+        #    feedforward'ı besliyor, feedforward tareti daha hızlı döndürüyor
+        #    ve sızıntı büyüyor — pozitif geri besleme. Sahada 10 saniye süren
+        #    ±4° salınım buydu. Zaten hata büyükken oransal terim feedforward'ın
+        #    yüz katı; kapatmanın hiçbir maliyeti yok.
+        hata_px = math.hypot(error_yaw_degree / self.DEGREES_PER_PIXEL_YAW,
+                             error_pitch_degree / self.DEGREES_PER_PIXEL_PITCH)
+        tam, sifir = config.FEEDFORWARD_ERROR_GATE_PIXELS
+        if hata_px >= sifir:
+            kapi = 0.0
+        elif hata_px <= tam:
+            kapi = 1.0
+        else:
+            kapi = (sifir - hata_px) / (sifir - tam)
+
+        k_yaw = _db_katsayi(self.target_world_yaw_rate) * kapi
+        k_pitch = _db_katsayi(self.target_world_pitch_rate) * kapi
+
+        lead = config.FEEDFORWARD_LEAD_TIME * config.FEEDFORWARD_GAIN
+        feedforward_yaw = self.target_world_yaw_rate * lead * k_yaw
+        feedforward_pitch = self.target_world_pitch_rate * lead * k_pitch
 
         # Hatalı bir hız tahmininin tareti savurmasını engelle
         ff_limit = config.FEEDFORWARD_MAX_DEGREE
         feedforward_yaw = max(-ff_limit, min(ff_limit, feedforward_yaw))
         feedforward_pitch = max(-ff_limit, min(ff_limit, feedforward_pitch))
+
+        # 3) DEĞİŞİM HIZI SINIRI. Yukarıdaki iki kapıdan sonra bile hız tahmini
+        #    kare kare zıplayabiliyor ve feedforward onu aynen aktarıyor. Bu,
+        #    takibin "akıcı" değil "kasıntılı" görünmesinin doğrudan sebebi.
+        #    Ölçümde yön değiştirme sayısı 157'den 69'a indi, üstelik ortalama
+        #    hata da 32.2'den 31.4 piksele düştü — yani yumuşatmanın bedeli yok.
+        adim = config.FEEDFORWARD_MAX_STEP_DEGREE
+        feedforward_yaw = self._ff_onceki_yaw + max(
+            -adim, min(adim, feedforward_yaw - self._ff_onceki_yaw))
+        feedforward_pitch = self._ff_onceki_pitch + max(
+            -adim, min(adim, feedforward_pitch - self._ff_onceki_pitch))
+        self._ff_onceki_yaw = feedforward_yaw
+        self._ff_onceki_pitch = feedforward_pitch
 
         self.integral_yaw += error_yaw_degree * delta_time
         self.integral_yaw = max(min(self.integral_yaw, 20.0), -20.0)

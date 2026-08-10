@@ -153,6 +153,30 @@ FEEDFORWARD_VELOCITY_DEADBAND = 4.0
 # baslıyordu. 5.0 = 28 derece/sn'lik hedefe kadar kirpmaz.
 FEEDFORWARD_MAX_DEGREE = 5.0
 
+# --- Feedforward kapilari (sahada olculdu, hedefTakipDeneme.mp4) ---
+# Feedforward yalnizca KILITLI takipte anlamli. Hata buyukken taret tepe
+# hizinda doner ve tam o anda aci telemetrisi en guvenilmez halindedir: Pi
+# adim atarken aci gonderen is parcacigi gecikir, 15 ms'lik gecikme 89 derece/sn
+# hizda 1.3 derece = 25 piksellik aci hatasi demektir. Bu hata hiz tahminine
+# sizar, sizinti feedforward'i besler, feedforward tareti daha hizli dondurur
+# ve sizinti buyur -- pozitif geri besleme. Sahada edinme manevrasi 10 saniye
+# boyunca +-4 derece salindi.
+#
+# (tam_piksel, sifir_piksel): bu hatanin altinda feedforward tam, ustunde sifir,
+# arasinda dogrusal soner. Hata buyukken oransal terim zaten feedforward'in yuz
+# kati oldugu icin kapatmanin maliyeti yok.
+# Olcum (edinme manevrasi, Pi 20 Hz + 15 ms jitter):
+#   kapi yok        -> ort 19.0 px, tepe 137 px, oturma 6.34 sn
+#   kapi 30/120     -> ort  2.2 px, tepe  49 px, oturma 0.88 sn
+FEEDFORWARD_ERROR_GATE_PIXELS = (30.0, 120.0)
+
+# Feedforward'in bir denetim cevriminde degisebilecegi en buyuk miktar (derece).
+# Iki kapidan sonra bile hiz tahmini kare kare ziplayabiliyor ve feedforward
+# onu aynen aktariyor; takibin "akici" degil "kasintili" gorunmesinin dogrudan
+# sebebi bu. Olcumde yon degistirme sayisi 157'den 69'a indi ve ortalama hata
+# da 32.2'den 31.4 piksele dustu -- yani yumusatmanin bedeli yok.
+FEEDFORWARD_MAX_STEP_DEGREE = 0.25
+
 # Hedefin dünya açısal hızı için üst sınır (derece/sn). Elde gezdirilen bir
 # balon bunu aşmaz. Bu sınır iki yerde koruma sağlar: feedforward ve hedef
 # kaybındaki tahmin. Sahada 90 iken, 0.6 sn kayıpta tahmin 54° savrulup
