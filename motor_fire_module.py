@@ -115,11 +115,41 @@ _servo_bres_pitch = 0.0
 # Yavaş gelirse artır, aşma/kayıp başlarsa düşür: ayarlanacak ilk yer burası.
 SERVO_MAX_DEG_PER_SEC = 70.0
 
-# DİKKAT: gecikme, adım/derece oranı KÜÇÜK olan eksenden türetilmeli. İki eksen
-# ortak bir darbe saatini paylaştığı için, yaw'dan türetmek pitch'i 1.5 kat
-# hızlandırıyordu (120 yerine 180°/s) — sahada savrulan eksen tam da pitch'ti.
-_EN_HIZLI_EKSEN_ADIM_DERECE = min(STEPS_PER_DEGREE_YAW, STEPS_PER_DEGREE_PITCH)
-SERVO_MIN_DELAY = 1.0 / (2 * SERVO_MAX_DEG_PER_SEC * _EN_HIZLI_EKSEN_ADIM_DERECE)
+# Sabit bir alt gecikme YETERSİZ kalıyordu. İki eksen ortak darbe saatini
+# paylaşıyor; gecikmeyi adım/derece oranı küçük olan eksenden (pitch)
+# türetmek, pitch'i sınıra oturtuyor ama yaw'ı 46.7°/s'de bırakıyordu
+# (70 × 17.778/26.667). Oysa saf yaw hareketinde yaw'ın yavaşlaması için
+# hiçbir sebep yok.
+#
+# Artık gecikme HER HAREKET İÇİN, o hareketteki eksen oranlarına göre
+# hesaplanıyor (_servo_gecikme_siniri). Böylece her iki eksen de kendi
+# başına sınıra kadar çıkabiliyor, çapraz hareket düz kalmaya devam ediyor.
+# Sahada hareketli hedef takibinin sınırı buydu: hedef 50°/s'yi geçince
+# taret yetişemiyor ve balon kareden çıkıyordu.
+SERVO_MIN_DELAY = 1.0 / (2 * SERVO_MAX_DEG_PER_SEC
+                         * min(STEPS_PER_DEGREE_YAW, STEPS_PER_DEGREE_PITCH))
+
+
+def _servo_gecikme_siniri(oran_yaw, oran_pitch):
+    """
+    Bu hareket için izin verilen en kısa yarım periyot.
+
+    Bresenham oranları verildiğinde, bir eksenin gerçek derece/sn hızı
+    (tik_hizi × oran / adım_derece) olur. Hiçbir eksen SERVO_MAX_DEG_PER_SEC'i
+    aşmamalı, dolayısıyla tik hızı eksenler üzerindeki en kısıtlayıcı değerle
+    sınırlanır. Saf yaw hareketinde oran_pitch=0 olduğu için sınırı yalnızca
+    yaw belirler ve yaw tam hıza çıkabilir.
+    """
+    en_yuksek_tik = None
+    for oran, adim_derece in ((oran_yaw, STEPS_PER_DEGREE_YAW),
+                              (oran_pitch, STEPS_PER_DEGREE_PITCH)):
+        if oran <= 0:
+            continue
+        tik = SERVO_MAX_DEG_PER_SEC * adim_derece / oran
+        en_yuksek_tik = tik if en_yuksek_tik is None else min(en_yuksek_tik, tik)
+    if not en_yuksek_tik:
+        return SERVO_MIN_DELAY
+    return 1.0 / (2 * en_yuksek_tik)
 
 PULSE_TIME = 0.1  # Ateşleme rölesinin çekili kalma süresi (saniye)
 
@@ -629,13 +659,21 @@ def perform_servo_step():
         _servo_bres_yaw = _servo_bres_pitch = 0.0
         return False
 
-    # Yamuk profil: frenleme mesafesi kaldıysa yavaşla, yoksa hızlan.
+    # Bu hareketteki eksen oranlarına göre izin verilen en kısa periyot.
+    # Saf tek eksen hareketinde o eksen tam hıza çıkabilir; çapraz harekette
+    # sınırı en kısıtlayıcı eksen belirler.
     kalan_adim = max(abs(adim_yaw), abs(adim_pitch))
+    alt_gecikme = _servo_gecikme_siniri(abs(adim_yaw) / kalan_adim,
+                                        abs(adim_pitch) / kalan_adim)
+
+    # Yamuk profil: frenleme mesafesi kaldıysa yavaşla, yoksa hızlan.
     frenleme_icin_gereken = (MAX_DELAY - _servo_current_delay) / DECEL_STEP
     if kalan_adim > frenleme_icin_gereken:
-        _servo_current_delay = max(SERVO_MIN_DELAY, _servo_current_delay - ACCEL_STEP)
+        _servo_current_delay = max(alt_gecikme, _servo_current_delay - ACCEL_STEP)
     else:
         _servo_current_delay = min(MAX_DELAY, _servo_current_delay + DECEL_STEP)
+    # Yön değişince oran değişebilir; sınırı her tikta uygula.
+    _servo_current_delay = max(_servo_current_delay, alt_gecikme)
 
     # --- ORANTILI (Bresenham) DARBE DAĞITIMI ---
     # Önceden kalan adımı olan HER eksen her tıkta darbe alıyordu. İki eksen
