@@ -90,9 +90,16 @@ def angle_sender_loop():
             }
             if conn:
                 conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
-            # 20 Hz. Manuel modda taret 120 derece/sn'ye çıkabildiği için daha
-            # seyrek gönderim arayüzdeki açıyı gözle görülür şekilde geriletir.
-            time.sleep(0.05)
+            # 50 Hz. Bu oran sadece arayüzdeki göstergeyi değil, PC'deki ölü
+            # zaman telafisini besleyen AÇI GEÇMİŞİNİ belirliyor. Kare çekildiği
+            # andaki taret açısı bu geçmişten aradeğerlenerek okunuyor; örnekler
+            # seyrek olduğunda okunan açı gerçeğinden sapıyor ve sapma taret
+            # hızıyla orantılı olduğu için hedefin dünya açısında sahte bir
+            # hareket üretiyor. 20 Hz'de bu sahte hız 8-15 derece/sn ölçüldü —
+            # elde gezdirilen balonun gerçek hızı kadar. 50 Hz + aradeğerleme
+            # bunu ~1 derece/sn'ye indiriyor.
+            # Yük ihmal edilebilir: saniyede 50 küçük JSON satırı.
+            time.sleep(0.02)
         except BrokenPipeError:
             print("UYARI (rpi_motor_server): Açı gönderilirken bağlantı kesildi (BrokenPipeError).")
             sys.stdout.flush()

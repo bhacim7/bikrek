@@ -64,11 +64,19 @@ KP_PITCH = 0.6
 # kalıcı olarak geride kalır (10°/s hedefte KP=0.5 ile ~100 piksel). Bu terim
 # hedefin ölçüm gecikmesi boyunca kat edeceği yolu önceden telafi eder.
 # 0.0 = kapalı. Sahada 0'dan kademeli açın; titreme başlarsa geri düşürün.
-FEEDFORWARD_GAIN = 0.3
+# Sahada olculdu: kalan gecikme ~0.22 sn (asagiya bakin). Etkin ileri gorus
+# GAIN x LEAD_TIME carpimidir; eskiden 0.3 x 0.10 = 0.03 sn idi, yani olcumun
+# ancak yedide biri. Aci gecmisi duzeltilmeden bu carpimi buyutmek isleri
+# KOTULESTIRIYORDU (sahte hiz tahmini yuzunden); duzeltme sonrasi guvenli.
+FEEDFORWARD_GAIN = 0.8
 
-# Duyarga gecikmesi tahmini (saniye): kamera + çıkarım + açı raporu.
-# Feedforward'ın ne kadar ileriyi tahmin edeceğini belirler.
-FEEDFORWARD_LEAD_TIME = 0.10
+# Duyarga gecikmesi (saniye): kamera + cikarim + aci raporu + motor tepkisi.
+# EKRAN KAYDINDAN OLCULDU: hedef sabit hizla giderken kalan piksel hatasi
+# hedefin acisal hizina bolununce her kesitte ayni sayi cikti:
+#   hedef hizi  5-15 derece/sn araliginda 14 olcum -> ortanca 0.22 sn
+#   (dagilim 0.17-0.24 sn; yon ve hizdan bagimsiz, yani saf olu zaman)
+# Etkin telafi = FEEDFORWARD_GAIN x bu deger.
+FEEDFORWARD_LEAD_TIME = 0.22
 
 # --- Kamera boru hattı gecikmesi (ölü zaman telafisinin eksik kalan kısmı) ---
 # Kamera karesinin zaman damgası, sensörün POZLADIĞI an değil karenin
@@ -107,22 +115,43 @@ VELOCITY_FAST_SMOOTHING = 0.6
 # Bu hızın (derece/sn) üstünde hedef "gerçekten hareketli" sayılır ve hızlı
 # yumuşatmaya geçilir. Altında tespit gürültüsü baskındır, yavaş yumuşatma
 # kullanılır. Ölü bant (FEEDFORWARD_VELOCITY_DEADBAND) bunun altında kalmalı.
-VELOCITY_FAST_THRESHOLD = 10.0
+# Ekran kaydindan olculdu: elde gezdirilen balonun gercek acisal hizi 5-15
+# derece/sn araligindaydi. Esik 10 iken hareketin cogu yavas moda dusuyor ve
+# hizli yumusatma hic devreye girmiyordu.
+VELOCITY_FAST_THRESHOLD = 4.0
 
 # Hız AZALIRKEN kullanılan katsayı — kasıtlı olarak daha büyük, yani daha hızlı
 # söner. Sebep: hedef durduğunda simetrik yumuşatma hız tahminini birkaç kare
 # boyunca yüksek tutuyor, feedforward itmeye devam ediyor ve taret hedefi geçip
 # geri dönüyordu. Asimetrik sönüm bu aşımı ölçümde 5 px'den 2 px'e indirdi.
-VELOCITY_DECAY_SMOOTHING = 0.6
+# 0.6 -> 0.75: etkin ileri gorus alti kat buyuyunce sonme kuyrugu da alti kat
+# agirlik kazandi ve "hedefi elden birakip masaya koyma" aninda hata 4.1 px'den
+# 7.2 px'e cikti. Tarama (gercek yorunge tekrar oynatilarak, ort. hata px):
+#   sonum   hareketli  durdurma  oturmus  edinme-salinimi
+#    0.60      22.4       7.2      1.4        6.8
+#    0.75      25.4       2.9      1.4        6.8   <-- secilen: dordu de iyi
+#    0.85      27.2       1.5      2.2        6.8
+# 0.85 durdurmayi daha da iyilestiriyor ama hareketli takibi ve oturmayi
+# bozuyor; 0.75 dort fazin dordunde de eski degerlerden iyi.
+VELOCITY_DECAY_SMOOTHING = 0.75
 
 # Bu eşiğin altındaki hız tahmini feedforward'a verilmez (derece/sn).
 # Sabit hedefte tespit gürültüsünün ürettiği sahte hızın tareti titretmesini
 # engeller; hedef gerçekten dururken feedforward tam olarak sıfırlanır.
-FEEDFORWARD_VELOCITY_DEADBAND = 2.0
+# 2.0 -> 4.0: etkin ileri gorus 0.03 sn'den 0.18 sn'ye cikinca ayni gurultu
+# alti kat buyuk bir itme uretmeye basladi ve oturmus sabit hedefte hata
+# 2.4 px'den 5.3 px'e cikti. Tarama (gercek yorunge tekrar oynatilarak):
+#   olu bant  2.0 -> hareketli 21.7 px, sabit 5.3 px
+#   olu bant  3.0 -> hareketli 22.1 px, sabit 2.7 px
+#   olu bant  4.0 -> hareketli 22.4 px, sabit 1.4 px   <-- secilen
+# Hareketli hedefte bedeli yok cunku gercek hedef hizi 5-15 derece/sn.
+FEEDFORWARD_VELOCITY_DEADBAND = 4.0
 
 # Feedforward katkısının üst sınırı (derece). Ani/hatalı bir hız tahmininin
-# tareti savurmasını engeller.
-FEEDFORWARD_MAX_DEGREE = 3.0
+# tareti savurmasını engeller. Etkin ileri gorus 0.18 sn'ye cikinca 15 derece/sn
+# hedefte katki 2.7 dereceye ulasiyor; 3.0 siniri normal calismayi kirpmaya
+# baslıyordu. 5.0 = 28 derece/sn'lik hedefe kadar kirpmaz.
+FEEDFORWARD_MAX_DEGREE = 5.0
 
 # Hedefin dünya açısal hızı için üst sınır (derece/sn). Elde gezdirilen bir
 # balon bunu aşmaz. Bu sınır iki yerde koruma sağlar: feedforward ve hedef

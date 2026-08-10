@@ -367,3 +367,106 @@ tahmin hatası 0.5'ten de düşük.
   10/13/14 px, fark yok.
 - `FEEDFORWARD_GAIN` yükseltme — 45 °/s hedefte 0.3 → 10 px, 1.0 → 37 px,
   yani daha kötü.
+
+---
+
+## Kök Neden: Açı Geçmişi Sızıntısı (hssCiftDeneme.mp4 analizi)
+
+Bu, hem sabit hedefteki salınımın hem de hareketli hedefteki kalıcı gecikmenin
+**ortak sebebi**. Ekran kaydından kare kare ölçüldü.
+
+### Ölçüm 1 — kalan gecikme sabit ve büyük
+
+Taretin gerçek dönüş hızı, arka planın (sabit tavan/kirişler) kayma miktarından
+optik akışla çıkarıldı. Kararlı takipte taret hızı = hedef hızı olduğundan,
+kalan piksel hatası / hedef hızı = etkin ölü zaman:
+
+| video kesiti | hedef hızı | kalan hata | ima edilen gecikme |
+|---|---|---|---|
+| 8-11 s | 7-13 °/s | 36-55 px | 205-259 ms |
+| 13-18 s | 5-11 °/s | 24-43 px | 200-402 ms |
+| 21-24 s | 7-9 °/s | 25-42 px | 196-300 ms |
+| 26-29 s | 6-16 °/s | 18-68 px | 173-235 ms |
+
+14 kesitte **ortanca 0.22 s**, yön ve hızdan bağımsız — yani saf ölü zaman.
+Buna karşılık etkin feedforward telafisi `GAIN x LEAD = 0.3 x 0.10 = 0.03 s`
+idi; ölçülenin yedide biri.
+
+### Ölçüm 2 — hız tahmini gürültüsü sinyal kadar büyük
+
+Hedef GERÇEKTEN sabitken sistemin hesapladığı dünya hızı sıfır olmalı:
+
+| faz | taret hızı RMS | ölçülen "hedef hızı" RMS |
+|---|---|---|
+| tam durgun (36.5-41 s) | 0.2 °/s | **0.4 °/s** — temiz |
+| oturmuş ama mikro hareketli (5-6.5 s) | 7.8 °/s | **8.1 °/s** |
+| salınım fazı (2.8-4.8 s) | 34.0 °/s | **14.4 °/s** |
+
+Taret hareket ettiği anda sahte hedef hızı ortaya çıkıyor ve büyüklüğü taret
+hızıyla orantılı. Elde gezdirilen balonun gerçek hızı 5-15 °/s olduğuna göre
+**gürültü sinyal kadar büyüktü**.
+
+### Kaynak
+
+`bukrek_main._angle_at()` açı geçmişinden **en yakın önceki kaydı olduğu gibi**
+döndürüyordu (sıfırıncı derece tutma) ve Pi açıları **20 Hz** ile gönderiyordu.
+Ortalama 25 ms'lik sistematik gecikme, taret 40 °/s'de dönerken 1.0° = 19 px
+açı hatası demek. Kare kare türevi alınınca sahte hız çıkıyor.
+
+Simülasyon ölçümü birebir doğruladı (5-6.5 s fazı: model 8.8 °/s, saha 8.1 °/s).
+
+| örnekleme | sahte hız RMS (oturmuş) | (hareketli) |
+|---|---|---|
+| 20 Hz tutma (eskisi) | 8.8 °/s | 18.7 °/s |
+| 20 Hz aradeğerleme | 4.8 °/s | 14.6 °/s |
+| **50 Hz aradeğerleme** | **1.2 °/s** | **3.1 °/s** |
+
+### Neden feedforward artışı daha önce işe yaramamıştı
+
+Videodan çıkarılan **gerçek hedef yörüngesi** kapalı döngüde tekrar oynatıldı
+(ortalama hata, px):
+
+| yapılandırma | hareketli | sabit |
+|---|---|---|
+| eski hali | 45.0 | 7.5 |
+| sadece açı düzeltmesi | 39.8 | 6.5 |
+| açı düzeltmesi + ff artışı | **21.7** | 6.5 |
+| **sadece ff artışı (açı düzeltmesi YOK)** | **67.0** | **48.3** |
+
+Son satır sahada gözlenen "feedforward'ı açınca kötüleşiyor" davranışını
+birebir üretiyor. Açı düzeltmesi ön koşuldu.
+
+### Yapılan değişiklikler
+
+| yer | eski | yeni |
+|---|---|---|
+| `bukrek_main._angle_at` | sıfırıncı derece tutma | **lineer aradeğerleme** |
+| `rpi_motor_server.angle_sender_loop` | 20 Hz | **50 Hz** |
+| `FEEDFORWARD_LEAD_TIME` | 0.10 | **0.22** (ölçülen) |
+| `FEEDFORWARD_GAIN` | 0.3 | **0.8** |
+| `FEEDFORWARD_MAX_DEGREE` | 3.0 | **5.0** |
+| `FEEDFORWARD_VELOCITY_DEADBAND` | 2.0 | **4.0** |
+| `VELOCITY_FAST_THRESHOLD` | 10.0 | **4.0** |
+| `VELOCITY_DECAY_SMOOTHING` | 0.6 | **0.75** |
+
+Son ikisi ve ölü bant, ff artışının yan etkilerini kapatmak için tarandı;
+seçilen değerler dört fazın **dördünde birden** eski değerlerden iyi:
+
+| video fazı | eski | yeni |
+|---|---|---|
+| hareketli takip (7-29 s) | 45.0 px | **25.4 px** (-43%) |
+| edinme salınımı (5-6.5 s) | 7.5 px | **6.8 px** (-8%) |
+| hedefi durdurma (30-32 s) | 4.1 px | **2.9 px** (-29%) |
+| tam oturmuş (36.6-41 s) | 2.4 px | **1.4 px** (-39%) |
+
+> **`rpi_motor_server.py` Pi tarafında.** Değişikliğin etkili olması için
+> dosyanın Pi'ye kopyalanıp sunucunun yeniden başlatılması gerekir. Yalnızca
+> PC tarafı güncellenirse aradeğerleme 20 Hz veriyle çalışır — yine de eskisinden
+> iyidir (39.8 px) ama tam kazanç alınmaz.
+
+### Sahada sıradaki düğme
+
+Kalan hareketli hedef hatası ~25 px. Etkin ileri görüş şu an 0.176 s, ölçülen
+gecikme 0.22 s. `FEEDFORWARD_GAIN` 0.8 -> 1.0 yapmak farkı kapatır. Sabit hedefte
+titreme başlarsa geri düşürün. `KP` ve `VELOCITY_SMOOTHING` bu iş için denendi
+ve kaldıraç değiller — tekrar denemeye gerek yok.

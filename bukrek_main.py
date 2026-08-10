@@ -140,7 +140,10 @@ class HavaSavunmaArayuz(QWidget):
 
         # Zaman damgalı açı geçmişi (ölü zaman telafisi için). 20 Hz'de
         # 120 kayıt ~6 saniye; kamera gecikmesi bunun çok altında.
-        self._angle_history = deque(maxlen=120)
+        # 50 Hz raporla ~4 sn geçmiş. Ölü zaman telafisi en fazla birkaç yüz
+        # milisaniye geriye bakar, bu fazlasıyla yeterli.
+        self._angle_history = deque(maxlen=200)
+        self._son_aci_etiketi = 0.0
         # İşlenen karenin ÇEKİLME zamanı (time.time() değil!)
         self._capture_time = None
 
@@ -518,17 +521,39 @@ class HavaSavunmaArayuz(QWidget):
         ÇEKİLDİĞİ anda geçerliydi, taret o zamandan beri hareket etti. Hatayı
         o andaki açıya eklemek hedefin dünyadaki gerçek açısını verir.
         Geçmiş yoksa mevcut açıya düşülür (eski davranış).
+
+        Açı raporu ayrık aralıklarla gelir; aradaki anlar ARADEĞERLENİR.
+        Eskiden en yakın önceki kayıt olduğu gibi döndürülüyordu (sıfırıncı
+        derece tutma) ve bu, örnekleme aralığının yarısı kadar sistematik bir
+        gecikme bırakıyordu. Taret dönerken bu gecikme doğrudan açı hatasına,
+        o da hedefin dünya açısında sahte bir kaymaya dönüşüyordu. Kare kare
+        türevi alındığında ortaya taret hızıyla orantılı, tamamen sahte bir
+        "hedef hızı" çıkıyor ve feedforward onu kovalıyordu.
+
+        Sahada ölçüldü (ekran kaydından, hedef GERÇEKTEN sabitken):
+          - oturmuş ama mikro hareketli taret : sahte hedef hızı 8.1 derece/sn
+          - salınım fazı                      : sahte hedef hızı 14.4 derece/sn
+        Elde gezdirilen balonun gerçek hızı 5-15 derece/sn olduğu için gürültü
+        sinyal kadar büyüktü; feedforward'ı açmak bu yüzden işleri kötüleştiriyordu.
         """
         if not self._angle_history:
             return self.current_yaw_angle, self.current_pitch_angle
-        # En yakın (zaman <= t) kaydı bul; yoksa en eskisini kullan
-        secilen = self._angle_history[0]
+        onceki = None
         for kayit in self._angle_history:
             if kayit[0] <= t:
-                secilen = kayit
+                onceki = kayit
             else:
-                break
-        return secilen[1], secilen[2]
+                if onceki is None:
+                    return kayit[1], kayit[2]        # t geçmişin başından eski
+                araligi = kayit[0] - onceki[0]
+                if araligi <= 0:
+                    break
+                w = (t - onceki[0]) / araligi
+                return (onceki[1] + w * (kayit[1] - onceki[1]),
+                        onceki[2] + w * (kayit[2] - onceki[2]))
+        if onceki is None:
+            return self.current_yaw_angle, self.current_pitch_angle
+        return onceki[1], onceki[2]                  # t geçmişin sonundan yeni
 
     def _hiz_alfa(self, ham, mevcut):
         """
@@ -606,7 +631,14 @@ class HavaSavunmaArayuz(QWidget):
         # Ölü zaman telafisi için açı geçmişi (PC saati ile damgalanır;
         # kamera karesinin zaman damgası da aynı saatten gelir).
         self._angle_history.append((time.time(), yaw, pitch))
-        self.update_info_panel(f"Mevcut Yaw: {self.current_yaw_angle:.1f}°, Pitch: {self.current_pitch_angle:.1f}°")
+        # Etiket güncellemesi kısıtlanıyor: açı raporu 50 Hz'e çıkarıldı ve her
+        # örnekte Qt etiketi yenilemek boşuna yük. Geçmiş tam hızda tutuluyor,
+        # sadece görsel yenileme ~15 Hz'e iniyor.
+        simdi = time.time()
+        if simdi - self._son_aci_etiketi >= 0.066:
+            self._son_aci_etiketi = simdi
+            self.update_info_panel(
+                f"Mevcut Yaw: {self.current_yaw_angle:.1f}°, Pitch: {self.current_pitch_angle:.1f}°")
 
     def _process_rpi_response(self, response_data):
         if response_data.get("status") == "ok":
