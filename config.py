@@ -128,6 +128,14 @@ MIN_OUTPUT_PIXELS = 3.0
 DETECTION_COLOR_CHECK = True
 DETECTION_COLOR_MIN_RATIO = 0.05
 
+# Kutu, karenin bu oranından büyükse tespit reddedilir. Sahada YOLO karenin
+# %85'ini kaplayan bir 'blue_balloon' üretti ve taret ona kilitlendi; balon
+# hangi mesafede olursa olsun kareyi bu kadar dolduramaz.
+# Üç kayıttan çıkarılan 642 GERÇEK balon kutusu ölçüldü: en büyüğü karenin
+# %2.2'si, %99 dilim %1.9. Bu sınır 11 kat emniyet payı bırakıyor ve renkten
+# bağımsız çalıştığı için renk kontrolünün kaçırdığı saçma kutuları da yakalar.
+DETECTION_MAX_AREA_RATIO = 0.25
+
 # --- Hedef seçiminde güven skoru ---
 # Aday seçimi "kareye en yakın tespit" kuralıyla yapılıyor ve güveni hiç
 # dikkate almıyordu; sahada tavandaki hayalet (0.66) tam merkezde olduğu için

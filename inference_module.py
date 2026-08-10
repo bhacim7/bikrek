@@ -15,11 +15,16 @@ DISPLAY_WIDTH = 810
 # NOT: Kırmızı aralık sahada ölçülmüş veriyle doğrulandı. Mavi ve yeşil
 # aralıklar tipik değerlerdir, sahada doğrulanmadı; bu yüzden eşik gevşek
 # tutuldu (yanlışlıkla gerçek tespit elemekten kaçınmak için).
+# Mavi doygunluk eşiği kasıtlı olarak yüksek (140): sahadaki soluk camgöbeği
+# duvar (H=95, S=77) S>100 ile mavi oranını %5.63'e çıkarıp eşiği kıl payı
+# aşıyordu ve karenin %85'ini kaplayan sahte bir 'blue_balloon' filtreden
+# geçmişti. S>140 ile duvarın katkısı %0.16'ya düşüyor; gerçek bir mavi balon
+# bu doygunluğu rahatça aşar.
 _RENK_ARALIKLARI = {
     'red':  [((0, 120, 80), (10, 255, 255)), ((170, 120, 80), (179, 255, 255))],
     'kir':  [((0, 120, 80), (10, 255, 255)), ((170, 120, 80), (179, 255, 255))],
-    'blue': [((100, 100, 60), (130, 255, 255))],
-    'mav':  [((100, 100, 60), (130, 255, 255))],
+    'blue': [((100, 140, 60), (130, 255, 255))],
+    'mav':  [((100, 140, 60), (130, 255, 255))],
     'yes':  [((40, 90, 50), (85, 255, 255))],
 }
 
@@ -61,12 +66,29 @@ def _renk_tutarli_mi(frame, bbox, renk):
     return oran >= config.DETECTION_COLOR_MIN_RATIO
 
 
+def _boyut_makul_mu(frame, bbox):
+    """
+    Kutu karenin makul bir oranından büyük mü?
+
+    Renk kontrolünden bağımsız ikinci savunma hattı. Sahada karenin %85'ini
+    kaplayan sahte bir tespit üretildi; balon hangi mesafede olursa olsun
+    kareyi bu kadar dolduramaz.
+    """
+    _, _, w, h = bbox
+    yuk, gen = frame.shape[:2]
+    if gen <= 0 or yuk <= 0:
+        return True
+    return (float(w) * float(h)) / (gen * yuk) <= config.DETECTION_MAX_AREA_RATIO
+
+
 def renk_filtresi(frame, detections):
-    """Sınıfının rengini içermeyen tespitleri eler."""
+    """Saçma boyutlu ve sınıfının rengini içermeyen tespitleri eler."""
     if not config.DETECTION_COLOR_CHECK or frame is None:
         return detections
     kalan = []
     for det in detections:
+        if not _boyut_makul_mu(frame, det['bbox']):
+            continue
         renk = _sinif_rengi(det['class_name'])
         if renk is None or _renk_tutarli_mi(frame, det['bbox'], renk):
             kalan.append(det)
