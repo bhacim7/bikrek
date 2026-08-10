@@ -92,6 +92,11 @@ _target_pitch = 0.0
 _servo_active = False
 _servo_current_delay = MAX_DELAY
 
+# Orantılı darbe dağıtımı (Bresenham) birikteçleri. İki eksenin hedefe aynı
+# anda varmasını, dolayısıyla çapraz hareketin düz bir çizgi olmasını sağlar.
+_servo_bres_yaw = 0.0
+_servo_bres_pitch = 0.0
+
 # Otonom modda tepe hız sınırı. Manuel moddan (tam hız) kasıtlı olarak düşük:
 # hatalı bir tespit gelirse taret sert savrulmasın.
 # Sınır yaw ekseninden türetilir; pitch daha az adım/derece istediği için aynı
@@ -603,6 +608,7 @@ def perform_servo_step():
     :return: Adım atıldıysa True, hedefe varılmış/servo kapalıysa False.
     """
     global _simulated_yaw, _simulated_pitch, _servo_current_delay, _servo_active
+    global _servo_bres_yaw, _servo_bres_pitch
 
     if not _servo_active:
         _servo_current_delay = min(MAX_DELAY, _servo_current_delay + DECEL_STEP)
@@ -620,6 +626,7 @@ def perform_servo_step():
         # Ölü bant bir adımdır; bu, hedef etrafında titremeyi engeller.
         _servo_active = False
         _servo_current_delay = min(MAX_DELAY, _servo_current_delay + DECEL_STEP)
+        _servo_bres_yaw = _servo_bres_pitch = 0.0
         return False
 
     # Yamuk profil: frenleme mesafesi kaldıysa yavaşla, yoksa hızlan.
@@ -630,8 +637,29 @@ def perform_servo_step():
     else:
         _servo_current_delay = min(MAX_DELAY, _servo_current_delay + DECEL_STEP)
 
-    yaw_aktif = adim_yaw != 0
-    pitch_aktif = adim_pitch != 0
+    # --- ORANTILI (Bresenham) DARBE DAĞITIMI ---
+    # Önceden kalan adımı olan HER eksen her tıkta darbe alıyordu. İki eksen
+    # ortak darbe saatini paylaştığı için bu, ikisinin de aynı ADIM hızında
+    # gitmesi demekti; yaw 26.667, pitch 17.778 adım/derece olduğundan pitch
+    # derece cinsinden 1.5 kat hızlı gidip önce varıyordu. Sonuç: çapraz
+    # hareket düz bir çizgi değil, önce çapraz sonra tek eksen olan BÜKÜK bir
+    # yol. Ölçümde 10°+10° hareketin %31'i saf yaw olarak geçiyordu.
+    #
+    # Şimdi az adımı kalan eksen, oranı kadar seyrek darbe alıyor; böylece iki
+    # eksen hedefe AYNI ANDA varıyor ve yol düz çapraz oluyor. Oran her tıkta
+    # güncel kalan adımdan hesaplanır, dolayısıyla hedef hareket ederken de
+    # (takip sırasında) doğru kalır.
+    buyuk = max(abs(adim_yaw), abs(adim_pitch))
+    _servo_bres_yaw += abs(adim_yaw) / buyuk
+    _servo_bres_pitch += abs(adim_pitch) / buyuk
+
+    yaw_aktif = _servo_bres_yaw >= 1.0
+    pitch_aktif = _servo_bres_pitch >= 1.0
+    if yaw_aktif:
+        _servo_bres_yaw -= 1.0
+    if pitch_aktif:
+        _servo_bres_pitch -= 1.0
+
     yon_yaw = 1 if adim_yaw > 0 else -1
     yon_pitch = 1 if adim_pitch > 0 else -1
 
