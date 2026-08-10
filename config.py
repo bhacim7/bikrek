@@ -70,6 +70,27 @@ FEEDFORWARD_GAIN = 0.3
 # Feedforward'ın ne kadar ileriyi tahmin edeceğini belirler.
 FEEDFORWARD_LEAD_TIME = 0.10
 
+# --- Kamera boru hattı gecikmesi (ölü zaman telafisinin eksik kalan kısmı) ---
+# Kamera karesinin zaman damgası, sensörün POZLADIĞI an değil karenin
+# OKUNDUĞU andır; USB + MJPG boru hattı arada bir gecikme ekler ve bu telafi
+# edilmiyordu. Sonuç: taret hızlıyken hedefin dünya açısı olduğundan ileride
+# hesaplanıyor ve taret hedefi AŞIYOR. Aşımın taret hızıyla büyümesi bu
+# mekanizmanın imzasıdır (ölçümde 25°/s'de 27 px, 70°/s'de 75 px).
+#
+# DEĞER SAHADA AYARLANMALIDIR: az da fazla da zararlı, en iyisi gerçek
+# gecikmeye eşit olandır. Otomatik ölçmeyi denedim ama güvenilir çıkmadı
+# (PID geri beslemesi tahmini saptırıyor, gerçeğin ancak %42'sini buluyor),
+# o yüzden kademeli denemek gerekiyor. Ölçülen aşım tablosu (46.7°/s'de):
+#
+#   gerçek gecikme →   0.00s  0.02s  0.04s  0.06s  0.10s
+#   ofset 0.00         7 px   15 px  31 px  51 px  84 px
+#   ofset 0.04        33 px   23 px   7 px  15 px  52 px
+#   ofset 0.06        43 px   29 px  13 px   7 px  32 px
+#
+# Yöntem: 0.04 ile başla, aşım azaldıysa 0.06 ve 0.08'i dene. Aşım tekrar
+# büyümeye başladığında bir önceki değerde kal.
+CAPTURE_LATENCY_OFFSET = 0.0
+
 # Hedef hızı kare-kare kutu merkezi farkından geliyor ve gürültülü. Bu üstel
 # yumuşatma katsayısı 0-1 arası: küçük değer daha çok yumuşatır (daha kararlı
 # ama daha tepkisiz), büyük değer ham hıza yakınlaşır.

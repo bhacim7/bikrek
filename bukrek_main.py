@@ -1756,7 +1756,12 @@ class HavaSavunmaArayuz(QWidget):
         # Doğrusu: hatayı kare çekildiğindeki açıya ekleyip hedefin DÜNYA
         # açısını bulmak, sonra düzeltmeyi taretin şu anki açısına göre
         # hesaplamak. Böylece aşım gecikmeden bağımsız hale gelir.
+        # Kare zaman damgası sensörün POZLADIĞI an değil, karenin OKUNDUĞU
+        # andır. Aradaki USB + MJPG boru hattı gecikmesi CAPTURE_LATENCY_OFFSET
+        # ile geriye alınır; telafi edilmezse taret hızlıyken hedefin dünya
+        # açısı ileride hesaplanır ve taret hedefi aşar.
         capture_t = self._capture_time if self._capture_time is not None else current_frame_time
+        capture_t -= config.CAPTURE_LATENCY_OFFSET
         yaw_at_capture, pitch_at_capture = self._angle_at(capture_t)
 
         world_yaw = yaw_at_capture + capture_error_yaw
