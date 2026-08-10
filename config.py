@@ -97,6 +97,18 @@ CAPTURE_LATENCY_OFFSET = 0.08
 # Bu değer hız ARTARKEN kullanılır (gürültü sıçramalarını reddetmek için yavaş).
 VELOCITY_SMOOTHING = 0.3
 
+# Hedef GERÇEKTEN hızlı hareket ederken kullanılan katsayı. Tek bir yumuşatma
+# değeri iki çelişen ihtiyaca hizmet edemiyordu: sabit hedefte gürültüyü
+# bastırmak için yavaş (0.3), hareketli hedefte ivmelenmeye yetişmek için
+# hızlı (0.5-0.6) olmalı. Sahada 0.5-0.6 hareketli takibi iyileştirirken
+# sabit hedefe oturmayı bozuyordu. Artık hıza göre seçiliyor.
+VELOCITY_FAST_SMOOTHING = 0.6
+
+# Bu hızın (derece/sn) üstünde hedef "gerçekten hareketli" sayılır ve hızlı
+# yumuşatmaya geçilir. Altında tespit gürültüsü baskındır, yavaş yumuşatma
+# kullanılır. Ölü bant (FEEDFORWARD_VELOCITY_DEADBAND) bunun altında kalmalı.
+VELOCITY_FAST_THRESHOLD = 10.0
+
 # Hız AZALIRKEN kullanılan katsayı — kasıtlı olarak daha büyük, yani daha hızlı
 # söner. Sebep: hedef durduğunda simetrik yumuşatma hız tahminini birkaç kare
 # boyunca yüksek tutuyor, feedforward itmeye devam ediyor ve taret hedefi geçip

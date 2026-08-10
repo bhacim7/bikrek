@@ -318,3 +318,52 @@ Pi'ye kopyalanması gerekenler: `motor_fire_module.py`, `rpi_motor_server.py`
 ```bash
 scp motor_fire_module.py rpi_motor_server.py bukrek@raspberrypi:~/Desktop/raspberry/
 ```
+
+---
+
+## Son Değişiklik: Uyarlamalı Hız Yumuşatma
+
+**Sorun.** `VELOCITY_SMOOTHING` tek başına iki çelişen ihtiyaca hizmet ediyordu.
+Sahada ölçüldü:
+
+- **0.3** — sabit hedefe oturma temiz, ama hareketli hedefte nişangah kutunun
+  iç sınırında kalıyor.
+- **0.5 / 0.6** — hareketli hedefte merkeze biraz daha yaklaşıyor, ama hedef
+  çerçeveye girince ufak salınımlar başlıyor, oturma bozuluyor.
+
+**Sebep.** Sabit hedefte hız tahmini saf tespit gürültüsüdür; hızlı yumuşatma
+bu gürültüyü feedforward'a geçirir. Hareketli hedefte ise el hareketi sabit
+hızlı değil sürekli ivmelenir; yavaş yumuşatma 2-3 kare (80-120 ms) geriden
+gelir ve feedforward hep bir önceki hızı telafi eder.
+
+**Çözüm.** Katsayı artık hızın büyüklüğüne göre seçiliyor
+(`bukrek_main._hiz_alfa`):
+
+| Durum | Katsayı |
+|---|---|
+| Hız azalıyor (hedef duruyor) | `VELOCITY_DECAY_SMOOTHING = 0.6` |
+| Hız >= `VELOCITY_FAST_THRESHOLD` (10 °/s) | `VELOCITY_FAST_SMOOTHING = 0.6` |
+| Altında (sabit hedef, gürültü baskın) | `VELOCITY_SMOOTHING = 0.3` |
+
+**Doğrulama** (simülasyon; 3.2 °/s tespit gürültüsü, 33 ms kare):
+
+| | sabit hedef: ölü bandı aşan kare | ivmelenen hedef: ort. hız hatası |
+|---|---|---|
+| 0.3 | 8/70 | 7.7 °/s |
+| 0.5 düz | 20/70 | 3.6 °/s |
+| **uyarlamalı** | **8/70** | **2.6 °/s** |
+
+Yani sabit hedef davranışı 0.3 ile birebir aynı kalırken hareketli hedefteki
+tahmin hatası 0.5'ten de düşük.
+
+**Sahada denenecek.** Sadece `VELOCITY_FAST_THRESHOLD` oynatılmalı:
+- Sabit hedefte hâlâ küçük salınım varsa → 15 veya 20 yap (hızlı moda daha geç
+  geçer).
+- Yavaş gezdirilen balonda hâlâ geride kalıyorsa → 6-7 yap. 
+  `FEEDFORWARD_VELOCITY_DEADBAND` (2.0) altına inmemeli.
+
+**Denenmiş ve işe yaramayan yollar** (tekrar denemeye gerek yok):
+- `KP` yükseltme — 0.7/0.9/1.1 taramasında hareketli hedef hatası
+  10/13/14 px, fark yok.
+- `FEEDFORWARD_GAIN` yükseltme — 45 °/s hedefte 0.3 → 10 px, 1.0 → 37 px,
+  yani daha kötü.

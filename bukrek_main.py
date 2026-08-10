@@ -530,6 +530,31 @@ class HavaSavunmaArayuz(QWidget):
                 break
         return secilen[1], secilen[2]
 
+    def _hiz_alfa(self, ham, mevcut):
+        """
+        Hız yumuşatma katsayısını duruma göre seçer.
+
+        Tek bir katsayı iki çelişen ihtiyaca hizmet edemiyor:
+
+          - SABİT hedefte hız tahmini saf gürültüdür. Yavaş yumuşatma (0.3)
+            gerekir; hızlısı (0.5-0.6) gürültüyü feedforward'a geçirir ve
+            taret hedefe oturmak yerine ufak salınımlar yapar.
+          - HAREKETLİ hedefte el hareketi sabit hızlı değil, sürekli
+            İVMELENİYOR. Yavaş yumuşatma 2-3 kare (80-120 ms) geriden gelir,
+            feedforward hep bir önceki hızı telafi eder ve nişangah kutunun
+            kenarında kalır. Hızlı yumuşatma bunu kapatır.
+
+        Bu yüzden katsayı hızın BÜYÜKLÜĞÜNE göre seçiliyor: eşiğin üstünde
+        sinyal gürültüden baskındır, altında değildir. Sönme (hız azalma)
+        durumu her iki halde de en hızlı katsayıyı kullanır — hedef durduğunda
+        feedforward'ın anında kesilmesi gerekiyor, yoksa taret hedefi aşıyor.
+        """
+        if abs(ham) < abs(mevcut):
+            return config.VELOCITY_DECAY_SMOOTHING
+        if abs(ham) >= config.VELOCITY_FAST_THRESHOLD:
+            return config.VELOCITY_FAST_SMOOTHING
+        return config.VELOCITY_SMOOTHING
+
     def _tahmin_hizi(self):
         """
         Hedef KAYBOLDUGUNDA kullanilacak hiz; feedforward'inkinden dar sinirli.
@@ -1817,12 +1842,8 @@ class HavaSavunmaArayuz(QWidget):
                 # boyunca yüksek kalıyor, feedforward itmeye devam ediyor ve
                 # taret hedefi geçip geri dönüyordu. Hız artarken yavaş kalmak
                 # ise gürültü sıçramalarını reddetmek için gerekli.
-                a_yaw = (config.VELOCITY_DECAY_SMOOTHING
-                         if abs(ham_yaw_rate) < abs(self.target_world_yaw_rate)
-                         else config.VELOCITY_SMOOTHING)
-                a_pitch = (config.VELOCITY_DECAY_SMOOTHING
-                           if abs(ham_pitch_rate) < abs(self.target_world_pitch_rate)
-                           else config.VELOCITY_SMOOTHING)
+                a_yaw = self._hiz_alfa(ham_yaw_rate, self.target_world_yaw_rate)
+                a_pitch = self._hiz_alfa(ham_pitch_rate, self.target_world_pitch_rate)
 
                 self.target_world_yaw_rate = (a_yaw * ham_yaw_rate
                                               + (1 - a_yaw) * self.target_world_yaw_rate)
