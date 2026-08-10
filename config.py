@@ -89,7 +89,7 @@ FEEDFORWARD_LEAD_TIME = 0.10
 #
 # Yöntem: 0.04 ile başla, aşım azaldıysa 0.06 ve 0.08'i dene. Aşım tekrar
 # büyümeye başladığında bir önceki değerde kal.
-CAPTURE_LATENCY_OFFSET = 0.0
+CAPTURE_LATENCY_OFFSET = 0.08
 
 # Hedef hızı kare-kare kutu merkezi farkından geliyor ve gürültülü. Bu üstel
 # yumuşatma katsayısı 0-1 arası: küçük değer daha çok yumuşatır (daha kararlı
@@ -116,7 +116,16 @@ FEEDFORWARD_MAX_DEGREE = 3.0
 # balon bunu aşmaz. Bu sınır iki yerde koruma sağlar: feedforward ve hedef
 # kaybındaki tahmin. Sahada 90 iken, 0.6 sn kayıpta tahmin 54° savrulup
 # tareti ters yöne fırlatıyordu (-791 piksellik hayali hata).
-MAX_TARGET_RATE_DEG_S = 20.0
+# Elde gezdirilen balon 1.5 m'de 1 m/s ile 38, 2 m/s ile 76 derece/sn ediyor.
+# 20'de kirpmak feedforward'i calisamaz hale getiriyordu: 50 derece/sn hedefte
+# kalan hata 33 px, sinir 80 olunca 12 px.
+MAX_TARGET_RATE_DEG_S = 80.0
+
+# Hedef KAYBOLDUGUNDA tahmin icin kullanilan ayri (ve dar) sinir. Genis tutmak
+# hayali hedefin uzaga kacmasina yol acar: 80 derece/sn x 5 kare = 16 derece.
+# Feedforward'dan ayri tutuluyor cunku ikisi farkli riskler tasiyor —
+# feedforward olculen hizi kullanir, tahmin ise korlemesine ekstrapolasyondur.
+PREDICTION_MAX_RATE_DEG_S = 20.0
 
 # Bir aday hedefe kilitlenmeden önce ard arda kaç karede aynı yerde görülmeli.
 # YOLO tek tük yanlış pozitif üretiyor; sahada tavanda çıkan hayalet tespit

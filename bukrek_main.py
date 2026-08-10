@@ -530,6 +530,19 @@ class HavaSavunmaArayuz(QWidget):
                 break
         return secilen[1], secilen[2]
 
+    def _tahmin_hizi(self):
+        """
+        Hedef KAYBOLDUGUNDA kullanilacak hiz; feedforward'inkinden dar sinirli.
+
+        Feedforward olculen hizi kullanir ve hedef o sirada GORUNURDUR.
+        Kayipta ise korlemesine ekstrapolasyon yapilir; hatali bir hiz tahmini
+        hayali hedefi uzaga kacirir (80 derece/sn x 5 kare = 16 derece).
+        Bu yuzden iki sinir ayri tutuluyor.
+        """
+        r = config.PREDICTION_MAX_RATE_DEG_S
+        return (max(-r, min(r, self.target_world_yaw_rate)),
+                max(-r, min(r, self.target_world_pitch_rate)))
+
     def _piksel_to_dunya(self, px, py, zaman):
         """
         Bir piksel konumunu hedefin DÜNYA açısına çevirir.
@@ -1351,10 +1364,9 @@ class HavaSavunmaArayuz(QWidget):
                     # hedefin hareketi sanılıp arama yanlış yere bakar.
                     if self.missing_frames > 0 and self._son_gorulen_dunya_yaw is not None:
                         gecen = current_frame_time - self._son_gorulen_zaman
-                        tahmin_dunya_yaw = (self._son_gorulen_dunya_yaw
-                                            + self.target_world_yaw_rate * gecen)
-                        tahmin_dunya_pitch = (self._son_gorulen_dunya_pitch
-                                              + self.target_world_pitch_rate * gecen)
+                        ty, tp = self._tahmin_hizi()
+                        tahmin_dunya_yaw = self._son_gorulen_dunya_yaw + ty * gecen
+                        tahmin_dunya_pitch = self._son_gorulen_dunya_pitch + tp * gecen
                         px, py = self._dunya_to_piksel(
                             tahmin_dunya_yaw, tahmin_dunya_pitch,
                             self._capture_time or current_frame_time)
@@ -1418,10 +1430,9 @@ class HavaSavunmaArayuz(QWidget):
                             if (self._son_gorulen_dunya_yaw is not None
                                     and self.current_tracked_target_bbox is not None):
                                 gecen = current_frame_time - self._son_gorulen_zaman
-                                tahmin_dunya_yaw = (self._son_gorulen_dunya_yaw
-                                                    + self.target_world_yaw_rate * gecen)
-                                tahmin_dunya_pitch = (self._son_gorulen_dunya_pitch
-                                                      + self.target_world_pitch_rate * gecen)
+                                ty, tp = self._tahmin_hizi()
+                                tahmin_dunya_yaw = self._son_gorulen_dunya_yaw + ty * gecen
+                                tahmin_dunya_pitch = self._son_gorulen_dunya_pitch + tp * gecen
                                 predicted_x, predicted_y = self._dunya_to_piksel(
                                     tahmin_dunya_yaw, tahmin_dunya_pitch,
                                     self._capture_time or current_frame_time)
