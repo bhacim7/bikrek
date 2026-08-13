@@ -1015,11 +1015,16 @@ class HavaSavunmaArayuz(QWidget):
         self.active_task = 'task1'
         self.inference_cmd_q.put({"action": "SET_TASK", "task": 'task1'})
 
-        self.crosshair_movable = False
-        self.crosshair_fixed_center = True
+        # AŞAMA 1 = TAMAMEN MANUEL. Taret otonom servolama YAPMAZ; operatör
+        # ok tuşlarıyla nişan alır ve ATEŞ ET ile ateşler. YOLO yine çalışır
+        # ama yalnızca GÖSTERİM için — operatör hedefleri ekranda görsün diye.
+        # (Tam Manuel Kontrol'den farkı budur: orada YOLO hiç çalışmaz.)
+        self.crosshair_movable = True
+        self.crosshair_fixed_center = False
         self.task3_settings_group_box.setVisible(False)
-        self._update_status_label("Durum: Aşama 1 başlatıldı (Tüm Balonları Takip Et, Manuel Ateş).")
-        self.target_info_label.setText("Hedef Bilgisi: Tüm Balonlar.")
+        self._update_status_label(
+            "Durum: Aşama 1 - Tam manuel kontrol (YOLO yalnızca gösterim).")
+        self.target_info_label.setText("Hedef Bilgisi: Manuel mod.")
 
         self.target_destroyed = False
         self.waiting_for_new_engagement_command = True
@@ -1030,8 +1035,12 @@ class HavaSavunmaArayuz(QWidget):
         self.movement_restricted_yaw_start = 0
         self.movement_restricted_yaw_end = 0
         self.fire_control_group_box.setVisible(True)
-        self.direct_manual_control_group_box.setVisible(False)
-        self.is_target_active = True
+        self.direct_manual_control_group_box.setVisible(True)
+        try:
+            self._start_manual_movement_timer()
+        except Exception as e:
+            self._update_status_label(f"Hata: Manuel mod başlatma hatası: {str(e)[:50]}...")
+        self.is_target_active = False
         self.is_aimed_at_target = False
 
     def task2(self):
@@ -1140,7 +1149,10 @@ class HavaSavunmaArayuz(QWidget):
         self.is_target_active = False
         self.is_aimed_at_target = False
 
+    # Operatörün ok tuşlarıyla tareti sürebildiği modlar.
     MANUEL_MODLAR = ('full_manual', 'task1')
+    # Taretin kendiliğinden hedefe servoladığı modlar.
+    OTONOM_MODLAR = ('task2', 'task3')
 
     def _handle_manual_button_press(self, direction_key):
         if self.active_task not in self.MANUEL_MODLAR:
@@ -1929,8 +1941,12 @@ class HavaSavunmaArayuz(QWidget):
                 cv2.putText(display_frame, f"YOLO: {det['class_name']} ({det['score']:.2f})", (x, y - 25),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.4, yolo_draw_color, 1)
 
-            # Process Tracking
-            if current_target_bbox_for_pid and not self.target_destroyed:
+            # --- Otonom servolama ---
+            # YALNIZCA Aşama 2 ve 3'te. Aşama 1 tamamen manuel olduğu için
+            # orada tespit edilen hedef yalnızca ekranda işaretlenir, taret
+            # kendiliğinden hareket etmez.
+            if (current_target_bbox_for_pid and not self.target_destroyed
+                    and self.active_task in self.OTONOM_MODLAR):
                 x_pid, y_pid, w_pid, h_pid = [int(v) for v in current_target_bbox_for_pid]
                 target_center_x = x_pid + w_pid // 2
                 target_center_y = y_pid + h_pid // 2
