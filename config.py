@@ -1,240 +1,410 @@
-# --- Configuration File ---
+# --- BUKREK Yapılandırma Dosyası ---
+#
+# MİMARİ: iki kamera var ve görevleri kesin çizgilerle ayrılmış.
+#
+#   GÖZCÜ (spotter) : gövdeye sabit, zoomsuz, geniş açı. YOLO ÇALIŞTIRMAZ.
+#                     Sadece OpenCV renk analizi yapar; adayların gövde
+#                     çerçevesindeki MUTLAK açısını ve açısal hızını üretir.
+#                     Gövdeye sabit olduğu için taretin hareketi ölçümünü
+#                     bozmaz — hız tahmini yapısal olarak sızıntısızdır.
+#
+#   AVCI (hunter)   : taret üzerinde, SABİT 3x zoom. YOLO burada çalışır.
+#                     Dost/düşman doğrulaması ve nişan alma bu kameradan.
+#
+# Zoom sabit olduğu için derece/piksel yine tek bir sabittir; uçuşta değişen
+# kazanç riski yoktur.
 
-# Model Paths
-YOLO_MODEL_PATH = "C:/Users/barış hacim/PycharmProjects/PythonProject/train87/weights/best.engine"
-YOLO_MODEL_PATH_TASK3 = "C:/Users/barış hacim/PycharmProjects/PythonProject/train9/weights/best.engine"
+import os
 
-# Inference thresholds
+_BURASI = os.path.dirname(os.path.abspath(__file__))
+
+# --- Model ---
+# Ağırlık dosyası bu dosyayla aynı klasörde. Mutlak yol yazmıyoruz ki proje
+# başka bir makineye taşındığında bozulmasın.
+YOLO_MODEL_PATH = os.path.join(_BURASI, "best.engine")
+
+# Üç aşamanın ÜÇÜ de bu tek modeli kullanır; aşamalar arasında fark yalnızca
+# görev mantığındadır. (Eskiden Aşama 3 ayrı bir model yüklüyordu.)
 CONF_THRESHOLD = 0.4
 NMS_THRESHOLD = 0.4
 
-# Classes
-CLASSES = ['blue_balloon', 'red_balloon']
-CLASSES_TASK3 = ['kir_Dai', 'kir_Kar', 'kir_Uc', 'mav_Dai', 'mav_Kar', 'mav_Uc', 'yes_Dai', 'yes_Kar', 'yes_Uc']
+# data.yaml ile BİREBİR aynı sıra olmalı — sınıf indeksleri buradan çözülüyor.
+CLASSES = ['balon', 'dost-F16', 'dost-Helikopter',
+           'dusman-Drone', 'dusman-F16', 'dusman-Fuze']
 
-# Default Model Input Size
+# Balon sınıfının adı. Nişan noktası budur; dost/düşman bilgisi TAŞIMAZ,
+# karar her zaman üstündeki maketten gelir.
+BALLOON_CLASS = 'balon'
+
+# Maket sınıflarının ön ekleri. Karar doğrudan ön ekten üretiliyor, ayrı bir
+# eşleme tablosuna gerek yok (dusman-Drone ve dusman-Fuze zaten tek taraflı).
+FRIEND_PREFIX = 'dost-'
+ENEMY_PREFIX = 'dusman-'
+
 IMG_HEIGHT = 1056
 IMG_WIDTH = 1056
 
-# RPi Connection
+# --- RPi Bağlantısı ---
 RPI_IP = '192.168.137.229'
 RPI_PORT = 12345
 
-# --- Kamera Ayarları ---
-# Denenecek kamera indeksleri, sırayla. İlk açılan kullanılır.
-CAMERA_INDICES = [1, 2, 3, 4]
 
-# İstenen çözünürlük. Bu bir istektir; sürücü desteklemezse en yakın modu verir.
-# Gerçekte ne alındığı kamera başlatılırken konsola yazdırılır ve sistemin geri
-# kalanı (PID merkezi, kutu ölçeği) o gerçek değere göre çalışır.
-CAMERA_WIDTH = 1280
-CAMERA_HEIGHT = 720
+# =====================================================================
+#  KAMERALAR
+# =====================================================================
+# İki kamera aynı USB denetleyicisinde 1280x720 MJPG @30 fps ile
+# çalışmayabilir. Sorun çıkarsa önce farklı USB kök hub'larına takın;
+# olmazsa GÖZCÜ çözünürlüğünü 640x480'e düşürün (blob tespiti için yeterli,
+# açısal doğruluk yarıya iner ama ±0.3 derece hâlâ fazlasıyla yeterli).
+#
+# HER İKİ KAMERADA DA otomatik pozlama ve otomatik beyaz dengesi KAPALI
+# olmalı. Sebep iki katlı:
+#   1) Otomatik pozlama kare kare gecikmeyi değiştirir ve ölü zaman
+#      telafisini bozar (CAPTURE_LATENCY_OFFSET sabit varsayılıyor).
+#   2) Otomatik beyaz dengesi renk eşiklerini kaydırır; hem gözcünün renk
+#      filtresi hem de hayalet eleyici sabit renk varsayıyor.
 
-# MJPG sıkıştırmasını zorla. Çoğu UVC kamera ham formatta yüksek çözünürlükte
-# 5-10 fps'e düşer; MJPG ile 30 fps'e çıkabilir. Kamera desteklemiyorsa etkisizdir.
-CAMERA_USE_MJPG = True
+# Denenecek kamera indeksleri. İlk açılan kullanılır; İKİSİ AYNI OLMAMALI.
+SPOTTER_CAMERA_INDICES = [1, 2, 3, 4]
+HUNTER_CAMERA_INDICES = [2, 3, 4, 1]
 
-# --- Otonom Takip Ayarları ---
-# Saha ayarı tek dosyadan yapılabilsin diye burada. Değiştirdikten sonra
-# yalnızca arayüzü yeniden başlatmak yeterli.
+SPOTTER_WIDTH = 1280
+SPOTTER_HEIGHT = 720
+SPOTTER_USE_MJPG = True
 
-# Bir piksellik hatanın kaç dereceye karşılık geldiği. KAMERA VEYA LENS
-# DEĞİŞİRSE YENİDEN ÖLÇÜLMELİ — arayüzdeki "Derece/Piksel Ölç" butonu bu değeri
-# hesaplar. Yanlış değer PID'in efektif kazancını ölçekler: çok büyükse taret
-# hedefi aşıp salınır, çok küçükse yavaş yaklaşır.
-# Sahada ölçüldü (iki bağımsız koşum, dört örnek; koşumlar arası uyum %1-2).
-# İma edilen görüş açısı: 82° yatay / 56° dikey — 16:9 geniş açı kamerayla tutarlı.
-# Önceki 0.015 değeri gerçeğin 4.3 katı küçüğüydü; bu yüzden efektif döngü
-# kazancı 0.16'da kalıyor ve takip yavaş oluyordu.
-DEGREES_PER_PIXEL_YAW = 0.05350
-DEGREES_PER_PIXEL_PITCH = -0.05547
+HUNTER_WIDTH = 1280
+HUNTER_HEIGHT = 720
+HUNTER_USE_MJPG = True
 
-# PID oransal kazançları. Kilitlenme hızını belirleyen ana değişken budur.
-# Ölçümle doğrulanmış kalibrasyonla güvenli tavan ~0.9; üstünde salınım başlar.
-# Kalibrasyon yanlışsa tavan düşer, bu yüzden önce ölçüp sonra yükseltin.
-# Ölü zaman telafisi eklendikten sonra bu değerler tekrar yükseltilebildi.
-# Daha önce 0.5 bile salınım yapıyordu çünkü bayat hata şimdiki açıya
-# ekleniyor ve kat edilen yol iki kez sayılıyordu; aşım gecikmeyle büyüyordu.
-# Telafiyle aşım gecikmeden bağımsız hale geldi (ölçümde 10-11 piksel).
-# Temiz çalışırsa 0.9'a kadar denenebilir.
+# camera_module tek bir sözlükten okur; yeni bir kamera eklemek için buraya
+# bir satır yetiyor.
+KAMERA_AYARLARI = {
+    "spotter": {"indices": SPOTTER_CAMERA_INDICES, "width": SPOTTER_WIDTH,
+                "height": SPOTTER_HEIGHT, "mjpg": SPOTTER_USE_MJPG},
+    "hunter":  {"indices": HUNTER_CAMERA_INDICES, "width": HUNTER_WIDTH,
+                "height": HUNTER_HEIGHT, "mjpg": HUNTER_USE_MJPG},
+}
+
+# Pozlama süresi üst sınırı (saniye). Hareket bulanıklığı =
+# taret_hızı x pozlama / derece_piksel. Avcıda derece/piksel 3 kat küçük
+# olduğu için aynı hareket 3 kat fazla bulanıklık üretir:
+#   pozlama 33 ms (1/30 s), taret 89 derece/sn  -> 165 piksel bulanıklık
+#   pozlama 10 ms, taret 89 derece/sn           ->  50 piksel
+#   pozlama 10 ms, taret  3 derece/sn (takip)   ->   1.7 piksel
+# Balon avcıda 15 metrede 30 piksel; 33 ms'de tamamen sıvanır.
+# Bu değer bilgi amaçlı burada; kamerada ELLE ayarlanmalı (OpenCV'nin
+# CAP_PROP_EXPOSURE davranışı sürücüye göre değişiyor, güvenilir değil).
+CAMERA_TARGET_EXPOSURE_SEC = 0.010
+
+
+# =====================================================================
+#  ÖLÇEK KALİBRASYONU (derece / piksel)
+# =====================================================================
+# KAMERA VEYA LENS DEĞİŞİRSE YENİDEN ÖLÇÜLMELİ — arayüzdeki
+# "Derece/Piksel Ölç" butonu bu değerleri hesaplar.
+# Yanlış değer PID'in efektif kazancını ölçekler: çok büyükse taret hedefi
+# aşıp salınır, çok küçükse yavaş yaklaşır.
+
+# GÖZCÜ: bugüne kadar kullandığımız kamera, zoomsuz. Sahada iki bağımsız
+# koşumla ölçüldü (dört örnek, koşumlar arası uyum %1-2).
+# İma edilen görüş açısı: 68.5 derece yatay / 39.9 derece dikey.
+SPOTTER_DPP_YAW = 0.05350
+SPOTTER_DPP_PITCH = -0.05547
+
+# AVCI: sabit 3x zoom. Aşağıdaki değerler gözcününkinin üçte biri olarak
+# HESAPLANDI, ölçülmedi. İlk sahada "Derece/Piksel Ölç" ile DOĞRULANMALI.
+# Beklenen görüş açısı: 22.8 derece yatay / 13.3 derece dikey.
+HUNTER_DPP_YAW = 0.01783
+HUNTER_DPP_PITCH = -0.01849
+
+# Geriye uyumluluk: denetim döngüsü avcı kamerayı kullanır.
+DEGREES_PER_PIXEL_YAW = HUNTER_DPP_YAW
+DEGREES_PER_PIXEL_PITCH = HUNTER_DPP_PITCH
+
+# Gözcü ekseni ile taretin sıfır açısı arasındaki montaj farkı (derece).
+# Gözcü "hedef 15 derece solda" dediğinde taret buraya gider:
+#     hedef_yaw = gozcu_yaw + SPOTTER_YAW_OFFSET
+# ÖLÇÜM: tek bir hedefi önce gözcüyle merkeze al (açısını not et), sonra
+# tareti elle o hedefi avcının merkezine getirene kadar döndür; fark budur.
+SPOTTER_YAW_OFFSET = 0.0
+
+# Aynısı pitch için. Bu ofset montaj eğimini VE paralaksı birlikte yutar.
+# Paralaks: gözcü avcının ~17 cm altında, 15 metrede atan(0.17/15) = 0.65
+# derece. Avcının dikey yarı görüş açısı 6.65 derece olduğundan bu %10'u;
+# sabit ofsetle rahatça telafi edilir. AMA mesafeye bağlı: 5 metrede 1.9,
+# 2 metrede 4.9 derece. Yarışma 15 metrede olduğu için sabit kabul ediyoruz.
+SPOTTER_PITCH_OFFSET = 0.0
+
+
+# =====================================================================
+#  DENETİM (PID + ileri besleme)
+# =====================================================================
+# Bu bölümdeki değerlerin çoğu ekran kayıtlarından kare kare ölçülerek
+# ayarlandı. Değiştirmeden önce PROJE_DURUMU.md'deki ölçüm tablolarına bakın.
+
+# PID oransal kazançları. DERECE uzayında çalışırlar (komut = KP x hata_derece),
+# yani zoomdan bağımsızdırlar — 3x zoomlu avcıda da aynı değerler geçerli.
 KP_YAW = 0.7
 KP_PITCH = 0.6
 
-# Hız ileri-beslemesi (feedforward). Saf oransal denetim hareketli hedefte
-# kalıcı olarak geride kalır (10°/s hedefte KP=0.5 ile ~100 piksel). Bu terim
+# --- İleri besleme (feedforward) ---
+# Saf oransal denetim hareketli hedefte kalıcı olarak geride kalır. Bu terim
 # hedefin ölçüm gecikmesi boyunca kat edeceği yolu önceden telafi eder.
-# 0.0 = kapalı. Sahada 0'dan kademeli açın; titreme başlarsa geri düşürün.
-# Sahada olculdu: kalan gecikme ~0.22 sn (asagiya bakin). Etkin ileri gorus
-# GAIN x LEAD_TIME carpimidir; eskiden 0.3 x 0.10 = 0.03 sn idi, yani olcumun
-# ancak yedide biri. Aci gecmisi duzeltilmeden bu carpimi buyutmek isleri
-# KOTULESTIRIYORDU (sahte hiz tahmini yuzunden); duzeltme sonrasi guvenli.
+# Etkin telafi = FEEDFORWARD_GAIN x FEEDFORWARD_LEAD_TIME.
 FEEDFORWARD_GAIN = 0.8
 
-# Duyarga gecikmesi (saniye): kamera + cikarim + aci raporu + motor tepkisi.
-# EKRAN KAYDINDAN OLCULDU: hedef sabit hizla giderken kalan piksel hatasi
-# hedefin acisal hizina bolununce her kesitte ayni sayi cikti:
-#   hedef hizi  5-15 derece/sn araliginda 14 olcum -> ortanca 0.22 sn
-#   (dagilim 0.17-0.24 sn; yon ve hizdan bagimsiz, yani saf olu zaman)
-# Etkin telafi = FEEDFORWARD_GAIN x bu deger.
+# Duyarga gecikmesi (saniye): kamera + çıkarım + açı raporu + motor tepkisi.
+# EKRAN KAYDINDAN ÖLÇÜLDÜ: hedef sabit hızla giderken kalan piksel hatası
+# hedefin açısal hızına bölününce her kesitte aynı sayı çıktı — 14 ölçümde
+# ortanca 0.22 sn (dağılım 0.17-0.24; yön ve hızdan bağımsız, saf ölü zaman).
 FEEDFORWARD_LEAD_TIME = 0.22
 
-# --- Kamera boru hattı gecikmesi (ölü zaman telafisinin eksik kalan kısmı) ---
-# Kamera karesinin zaman damgası, sensörün POZLADIĞI an değil karenin
-# OKUNDUĞU andır; USB + MJPG boru hattı arada bir gecikme ekler ve bu telafi
-# edilmiyordu. Sonuç: taret hızlıyken hedefin dünya açısı olduğundan ileride
-# hesaplanıyor ve taret hedefi AŞIYOR. Aşımın taret hızıyla büyümesi bu
-# mekanizmanın imzasıdır (ölçümde 25°/s'de 27 px, 70°/s'de 75 px).
-#
-# DEĞER SAHADA AYARLANMALIDIR: az da fazla da zararlı, en iyisi gerçek
-# gecikmeye eşit olandır. Otomatik ölçmeyi denedim ama güvenilir çıkmadı
-# (PID geri beslemesi tahmini saptırıyor, gerçeğin ancak %42'sini buluyor),
-# o yüzden kademeli denemek gerekiyor. Ölçülen aşım tablosu (46.7°/s'de):
-#
-#   gerçek gecikme →   0.00s  0.02s  0.04s  0.06s  0.10s
-#   ofset 0.00         7 px   15 px  31 px  51 px  84 px
-#   ofset 0.04        33 px   23 px   7 px  15 px  52 px
-#   ofset 0.06        43 px   29 px  13 px   7 px  32 px
-#
-# Yöntem: 0.04 ile başla, aşım azaldıysa 0.06 ve 0.08'i dene. Aşım tekrar
+# Kamera boru hattı gecikmesi. Karenin zaman damgası sensörün POZLADIĞI an
+# değil OKUNDUĞU andır; aradaki fark telafi edilmezse taret hedefi AŞAR ve
+# aşım taret hızıyla büyür (25 derece/sn'de 27 px, 70 derece/sn'de 75 px).
+# Gözcüde 0.078-0.08 aralığı sahada en iyi sonucu vermişti.
+# AVCI KAMERA İÇİN YENİDEN ÖLÇÜLMELİ — farklı kamera, farklı boru hattı.
+# Yöntem: 0.04'ten başla, aşım azaldıysa 0.06 ve 0.08'i dene; aşım tekrar
 # büyümeye başladığında bir önceki değerde kal.
 CAPTURE_LATENCY_OFFSET = 0.08
 
-# Hedef hızı kare-kare kutu merkezi farkından geliyor ve gürültülü. Bu üstel
-# yumuşatma katsayısı 0-1 arası: küçük değer daha çok yumuşatır (daha kararlı
-# ama daha tepkisiz), büyük değer ham hıza yakınlaşır.
-# Bu değer hız ARTARKEN kullanılır (gürültü sıçramalarını reddetmek için yavaş).
+# Gözcünün kendi gecikmesi. YOLO çalıştırmadığı için avcıdan belirgin
+# şekilde kısa; devir teslim öngörüsünde kullanılıyor.
+SPOTTER_LATENCY = 0.05
+
+# --- Hız tahmini yumuşatma ---
+# Hız kare-kare ölçülen dünya açısı farkından geliyor ve gürültülü.
+# Katsayı 0-1: küçük değer daha çok yumuşatır (kararlı ama tepkisiz).
+# Hız ARTARKEN kullanılan (gürültü sıçramalarını reddetmek için yavaş).
 VELOCITY_SMOOTHING = 0.3
 
-# Hedef GERÇEKTEN hızlı hareket ederken kullanılan katsayı. Tek bir yumuşatma
-# değeri iki çelişen ihtiyaca hizmet edemiyordu: sabit hedefte gürültüyü
-# bastırmak için yavaş (0.3), hareketli hedefte ivmelenmeye yetişmek için
-# hızlı (0.5-0.6) olmalı. Sahada 0.5-0.6 hareketli takibi iyileştirirken
-# sabit hedefe oturmayı bozuyordu. Artık hıza göre seçiliyor.
+# Hedef GERÇEKTEN hızlı giderken kullanılan katsayı. Tek bir değer iki
+# çelişen ihtiyaca hizmet edemiyordu: sabit hedefte gürültüyü bastırmak için
+# yavaş, hareketli hedefte ivmelenmeye yetişmek için hızlı olmalı.
 VELOCITY_FAST_SMOOTHING = 0.6
 
-# Bu hızın (derece/sn) üstünde hedef "gerçekten hareketli" sayılır ve hızlı
-# yumuşatmaya geçilir. Altında tespit gürültüsü baskındır, yavaş yumuşatma
-# kullanılır. Ölü bant (FEEDFORWARD_VELOCITY_DEADBAND) bunun altında kalmalı.
-# Ekran kaydindan olculdu: elde gezdirilen balonun gercek acisal hizi 5-15
-# derece/sn araligindaydi. Esik 10 iken hareketin cogu yavas moda dusuyor ve
-# hizli yumusatma hic devreye girmiyordu.
-VELOCITY_FAST_THRESHOLD = 4.0
+# Bu hızın üstünde hedef "gerçekten hareketli" sayılır (derece/sn).
+# YARIŞMA HEDEFLERİ İÇİN YENİDEN ÖLÇEKLENDİ. Hedefler 0.4 m/s ile tarete
+# doğru geliyor; hareket büyük ölçüde RADYAL olduğu için açısal hız çok
+# düşük. 7.5 m yanal ofsetli bir yol için hesap:
+#     15 m -> 0.8 derece/sn,  8 m -> 1.4,  5 m -> 2.6
+# Eski 4.0 değeri hedefin ulaşamayacağı bir eşikti; hızlı yumuşatma hiç
+# devreye girmezdi.
+VELOCITY_FAST_THRESHOLD = 1.5
 
-# Hız AZALIRKEN kullanılan katsayı — kasıtlı olarak daha büyük, yani daha hızlı
-# söner. Sebep: hedef durduğunda simetrik yumuşatma hız tahminini birkaç kare
-# boyunca yüksek tutuyor, feedforward itmeye devam ediyor ve taret hedefi geçip
-# geri dönüyordu. Asimetrik sönüm bu aşımı ölçümde 5 px'den 2 px'e indirdi.
-# 0.6 -> 0.75: etkin ileri gorus alti kat buyuyunce sonme kuyrugu da alti kat
-# agirlik kazandi ve "hedefi elden birakip masaya koyma" aninda hata 4.1 px'den
-# 7.2 px'e cikti. Tarama (gercek yorunge tekrar oynatilarak, ort. hata px):
-#   sonum   hareketli  durdurma  oturmus  edinme-salinimi
-#    0.60      22.4       7.2      1.4        6.8
-#    0.75      25.4       2.9      1.4        6.8   <-- secilen: dordu de iyi
-#    0.85      27.2       1.5      2.2        6.8
-# 0.85 durdurmayi daha da iyilestiriyor ama hareketli takibi ve oturmayi
-# bozuyor; 0.75 dort fazin dordunde de eski degerlerden iyi.
+# Hız AZALIRKEN kullanılan katsayı — kasıtlı olarak daha büyük, hızlı söner.
+# Hedef durduğunda simetrik yumuşatma tahmini birkaç kare yüksek tutuyor,
+# feedforward itmeye devam ediyor ve taret hedefi geçip geri dönüyordu.
 VELOCITY_DECAY_SMOOTHING = 0.75
 
 # Bu eşiğin altındaki hız tahmini feedforward'a verilmez (derece/sn).
-# Sabit hedefte tespit gürültüsünün ürettiği sahte hızın tareti titretmesini
-# engeller; hedef gerçekten dururken feedforward tam olarak sıfırlanır.
-# 2.0 -> 4.0: etkin ileri gorus 0.03 sn'den 0.18 sn'ye cikinca ayni gurultu
-# alti kat buyuk bir itme uretmeye basladi ve oturmus sabit hedefte hata
-# 2.4 px'den 5.3 px'e cikti. Tarama (gercek yorunge tekrar oynatilarak):
-#   olu bant  2.0 -> hareketli 21.7 px, sabit 5.3 px
-#   olu bant  3.0 -> hareketli 22.1 px, sabit 2.7 px
-#   olu bant  4.0 -> hareketli 22.4 px, sabit 1.4 px   <-- secilen
-# Hareketli hedefte bedeli yok cunku gercek hedef hizi 5-15 derece/sn.
-FEEDFORWARD_VELOCITY_DEADBAND = 4.0
+# YARIŞMA HEDEFLERİ İÇİN YENİDEN ÖLÇEKLENDİ. Eski 4.0 değeri gerçek
+# hedeflerin açısal hızının (0.5-2.6 derece/sn) üstündeydi; feedforward
+# HİÇ çalışmazdı. Feedforward'sız kalan hata: 2.6 x 0.22 = 0.57 derece =
+# avcıda 32 piksel. Balon 15 metrede 30 piksel — nişangah tam kenarda kalır.
+#
+# Neden 4.0'dan 1.0'a inebiliyoruz: gürültünün iki bileşeni var. Tespit
+# piksel gürültüsü 3x zoomda üçte birine iner; açı telemetrisi sızıntısı ise
+# taret hızıyla orantılı ve taret burada 0.5-2.6 derece/sn'de dönüyor, yani
+# sızıntı da küçük. Sahada oturmuş halde ölçülen sahte hız 1.1 derece/sn idi
+# (geniş kamera, taret dururken); avcıda ~0.4 bekleniyor.
+# SAHADA DOĞRULANMALI: sabit hedefte titreme başlarsa 1.5-2.0'a çekin.
+FEEDFORWARD_VELOCITY_DEADBAND = 1.0
 
-# Feedforward katkısının üst sınırı (derece). Ani/hatalı bir hız tahmininin
-# tareti savurmasını engeller. Etkin ileri gorus 0.18 sn'ye cikinca 15 derece/sn
-# hedefte katki 2.7 dereceye ulasiyor; 3.0 siniri normal calismayi kirpmaya
-# baslıyordu. 5.0 = 28 derece/sn'lik hedefe kadar kirpmaz.
+# Feedforward katkısının üst sınırı (derece).
 FEEDFORWARD_MAX_DEGREE = 5.0
 
-# --- Feedforward kapilari (sahada olculdu, hedefTakipDeneme.mp4) ---
-# Feedforward yalnizca KILITLI takipte anlamli. Hata buyukken taret tepe
-# hizinda doner ve tam o anda aci telemetrisi en guvenilmez halindedir: Pi
-# adim atarken aci gonderen is parcacigi gecikir, 15 ms'lik gecikme 89 derece/sn
-# hizda 1.3 derece = 25 piksellik aci hatasi demektir. Bu hata hiz tahminine
-# sizar, sizinti feedforward'i besler, feedforward tareti daha hizli dondurur
-# ve sizinti buyur -- pozitif geri besleme. Sahada edinme manevrasi 10 saniye
-# boyunca +-4 derece salindi.
-#
-# (tam_piksel, sifir_piksel): bu hatanin altinda feedforward tam, ustunde sifir,
-# arasinda dogrusal soner. Hata buyukken oransal terim zaten feedforward'in yuz
-# kati oldugu icin kapatmanin maliyeti yok.
-# Olcum (edinme manevrasi, Pi 20 Hz + 15 ms jitter):
-#   kapi yok        -> ort 19.0 px, tepe 137 px, oturma 6.34 sn
-#   kapi 30/120     -> ort  2.2 px, tepe  49 px, oturma 0.88 sn
-FEEDFORWARD_ERROR_GATE_PIXELS = (30.0, 120.0)
+# --- Feedforward kapıları ---
+# Üçü de aynı gerçeğe dayanır: hız tahmininin güvenilirliği duruma göre çok
+# değişiyor ve feedforward güvenilmez olduğu anda zarar veriyor.
 
-# Feedforward'in bir denetim cevriminde degisebilecegi en buyuk miktar (derece).
-# Iki kapidan sonra bile hiz tahmini kare kare ziplayabiliyor ve feedforward
-# onu aynen aktariyor; takibin "akici" degil "kasintili" gorunmesinin dogrudan
-# sebebi bu. Olcumde yon degistirme sayisi 157'den 69'a indi ve ortalama hata
-# da 32.2'den 31.4 piksele dustu -- yani yumusatmanin bedeli yok.
+# (tam_piksel, sifir_piksel): bu hatanın altında feedforward tam, üstünde
+# sıfır, arasında doğrusal söner.
+#
+# Feedforward yalnızca KİLİTLİ takipte anlamlı. Hata büyükken taret tepe
+# hızında döner ve tam o anda açı telemetrisi en güvenilmez halindedir: Pi
+# adım atarken açı gönderen iş parçacığı gecikir, 15 ms'lik gecikme
+# 89 derece/sn'de 1.3 derece açı hatası demektir. Bu hata hız tahminine
+# sızar, sızıntı feedforward'ı besler, feedforward tareti daha hızlı
+# döndürür — pozitif geri besleme. Sahada edinme manevrası 10 saniye
+# boyunca +-4 derece salındı.
+#   kapı yok     -> ort 19.0 px, tepe 137 px, oturma 6.34 sn
+#   kapı açık    -> ort  2.2 px, tepe  49 px, oturma 0.88 sn
+#
+# DEĞERLER 3x ZOOM İÇİN YENİDEN ÖLÇEKLENDİ. Kapının koruduğu şey AÇISAL bir
+# olgu; geniş kamerada (30, 120) piksel = (1.6, 6.4) dereceydi. Avcıda aynı
+# açıyı korumak için piksel değerleri 3 katına çıkmalı, yoksa kapı hedefi
+# takip ederken bile kapanır ve feedforward'ı tam ihtiyaç anında öldürür.
+FEEDFORWARD_ERROR_GATE_PIXELS = (90.0, 360.0)
+
+# Feedforward'ın bir denetim çevriminde değişebileceği en büyük miktar
+# (derece). İki kapıdan sonra bile hız tahmini kare kare zıplayabiliyor;
+# takibin akıcı değil kasıntılı görünmesinin doğrudan sebebi buydu.
+# Ölçümde yön değiştirme sayısı 157'den 69'a indi, ortalama hata da
+# 32.2'den 31.4 piksele düştü — yumuşatmanın bedeli yok.
 FEEDFORWARD_MAX_STEP_DEGREE = 0.25
 
-# Hedefin dünya açısal hızı için üst sınır (derece/sn). Elde gezdirilen bir
-# balon bunu aşmaz. Bu sınır iki yerde koruma sağlar: feedforward ve hedef
-# kaybındaki tahmin. Sahada 90 iken, 0.6 sn kayıpta tahmin 54° savrulup
-# tareti ters yöne fırlatıyordu (-791 piksellik hayali hata).
-# Elde gezdirilen balon 1.5 m'de 1 m/s ile 38, 2 m/s ile 76 derece/sn ediyor.
-# 20'de kirpmak feedforward'i calisamaz hale getiriyordu: 50 derece/sn hedefte
-# kalan hata 33 px, sinir 80 olunca 12 px.
-MAX_TARGET_RATE_DEG_S = 80.0
+# Hedefin dünya açısal hızı için üst sınır (derece/sn). Gerçek hedefler
+# 0.5-2.6 derece/sn; bu sınır hesap hatalarına karşı emniyet. Elle test
+# ederken balonu hızlı gezdirmek 15-20 derece/sn üretebildiği için pay
+# bırakıldı, ama eski 80 değeri gerçeğin 30 katıydı ve koruma sağlamıyordu.
+MAX_TARGET_RATE_DEG_S = 30.0
 
-# Hedef KAYBOLDUGUNDA tahmin icin kullanilan ayri (ve dar) sinir. Genis tutmak
-# hayali hedefin uzaga kacmasina yol acar: 80 derece/sn x 5 kare = 16 derece.
-# Feedforward'dan ayri tutuluyor cunku ikisi farkli riskler tasiyor —
-# feedforward olculen hizi kullanir, tahmin ise korlemesine ekstrapolasyondur.
-PREDICTION_MAX_RATE_DEG_S = 20.0
+# Hedef KAYBOLDUĞUNDA tahmin için kullanılan ayrı (ve dar) sınır.
+# Feedforward ölçülen hızı kullanır, tahmin ise körlemesine ekstrapolasyondur.
+PREDICTION_MAX_RATE_DEG_S = 8.0
 
-# Bir aday hedefe kilitlenmeden önce ard arda kaç karede aynı yerde görülmeli.
-# YOLO tek tük yanlış pozitif üretiyor; sahada tavanda çıkan hayalet tespit
-# (güven 0.59) gerçek balondan (0.44) yüksek çıktı ve hedef seçme kuralı
-# "kareye en yakın tespit" olduğu için hayalet kazandı. Hayalet 2 kare sürdü;
-# 3 kare onay istemek bunu eler, gerçek hedefe ~0.1 sn gecikme ekler.
-LOCK_CONFIRM_FRAMES = 3
-
-# Hedef kaybolduğunda kaç kare tahminle devam edilsin. Kısa tutmak, hatalı bir
-# tahminin tareti savurma penceresini daraltır. 15 kare (0.6 sn) fazlaydı.
-MAX_MISSING_FRAMES = 5
-
-# --- Ölü bant (durusta titremeyi engeller) ---
+# --- Ölü bant (duruşta titremeyi engeller) ---
 # PİKSEL cinsinden tanımlı, çünkü gürültü kaynağı YOLO kutu merkezidir ve o
-# piksel cinsinden oynar. Derece karşılığı kalibrasyondan türetilir.
-# Sahada 0.05 derece kullanılıyordu; bu 0.8 piksel eder, yani tespit
-# gürültüsünün altında — her gürültü hareket komutuna dönüşüp taret titriyordu.
+# piksel cinsinden oynar. 3x zoomda da geçerli: tespit gürültüsü ölçekten
+# bağımsız olarak birkaç pikseldir. Avcıda 5 piksel = 0.089 derece =
+# 15 metrede 2.3 cm.
 PID_DEADBAND_PIXELS = 5.0
-
-# Bu piksel karşılığından küçük çıkışlar hiç gönderilmez.
 MIN_OUTPUT_PIXELS = 3.0
 
-# --- Hayalet tespit filtresi (renk tutarlılığı) ---
-# Sınıf adı bir renk belirtiyorsa (red_balloon gibi), kutunun içinde gerçekten
-# o renk olmalı. Sahada ölçüldü: tek balonlu sahnede karelerin %41.7'sinde
-# hayalet tespit vardı (tavanda red_balloon 0.66 güvenle). Kutu içeriği:
-#   gerçek balon  : ortalama %77 kırmızı (en zayıf örnek bile %17)
-#   hayalet       : ortalama %0.1 kırmızı
-# %5 eşikle 813 gerçek tespitin hiçbiri kaybolmadı, 338 hayaletin %99'u elendi.
+# Bir aday hedefe kilitlenmeden önce ard arda kaç karede aynı yerde görülmeli.
+# YOLO tek tük yanlış pozitif üretiyor ve hayaletler 1-2 kare sürüyor.
+LOCK_CONFIRM_FRAMES = 3
+
+# Hedef kaybolduğunda kaç kare tahminle devam edilsin.
+MAX_MISSING_FRAMES = 5
+
+
+# =====================================================================
+#  GÖZCÜ KAMERA — renk analizi
+# =====================================================================
+# Gözcü YOLO çalıştırmaz. Kırmızı ve mavi maskeler çıkarır, blobları bulur,
+# balon adaylarını maketleriyle eşleştirir ve gövde çerçevesinde MUTLAK açı
+# üretir.
+
+# HSV aralıkları. OpenCV'de H 0-179; kırmızı iki uçta olduğu için iki aralık.
+# Mavi doygunluk eşiği kasıtlı olarak yüksek (140): sahada soluk camgöbeği
+# bir duvar S>100 ile eşiği kıl payı aşıp karenin %85'ini kaplayan sahte bir
+# mavi tespit üretmişti. S>140 ile duvarın katkısı %0.16'ya düşüyor.
+# Ortam siyah perdeyle kaplı ve aydınlatmalı olduğu için V alt sınırı düşük
+# tutulabilir; parlama olursa yükseltin.
+SPOTTER_RED_RANGES = [((0, 120, 70), (10, 255, 255)),
+                      ((170, 120, 70), (179, 255, 255))]
+SPOTTER_BLUE_RANGES = [((100, 140, 60), (130, 255, 255))]
+
+# Bir blobun aday sayılması için gereken en küçük alan (piksel).
+# 15 metrede 14 cm'lik balon gözcüde 10 piksel çap = ~79 piksel alan verir.
+# Eşik bunun altında olmalı ama gürültüyü de elemeli.
+SPOTTER_MIN_BLOB_AREA = 30
+
+# Bir blobun en/boy oranı bu aralığın dışındaysa balon sayılmaz. Balon
+# yuvarlaktır; uzun ince bir kırmızı leke maket parçası veya yansımadır.
+SPOTTER_BALLOON_ASPECT = (0.5, 2.0)
+
+# --- Dost/düşman ayrımı: "maviyi üstte ara" ---
+# Aşama 3'te "en büyük kırmızı yoğunluk = düşman" kuralı ÇALIŞMAZ; mesafeye
+# duyarlıdır. Örnek görselde ölçüldü (kırmızı piksel alanı):
+#     yakın DOST  (mavi heli + kırmızı balon) : ~16.200
+#     yakın DÜŞMAN (kırmızı drone + balon)    : ~43.300
+#     uzak  DÜŞMAN (kırmızı F16 + balon)      :  ~3.600
+# Yani uzak düşman, yakın dostun 4.5 katı daha az kırmızı veriyor ve sistem
+# dostu seçiyor. Sebep: dostun altında da kırmızı balon var (kırmızı tabanı
+# sıfır değil) ve alan mesafenin karesiyle ters orantılı.
+#
+# Bunun yerine GEOMETRİ kullanıyoruz: maket balonun hemen üstünde. Balonun
+# KENDİ piksel çapıyla ölçeklenen bir pencereye bakıp mavi/kırmızı ORANINA
+# karar veriyoruz. Oran mesafeden bağımsızdır.
+#
+# Pencere: balonun üstünde, balon çapının bu katları kadar.
+SPOTTER_MODEL_WINDOW_ABOVE = (0.2, 3.5)   # (alt, üst) x balon çapı
+SPOTTER_MODEL_WINDOW_WIDTH = 2.5          # yarı genişlik x balon çapı
+
+# Penceredeki mavi oranı bunun üstündeyse DOST, altındaysa DÜŞMAN sayılır.
+# Ara bölge "kararsız" olarak işaretlenir ve avcının doğrulamasına bırakılır.
+SPOTTER_FRIEND_BLUE_RATIO = 0.60
+SPOTTER_ENEMY_BLUE_RATIO = 0.25
+
+# Gözcü izlerinin eşleştirme toleransı (derece) ve kaç kare kayıpta silinir.
+SPOTTER_TRACK_MATCH_DEG = 3.0
+SPOTTER_TRACK_MAX_MISS = 8
+
+
+# =====================================================================
+#  HEDEF ÇİFTİ EŞLEŞTİRME (avcı / YOLO tarafı)
+# =====================================================================
+# data.yaml'da TEK bir 'balon' sınıfı var — balon dost/düşman bilgisi
+# taşımıyor. Karar zorunlu olarak üstündeki maketten geliyor. Bu yüzden
+# takip birimi artık tek nesne değil, bir ÇİFT.
+
+# Balon, maketin altında ve yatayda hizalı olmalı. Ölçüler maketin kutu
+# genişliğine göre normalize edilir, böylece mesafeden bağımsız çalışır.
+PAIR_MAX_HORIZONTAL_OFFSET = 1.0   # |dx| <= bu x maket_genisligi
+PAIR_VERTICAL_RANGE = (0.0, 2.5)   # balon merkezi maketin altında, bu aralıkta
+                                   # (x maket_genisligi)
+
+# Balon maketten büyük olamaz (14 cm balon, 40-50 cm maket).
+PAIR_MAX_BALLOON_RATIO = 0.8       # balon_genisligi / maket_genisligi
+
+# Balon tespiti zayıfsa nişan noktası maketten türetilir. 15 metrede balon
+# avcıda 30 piksel — YOLO için küçük-nesne sınırı; maket 96 piksel, rahat.
+# Nişan noktası = maket_merkezi + (0, bu_kat x maket_genisligi)
+PAIR_FALLBACK_AIM_OFFSET = 0.75
+PAIR_ALLOW_FALLBACK_AIM = True
+
+
+# =====================================================================
+#  ANGAJMAN DURUM MAKİNESİ
+# =====================================================================
+# Taretin gözcünün verdiği açıya oturduğu kabul edilen tolerans (derece).
+ENGAGE_SLEW_TOLERANCE_DEG = 1.0
+
+# Durum zaman aşımları (saniye). Hızlı imha modunda takılıp kalmak yanlış
+# yöne gitmekten pahalıdır.
+ENGAGE_SLEW_TIMEOUT = 2.5
+ENGAGE_VERIFY_TIMEOUT = 1.5
+ENGAGE_LOCK_TIMEOUT = 8.0
+
+# Doğrulama: maket sınıfı kaç kare üst üste aynı çıkmalı, hangi güvenin
+# üstünde. Aşama 3'te dost vurmak diskalifiye olduğu için katı tutuldu.
+VERIFY_CONFIRM_FRAMES = 4
+VERIFY_MIN_CONFIDENCE = 0.55
+
+# Nişan toleransı: hata balonun YARIÇAPININ bu oranından küçük olmalı.
+# Piksel yerine orana bağlamak hem mesafeden hem zoomdan bağımsız kılar
+# (balon 15 metrede 30 px, 5 metrede 90 px).
+AIM_TOLERANCE_RATIO = 0.35
+
+# Nişan toleransı ayrıca bu mutlak piksel değerinin altına inmek zorunda
+# değil — çok yakın hedefte gereksiz katılık yapmasın diye alt sınır.
+AIM_TOLERANCE_MIN_PIXELS = 6.0
+
+# Ateşten önce nişan kaç kare korunmalı.
+AIM_HOLD_FRAMES = 3
+
+# Kara liste: doğrulamada DOST çıkan veya imha edilen hedefler buraya girer.
+# Gövde çerçevesinde MUTLAK açı olarak tutulur (piksel uzayında tutmak
+# anlamsız, taret döndükçe referans kayar).
+BLACKLIST_RADIUS_DEG = 4.0
+BLACKLIST_TTL_SEC = 12.0          # imha edilenler için
+BLACKLIST_FRIEND_TTL_SEC = 600.0  # dost maketler için pratikte kalıcı
+
+# Balistik: 15 metrede mermi düşüşünü telafi eden sabit pitch ofseti
+# (derece, pozitif = yukarı nişan al). SAHADA ÖLÇÜLMELİ; ölçülene kadar 0.
+BALLISTIC_PITCH_OFFSET = 0.0
+
+
+# =====================================================================
+#  HAYALET TESPİT FİLTRESİ (renk tutarlılığı)
+# =====================================================================
+# Sınıf adı bir renk ima ediyorsa (dost- mavi, dusman- kırmızı, balon
+# kırmızı), kutunun içinde gerçekten o renk olmalı. Sahada ölçüldü: tek
+# balonlu sahnede karelerin %41.7'sinde hayalet tespit vardı. Kutu içeriği
+# gerçek balonda ortalama %77, hayalette %0.1 kırmızıydı. %5 eşikle 813
+# gerçek tespitin hiçbiri kaybolmadı, 338 hayaletin %99'u elendi.
+#
+# YENİ MİMARİDE AYRICA KRİTİK: dost-F16 ile dusman-F16 aynı geometriye
+# sahip, YOLO'nun onları ayırdığı tek şey RENK. Bu filtre, modelin renk
+# kararını bağımsız olarak çapraz doğrular.
 DETECTION_COLOR_CHECK = True
 DETECTION_COLOR_MIN_RATIO = 0.05
 
-# Kutu, karenin bu oranından büyükse tespit reddedilir. Sahada YOLO karenin
-# %85'ini kaplayan bir 'blue_balloon' üretti ve taret ona kilitlendi; balon
-# hangi mesafede olursa olsun kareyi bu kadar dolduramaz.
-# Üç kayıttan çıkarılan 642 GERÇEK balon kutusu ölçüldü: en büyüğü karenin
-# %2.2'si, %99 dilim %1.9. Bu sınır 11 kat emniyet payı bırakıyor ve renkten
-# bağımsız çalıştığı için renk kontrolünün kaçırdığı saçma kutuları da yakalar.
+# Kutu karenin bu oranından büyükse tespit saçmadır.
 DETECTION_MAX_AREA_RATIO = 0.25
 
-# --- Hedef seçiminde güven skoru ---
-# Aday seçimi "kareye en yakın tespit" kuralıyla yapılıyor ve güveni hiç
-# dikkate almıyordu; sahada tavandaki hayalet (0.66) tam merkezde olduğu için
-# gerçek balonu (0.81) yenmişti. Artık önce belirgin şekilde daha güvenli
-# tespitler ayıklanıyor, sonra kalanlar arasında merkeze yakınlık karar veriyor.
-# Bu marj kadar düşük güvenli adaylar, daha iyisi varken değerlendirmeye alınmaz.
+# Bir adayın mevcut hedefin yerine geçebilmesi için gereken güven farkı.
 ACQUIRE_CONFIDENCE_MARGIN = 0.15

@@ -20,27 +20,32 @@ DISPLAY_WIDTH = 810
 # aşıyordu ve karenin %85'ini kaplayan sahte bir 'blue_balloon' filtreden
 # geçmişti. S>140 ile duvarın katkısı %0.16'ya düşüyor; gerçek bir mavi balon
 # bu doygunluğu rahatça aşar.
-_RENK_ARALIKLARI = {
-    'red':  [((0, 120, 80), (10, 255, 255)), ((170, 120, 80), (179, 255, 255))],
-    'kir':  [((0, 120, 80), (10, 255, 255)), ((170, 120, 80), (179, 255, 255))],
-    'blue': [((100, 140, 60), (130, 255, 255))],
-    'mav':  [((100, 140, 60), (130, 255, 255))],
-    'yes':  [((40, 90, 50), (85, 255, 255))],
-}
+_KIRMIZI = [((0, 120, 70), (10, 255, 255)), ((170, 120, 70), (179, 255, 255))]
+_MAVI = [((100, 140, 60), (130, 255, 255))]
 
 
 def _sinif_rengi(class_name):
-    """Sınıf adından renk anahtarını çıkarır; bilinmiyorsa None."""
-    ad = class_name.lower()
-    for anahtar in _RENK_ARALIKLARI:
-        if ad.startswith(anahtar) or anahtar in ad:
-            return anahtar
+    """
+    Sınıf adından beklenen rengi çıkarır; bilinmiyorsa None.
+
+    Yeni sınıf şeması: 'balon' (kırmızı), 'dost-*' (mavi), 'dusman-*'
+    (kırmızı). Bu eşleme YENİ MİMARİDE KRİTİK: dost-F16 ile dusman-F16 aynı
+    geometriye sahip ve YOLO'nun onları ayırdığı tek şey renk. Bu filtre,
+    modelin renk kararını bağımsız olarak çapraz doğrular.
+    """
+    ad = (class_name or '').lower()
+    if ad.startswith(config.FRIEND_PREFIX.lower()):
+        return _MAVI
+    if ad.startswith(config.ENEMY_PREFIX.lower()):
+        return _KIRMIZI
+    if ad == config.BALLOON_CLASS.lower():
+        return _KIRMIZI
     return None
 
 
 def _renk_tutarli_mi(frame, bbox, renk):
     """
-    Kutunun içinde sınıfın belirttiği renk gerçekten var mı?
+    Kutunun içinde sınıfın ima ettiği renk gerçekten var mı?
 
     YOLO bu sahnede düz tavanda 'red_balloon' üretiyor (sahada güven 0.66'ya
     kadar çıktı). Sınıfın adı rengi söylediğine göre, kutuda o renkten eser
@@ -59,7 +64,7 @@ def _renk_tutarli_mi(frame, bbox, renk):
     kirp = frame[y0:y1, x0:x1]
     hsv = cv2.cvtColor(kirp, cv2.COLOR_BGR2HSV)
     maske = None
-    for alt, ust in _RENK_ARALIKLARI[renk]:
+    for alt, ust in renk:
         m = cv2.inRange(hsv, np.array(alt, np.uint8), np.array(ust, np.uint8))
         maske = m if maske is None else cv2.bitwise_or(maske, m)
     oran = float(np.count_nonzero(maske)) / maske.size
@@ -310,11 +315,9 @@ def inference_worker(command_queue, frame_queue, result_queue):
     """
     print("Inference worker started.")
 
-    # Load models
-    model_task12 = YoloModel(config.YOLO_MODEL_PATH, config.IMG_WIDTH, config.IMG_HEIGHT)
-    model_task3 = None # Lazy load model 3
-
-    qr_detector = cv2.QRCodeDetector()
+    # ÜÇ AŞAMA DA TEK MODELİ KULLANIR. Eskiden Aşama 3 ayrı bir ağırlık
+    # yüklüyordu; artık görev değişiminde model yeniden yükleme gecikmesi yok.
+    model = YoloModel(config.YOLO_MODEL_PATH, config.IMG_WIDTH, config.IMG_HEIGHT)
 
     current_task = None
     is_running = False
@@ -361,16 +364,7 @@ def inference_worker(command_queue, frame_queue, result_queue):
             qr_bbox = None
 
             if is_running and current_task is not None:
-                if current_task in ['task1', 'task2']:
-                    detections = model_task12.infer(frame, config.CLASSES)
-                elif current_task == 'task3':
-                    if model_task3 is None:
-                        print("Lazy loading task 3 model...")
-                        model_task3 = YoloModel(config.YOLO_MODEL_PATH_TASK3, config.IMG_WIDTH, config.IMG_HEIGHT)
-                    detections = model_task3.infer(frame, config.CLASSES_TASK3)
-
-                    # Detect QR for task 3
-                    qr_data, qr_bbox, _ = qr_detector.detectAndDecode(frame)
+                detections = model.infer(frame, config.CLASSES)
 
                 # Hayalet eleme: sınıfının rengini içermeyen tespitleri at.
                 # Burada yapılıyor çünkü ham çözünürlüklü kare yalnızca bu

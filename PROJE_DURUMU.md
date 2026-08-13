@@ -470,3 +470,139 @@ Kalan hareketli hedef hatası ~25 px. Etkin ileri görüş şu an 0.176 s, ölç
 gecikme 0.22 s. `FEEDFORWARD_GAIN` 0.8 -> 1.0 yapmak farkı kapatır. Sabit hedefte
 titreme başlarsa geri düşürün. `KP` ve `VELOCITY_SMOOTHING` bu iş için denendi
 ve kaldıraç değiller — tekrar denemeye gerek yok.
+
+---
+
+# FAZ 2: Çift Kamera Mimarisi (yeni hedef konsepti)
+
+Motor/denetim optimizasyonu tamamlandı. Bu faz yeni hedef konseptine, çift
+kamera mimarisine ve yeni görev aşamalarına geçişi kapsıyor.
+
+## Yeni hedef konsepti
+
+Hedef artık tek nesne değil bir **çift**: üstte dost/düşman maketi, hemen
+altında kırmızı balon. `data.yaml`'da tek bir `balon` sınıfı var — yani balon
+dost/düşman bilgisi **taşımıyor**, karar zorunlu olarak üstteki maketten
+geliyor.
+
+```
+nc: 6
+names: ['balon', 'dost-F16', 'dost-Helikopter',
+        'dusman-Drone', 'dusman-F16', 'dusman-Fuze']
+```
+
+Üç aşama da **tek YOLO modelini** kullanıyor (`best.engine`, ana dizinde).
+
+| aşama | içerik |
+|---|---|
+| 1 | tamamen manuel |
+| 2 | hızlı imha; üç yoldan yalnızca düşman gelir |
+| 3 | dost/düşman ayrımı; iki mavi bir kırmızı maket |
+
+## Çift kamera
+
+| | gözcü (spotter) | avcı (hunter) |
+|---|---|---|
+| konum | gövdeye sabit | taret üzerinde |
+| zoom | yok | sabit 3x |
+| işlev | OpenCV renk analizi | YOLO |
+| °/piksel yaw | 0.0535 | 0.01783 |
+| görüş açısı | 68.5 x 39.9° | 22.8 x 13.3° |
+
+15 metrede: balon avcıda 30 px / gözcüde 10 px, maket avcıda 96 px.
+
+Gözcü gövdeye sabit olduğu için çıktısı **mutlak açı**; taretin hareketi
+ölçümünü etkilemez. Geçen fazda uğraştığımız açı-geçmişi sızıntısı bu hatta
+yapısal olarak yok.
+
+## Kritik bulgu 1: "en büyük kırmızı = düşman" kuralı çalışmıyor
+
+Örnek görselden ölçülen kırmızı piksel alanları:
+
+| hedef | toplam kırmızı |
+|---|---|
+| yakın **dost** (mavi heli + kırmızı balon) | ~16.200 |
+| yakın **düşman** (kırmızı drone + balon) | ~43.300 |
+| uzak **düşman** (kırmızı F16 + balon) | ~3.600 |
+
+Uzak düşman, yakın dostun 4.5 katı daha az kırmızı veriyor — kural dostu
+seçer. Sebep: dostun altında da kırmızı balon var (kırmızı tabanı sıfır
+değil) ve alan mesafenin karesiyle ters orantılı.
+
+**Çözüm: geometri.** Balonun üstünde, balonun **kendi piksel çapıyla**
+ölçeklenen bir pencerede mavi/kırmızı **oranına** bakılıyor. Oran mesafeden
+bağımsız. Birim testi bu senaryoyu doğruluyor: yeni kural doğru seçiyor,
+eski kural dostu seçiyor.
+
+Gözcünün kararı yine de **nihai değil** — yalnızca sıralama. Karar avcının
+YOLO'sunda; dost çıkarsa hedef kara listeye girer.
+
+## Kritik bulgu 2: hedefler beklenenden 10 kat yavaş
+
+Hedefler 0.4 m/s ile **tarete doğru** geliyor. Hareket büyük ölçüde radyal
+olduğu için açısal hız çok düşük (7.5 m yanal ofsetli yol için):
+
+| mesafe | açısal hız | ff'siz kalan hata |
+|---|---|---|
+| 15 m | 0.6 °/s | 8 px |
+| 8 m | 1.4 °/s | 18 px |
+| 5 m | 2.1 °/s | 26 px |
+
+Elde gezdirilen balonda 5-15 °/s ölçmüştük. `FEEDFORWARD_VELOCITY_DEADBAND`
+4.0 iken feedforward **hiç çalışmazdı**. 1.0'a indirildi.
+
+## 3x zoomun eşiklere etkisi
+
+Kural: eşik neye karşı koruyorsa onun biriminde tanımlı olmalı.
+
+| ayar | durum |
+|---|---|
+| `KP_*`, `FEEDFORWARD_LEAD_TIME/GAIN` | derece uzayında — aynen geçerli |
+| `PID_DEADBAND_PIXELS`, `MIN_OUTPUT_PIXELS` | tespit gürültüsüne karşı — aynen geçerli |
+| `FEEDFORWARD_ERROR_GATE_PIXELS` | **açısal** olgu — (30,120) -> **(90,360)** |
+| `FEEDFORWARD_VELOCITY_DEADBAND` | 4.0 -> **1.0** |
+| `VELOCITY_FAST_THRESHOLD` | 4.0 -> **1.5** |
+| `MAX_TARGET_RATE_DEG_S` | 80 -> **30** |
+| `PREDICTION_MAX_RATE_DEG_S` | 20 -> **8** |
+| nişan toleransı | sabit 15 px -> **balon yarıçapının %35'i** |
+
+## Yeni dosyalar
+
+- **`spotter_module.py`** — gözcü süreci: renk maskeleri, balon blobları,
+  "maviyi üstte ara" testi, kalıcı izler, açı + açısal hız.
+- **`engagement.py`** — hedef çifti modeli, geometrik eşleştirme, kara liste,
+  durum makinesi (BOSTA -> TARAMA -> YÖNELME -> DOĞRULAMA -> KİLİT -> ATEŞ),
+  ateş kilidi. UI'dan bağımsız, simüle edilebilir.
+
+## Devir teslim öngörüsü
+
+Gözcü gecikmesi (~0.05 s) + yalpalama süresi (0.34-0.45 s) yaklaşık 0.5 s.
+Avcının dikey yarı görüş açısı yalnızca ±6.65°. Bu yüzden taret gözcünün
+**ölçtüğü** değil **tahmin ettiği** açıya gönderiliyor.
+
+## Ateş kilidi
+
+Eski otomatik ateş yolları **tamamen kaldırıldı**. Aşama 2 artık var olmayan
+`red_balloon` sınıfına bakıyordu; Aşama 3 ise hiçbir sınıf kontrolü yapmadan
+tahmin edilmiş hedefe ateş edebiliyordu. Tek karar noktası
+`engagement.ates_serbest_mi()` ve dokuz koşul birden aranıyor: maket bu
+karede gerçekten tespit edildi, sınıfı `dusman-`, güven eşik üstü, doğrulanan
+sınıfla aynı, balon bu karede gerçekten tespit edildi, nişan tolerans içinde,
+ateşsiz bölge dışında, durum ATEŞ.
+
+Ateşsiz bölge (0,0) varsayılanının tam 0.0°'de ateşi engellediği eski hata da
+düzeltildi (başlangıç = bitiş ise bölge tanımsız sayılıyor).
+
+## SAHADA YAPILMASI GEREKENLER (kod hazır, ölçüm bekliyor)
+
+1. **`HUNTER_DPP_YAW/PITCH`** — şu an gözcününkinin üçte biri olarak
+   *hesaplandı*, ölçülmedi. "Derece/Piksel Ölç" ile doğrulanmalı.
+2. **`SPOTTER_YAW_OFFSET` / `SPOTTER_PITCH_OFFSET`** — gözcü-avcı hizalaması.
+   Şu an 0.0; ölçülmeden devir teslim isabetsiz olur.
+3. **`CAPTURE_LATENCY_OFFSET`** — avcı kamera için yeniden ölçülmeli.
+4. **Kamera pozlaması ~10 ms'ye sabitlenmeli**, otomatik pozlama ve otomatik
+   beyaz dengesi kapatılmalı. 33 ms pozlamada taret 89 °/s'de dönerken
+   bulanıklık 165 piksel; balon 30 piksel, tamamen sıvanır.
+5. **İki kamera aynı anda açılabiliyor mu** — USB bant genişliği testi.
+   `SPOTTER_CAMERA_INDICES` ve `HUNTER_CAMERA_INDICES` doğru ayarlanmalı.
+6. **`BALLISTIC_PITCH_OFFSET`** — 15 metrede mermi düşüşü.

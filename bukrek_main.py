@@ -18,9 +18,13 @@ import config
 from rpi_communicator import RPiCommunicator
 from camera_module import camera_worker
 from inference_module import inference_worker
+from spotter_module import spotter_worker
+import engagement
+from engagement import (BOSTA, TARAMA, YONELME, DOGRULAMA, KILIT, ATES)
 
 class HavaSavunmaArayuz(QWidget):
-    def __init__(self, camera_cmd_q, inference_cmd_q, result_q):
+    def __init__(self, camera_cmd_q, inference_cmd_q, result_q,
+                 spotter_cmd_q=None, spotter_result_q=None):
         print("HATA AYIKLAMA: HavaSavunmaArayuz başlatıldı.")
         super().__init__()
         self.setWindowTitle('Hava Savunma Sistemi Arayüzü')
@@ -31,6 +35,11 @@ class HavaSavunmaArayuz(QWidget):
         self.camera_cmd_q = camera_cmd_q
         self.inference_cmd_q = inference_cmd_q
         self.result_q = result_q
+        # Gözcü kuyrukları. None olabilir (tek kameralı hata ayıklama için);
+        # o durumda otonom aşamalar gözcüsüz, yalnızca avcının gördüğüyle
+        # çalışır ve tarama yapamaz.
+        self.spotter_cmd_q = spotter_cmd_q
+        self.spotter_result_q = spotter_result_q
 
         # --- UI Elemanları Oluşturma ---
         print("HATA AYIKLAMA: UI elemanları oluşturuluyor.")
@@ -40,6 +49,16 @@ class HavaSavunmaArayuz(QWidget):
 
         self.image_label = QLabel(self)
         self.image_label.setAlignment(Qt.AlignCenter)
+
+        # GÖZCÜ önizlemesi. Gözcünün ne gördüğünü ve hangi açıyı ürettiğini
+        # ekranda görmeden sahada hata ayıklamak imkânsız.
+        self.spotter_label = QLabel(self)
+        self.spotter_label.setFixedSize(480, 270)
+        self.spotter_label.setAlignment(Qt.AlignCenter)
+        self.spotter_label.setStyleSheet("background-color: #101010; color: #888;")
+        self.spotter_label.setText("Gözcü: kapalı")
+        self.spotter_info_label = QLabel("Gözcü: -")
+        self.spotter_info_label.setStyleSheet("color: #9ad; font-size: 12px;")
 
         self.status_label = QLabel("Durum: Hazır")
         self.status_label.setStyleSheet("color: white; font-size: 14px;")
@@ -58,7 +77,20 @@ class HavaSavunmaArayuz(QWidget):
         self.movement_restricted_yaw_start = 0
         self.movement_restricted_yaw_end = 0
 
-        self.aiming_tolerance = 15
+        # Nişan toleransı artık sabit piksel DEĞİL: balonun yarıçapının bir
+        # oranı (config.AIM_TOLERANCE_RATIO). Balon 15 metrede avcıda 30
+        # piksel, 5 metrede 90 piksel; sabit bir eşik ikisinde çok farklı
+        # anlam taşırdı. Bu alan yalnızca geriye dönük varsayılan.
+        self.aiming_tolerance = config.AIM_TOLERANCE_MIN_PIXELS
+
+        # --- Gözcü / angajman durumu ---
+        self.gozcu_izler = []          # gözcü sürecinden gelen son iz listesi
+        self.gozcu_zamani = 0.0
+        self.gozcu_onizleme = None
+        self.angajman = engagement.AngajmanMakinesi()
+        self.aktif_cift = None         # o karedeki maket+balon çifti
+        self.balon_gercek_goruldu = False
+        self._son_angajman_komutu = 0.0
 
         # Kameranın ham kare boyutu. İlk sonuç geldiğinde inference sürecinden
         # gerçek değerlerle güncellenir; buradakiler yalnızca başlangıç değeridir.
@@ -217,6 +249,8 @@ class HavaSavunmaArayuz(QWidget):
 
         right_layout = QVBoxLayout()
         right_layout.addWidget(self.image_label)
+        right_layout.addWidget(self.spotter_label)
+        right_layout.addWidget(self.spotter_info_label)
         right_layout.addSpacerItem(QSpacerItem(10, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
 
         right_layout.addWidget(self.status_label)
@@ -427,7 +461,9 @@ class HavaSavunmaArayuz(QWidget):
         print("HATA AYIKLAMA: Sinyaller bağlanıyor.")
         self.task1_button.clicked.connect(self.task1)
         self.task2_button.clicked.connect(self.task2)
-        self.task3_button.clicked.connect(self.setup_task3)
+        # Aşama 3 artık doğrudan angajmana giriyor; eski QR tabanlı ayar
+        # akışı (setup_task3) kullanılmıyor.
+        self.task3_button.clicked.connect(self.task3)
         self.manual_control_mode_button.clicked.connect(self.set_full_manual_mode)
         self.start_button.clicked.connect(self.start_camera)
         self.stop_button.clicked.connect(self.stop_camera)
@@ -629,6 +665,178 @@ class HavaSavunmaArayuz(QWidget):
               + (dunya_pitch - pitch_ref) / self.DEGREES_PER_PIXEL_PITCH)
         return px, py
 
+    # ================= GÖZCÜ / ANGAJMAN =================
+
+    def _gozcu_oku(self):
+        """Gözcü sürecinden gelen son sonucu al (bayat olanları atarak)."""
+        if self.spotter_result_q is None:
+            return
+        son = None
+        while True:
+            try:
+                son = self.spotter_result_q.get_nowait()
+            except queue.Empty:
+                break
+        if son is None:
+            return
+        if 'hata' in son:
+            self.spotter_info_label.setText(f"Gözcü HATA: {son['hata']}")
+            return
+        self.gozcu_izler = son.get('izler', [])
+        self.gozcu_zamani = son.get('zaman', time.time())
+        if 'onizleme' in son:
+            self.gozcu_onizleme = (son['onizleme'], son.get('onizleme_olcek', 1.0))
+
+    def _gozcu_ciz(self):
+        """Gözcü önizlemesini izlerle birlikte çiz."""
+        if self.gozcu_onizleme is None:
+            return
+        kare, olcek = self.gozcu_onizleme
+        kare = kare.copy()
+        yuk, gen = kare.shape[:2]
+        for iz in self.gozcu_izler:
+            # Açıdan piksele geri dönüş (önizleme ölçeğinde)
+            px = int(gen / 2 + (iz['yaw'] - config.SPOTTER_YAW_OFFSET)
+                     / config.SPOTTER_DPP_YAW * olcek)
+            py = int(yuk / 2 + (iz['pitch'] - config.SPOTTER_PITCH_OFFSET)
+                     / config.SPOTTER_DPP_PITCH * olcek)
+            renk = {'dusman': (0, 0, 255), 'dost': (255, 120, 0)}.get(
+                iz['sinif'], (0, 200, 255))
+            cv2.circle(kare, (px, py), 10, renk, 2)
+            cv2.putText(kare, f"{iz['yaw']:+.0f}", (px + 12, py + 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, renk, 1)
+        cv2.line(kare, (gen // 2 - 8, yuk // 2), (gen // 2 + 8, yuk // 2), (0, 255, 0), 1)
+        cv2.line(kare, (gen // 2, yuk // 2 - 8), (gen // 2, yuk // 2 + 8), (0, 255, 0), 1)
+        rgb = cv2.cvtColor(kare, cv2.COLOR_BGR2RGB)
+        img = QImage(rgb.data, gen, yuk, 3 * gen, QImage.Format_RGB888)
+        self.spotter_label.setPixmap(QPixmap.fromImage(img).scaled(
+            self.spotter_label.width(), self.spotter_label.height(),
+            Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _nisan_tespiti(self, cift):
+        """
+        Hedef çiftinden PID'in kullanacağı sanal bir tespit üretir.
+
+        Balon varsa oraya nişan alınır. Balon 15 metrede avcıda yalnızca 30
+        piksel — YOLO için küçük-nesne sınırı. Tespit zayıfladığında nişan
+        noktası maketten geometrik olarak türetilir (maket 96 piksel).
+        Bu geçiş `balon_gercek_goruldu` ile işaretlenir; ATEŞ kilidi gerçek
+        balon görülmeden ateşe izin vermez.
+        """
+        nokta = cift.nisan_noktasi()
+        if nokta is None:
+            return None
+        cx, cy, yaricap, gercek = nokta
+        self.balon_gercek_goruldu = gercek
+        yaricap = max(4.0, yaricap)
+        return {
+            'bbox': (int(cx - yaricap), int(cy - yaricap),
+                     int(2 * yaricap), int(2 * yaricap)),
+            'class_name': cift.sinif or config.BALLOON_CLASS,
+            'score': cift.guven,
+            'yaricap': yaricap,
+        }
+
+    def _ciftleri_sirala(self, detections, merkez_x, merkez_y):
+        """Tespitlerden çiftleri kurup kare merkezine yakınlığa göre sıralar."""
+        ciftler = engagement.cift_eslestir(detections)
+
+        def uzaklik(c):
+            kaynak = c.balon if c.balon is not None else c.maket
+            if kaynak is None:
+                return float('inf')
+            x, y, w, h = kaynak['bbox']
+            return ((x + w / 2 - merkez_x) ** 2 + (y + h / 2 - merkez_y) ** 2) ** 0.5
+
+        return sorted(ciftler, key=uzaklik)
+
+    def _angajman_adimi(self, ciftler):
+        """
+        Durum makinesini bir adım ilerletir.
+
+        Döner: PID'e verilecek sanal tespit (veya None). TARAMA/YÖNELME
+        durumlarında taret gözcünün verdiği MUTLAK açıya gider; bu açı gövde
+        çerçevesinde olduğu için taretin mevcut konumundan bağımsızdır.
+        """
+        m = self.angajman
+        if m.durum == TARAMA:
+            secim = m.tarama_adimi(self.gozcu_izler)
+            if secim is None:
+                self._update_status_label(
+                    f"Durum: {self.active_task} - gözcü tarıyor, aday yok.")
+                return None
+            yaw, pitch = secim
+            self.send_angle_command(yaw, pitch + config.BALLISTIC_PITCH_OFFSET,
+                                    force=True)
+            self._update_status_label(
+                f"Durum: Aday seçildi, yöneliniyor: {yaw:+.1f}°, {pitch:+.1f}°")
+            return None
+
+        if m.durum == YONELME:
+            if not m.yonelme_adimi(self.current_yaw_angle, self.current_pitch_angle):
+                # Taret henüz oturmadı; hedefi yeniden komut etmeye gerek yok
+                # (pozisyon servosu son hedefi zaten tutuyor).
+                return None
+            self._update_status_label("Durum: Taret yerleşti, doğrulanıyor...")
+            return None
+
+        if m.durum == DOGRULAMA:
+            sonuc = m.dogrulama_adimi(ciftler)
+            if sonuc is not None and engagement.dost_mu(sonuc):
+                self.target_info_label.setText(
+                    f"Hedef Bilgisi: DOST ({sonuc}) — atlanıyor.")
+                self._update_status_label("Durum: Dost tespit edildi, sıradaki adaya geçiliyor.")
+            elif sonuc is not None:
+                self.target_info_label.setText(f"Hedef Bilgisi: DÜŞMAN ({sonuc}).")
+            # Doğrulama sırasında da nişan almaya devam et: çift varsa PID
+            # onu ortalasın, böylece KİLİT'e geçince zaten yakınız.
+            if ciftler:
+                return self._nisan_tespiti(ciftler[0])
+            return None
+
+        if m.durum in (KILIT, ATES):
+            # Doğrulanan sınıfla eşleşen çifti tercih et; yoksa merkeze en
+            # yakını. Çoklu balon senaryosunda sessiz hedef değişimini önler.
+            secili = None
+            for c in ciftler:
+                if c.sinif == m.dogrulanan_sinif:
+                    secili = c
+                    break
+            if secili is None and ciftler:
+                secili = ciftler[0]
+            if secili is None:
+                return None
+            self.aktif_cift = secili
+            return self._nisan_tespiti(secili)
+
+        return None
+
+    def _otonom_ates_denemesi(self):
+        """
+        ATEŞ durumundaysa kilitleri kontrol edip ateşler.
+
+        Eski kodda Aşama 3, TAHMİN EDİLMİŞ (görülmemiş) hedefe ateş
+        edebiliyordu; `balon_gercek_goruldu` ve maket kontrolü bunu kapatır.
+        """
+        if self.angajman.durum != ATES:
+            return
+        izin, gerekce = engagement.ates_serbest_mi(
+            self.aktif_cift, self.angajman, self.balon_gercek_goruldu,
+            self.is_aimed_at_target, self.current_yaw_angle,
+            self.no_fire_yaw_start, self.no_fire_yaw_end)
+        if not izin:
+            self._update_status_label(f"Ateş engellendi: {gerekce}")
+            if self.angajman.gecen() > 1.5:
+                self.angajman._gec(KILIT)
+            return
+        self.send_command_to_rpi({"action": "fire"})
+        self.last_fire_time = time.time()
+        self._update_status_label(
+            f"Durum: ATEŞ — {self.aktif_cift.sinif} "
+            f"({self.angajman.imha_sayisi + 1}. hedef)")
+        self.angajman.imha_edildi()
+        self.aktif_cift = None
+
     def _update_current_angles(self, yaw, pitch):
         self.current_yaw_angle = yaw
         self.current_pitch_angle = pitch
@@ -691,6 +899,8 @@ class HavaSavunmaArayuz(QWidget):
         try:
             self.camera_cmd_q.put("START")
             self.inference_cmd_q.put({"action": "START"})
+            if self.spotter_cmd_q is not None:
+                self.spotter_cmd_q.put("START")
 
             self._update_status_label("Durum: Kamera Başlatıldı.")
             self.timer.start(int(self.angle_command_minimum_interval * 1000))
@@ -701,9 +911,18 @@ class HavaSavunmaArayuz(QWidget):
         except Exception as e:
             self._update_status_label(f"Durum: Hata: {str(e)[:50]}...")
 
+    def _gozcu_durdur(self):
+        if self.spotter_cmd_q is not None:
+            self.spotter_cmd_q.put("STOP")
+        self.gozcu_izler = []
+        self.gozcu_onizleme = None
+        self.spotter_label.setText("Gözcü: kapalı")
+        self.spotter_info_label.setText("Gözcü: -")
+
     def stop_camera(self):
         self.camera_cmd_q.put("STOP")
         self.inference_cmd_q.put({"action": "STOP"})
+        self._gozcu_durdur()
         self.timer.stop()
 
         self._update_status_label("Durum: Kamera Durduruldu.")
@@ -733,6 +952,8 @@ class HavaSavunmaArayuz(QWidget):
         self.stop_button.setEnabled(False)
 
     def cancel_task(self):
+        self.angajman.durdur()
+        self.aktif_cift = None
         self.active_task = None
         self.inference_cmd_q.put({"action": "SET_TASK", "task": None})
 
@@ -784,6 +1005,11 @@ class HavaSavunmaArayuz(QWidget):
         self.current_pid_range = "TEK_SET"
         self.missing_frames = 0
 
+    def _angajman_baslat(self, asama):
+        """Otonom aşamaları başlatırken durum makinesini de sıfırla."""
+        self.angajman.basla(asama)
+        self.aktif_cift = None
+
     def task1(self):
         self.cancel_task()
         self.active_task = 'task1'
@@ -816,8 +1042,10 @@ class HavaSavunmaArayuz(QWidget):
         self.crosshair_movable = False
         self.crosshair_fixed_center = True
         self.task3_settings_group_box.setVisible(False)
-        self._update_status_label("Durum: Aşama 2 başlatıldı (Kırmızı Balonu Takip Et, Otomatik Ateş).")
-        self.target_info_label.setText("Hedef Bilgisi: Kırmızı Balon.")
+        self._angajman_baslat('task2')
+        self._update_status_label(
+            "Durum: Aşama 2 (Hızlı İmha) — gözcü tarıyor, tüm hedefler düşman.")
+        self.target_info_label.setText("Hedef Bilgisi: Düşman maket + kırmızı balon.")
 
         self.target_destroyed = False
         self.waiting_for_new_engagement_command = True
@@ -832,6 +1060,27 @@ class HavaSavunmaArayuz(QWidget):
         self.is_target_active = True
         self.is_aimed_at_target = False
 
+    def task3(self):
+        """Aşama 3'ü doğrudan başlatır (eski QR tabanlı ayar akışı yerine)."""
+        self.cancel_task()
+        self.active_task = 'task3'
+        self.inference_cmd_q.put({"action": "SET_TASK", "task": 'task3'})
+        self.crosshair_movable = False
+        self.crosshair_fixed_center = True
+        if hasattr(self, 'task3_settings_group_box'):
+            self.task3_settings_group_box.setVisible(False)
+        self.target_destroyed = False
+        self.waiting_for_new_engagement_command = True
+        self.target_lost_time = 0.0
+        self.current_tracked_target_class = None
+        self.current_tracked_target_bbox = None
+        self.missing_frames = 0
+        self.fire_control_group_box.setVisible(True)
+        self.direct_manual_control_group_box.setVisible(False)
+        self.is_target_active = True
+        self.is_aimed_at_target = False
+        self._task3_baslat()
+
     def setup_task3(self):
         self.cancel_task()
         self.active_task = 'task3_setup'
@@ -841,6 +1090,13 @@ class HavaSavunmaArayuz(QWidget):
         self._update_status_label("Durum: Aşama 3 - Angajman ayarları bekleniyor.")
         self.target_info_label.setText("Hedef Bilgisi: Yok (Ayar Bekleniyor).")
         self.is_target_active = False
+
+    def _task3_baslat(self):
+        """Aşama 3: iki dost bir düşman; yalnızca düşmanın balonu vurulacak."""
+        self._angajman_baslat('task3')
+        self._update_status_label(
+            "Durum: Aşama 3 (Dost/Düşman) — yalnızca düşman maketin balonu hedeflenecek.")
+        self.target_info_label.setText("Hedef Bilgisi: Düşman aranıyor.")
 
     def start_task3_engagement(self):
         self.cancel_task()
@@ -884,8 +1140,10 @@ class HavaSavunmaArayuz(QWidget):
         self.is_target_active = False
         self.is_aimed_at_target = False
 
+    MANUEL_MODLAR = ('full_manual', 'task1')
+
     def _handle_manual_button_press(self, direction_key):
-        if self.active_task != 'full_manual':
+        if self.active_task not in self.MANUEL_MODLAR:
             return
 
         self.movement_states[direction_key] = True
@@ -894,7 +1152,7 @@ class HavaSavunmaArayuz(QWidget):
         self._update_status_label(f"Durum: Manuel hareket etkin: {direction_key}.")
 
     def _set_movement_state(self, direction_key, is_pressed):
-        if self.active_task != 'full_manual':
+        if self.active_task not in self.MANUEL_MODLAR:
             return
 
         self.movement_states[direction_key] = is_pressed
@@ -964,7 +1222,7 @@ class HavaSavunmaArayuz(QWidget):
         self._last_manual_send_time = simdi
 
     def _continuously_update_motor_position(self):
-        if self.active_task != 'full_manual' or not self.rpi_thread.is_connected:
+        if self.active_task not in self.MANUEL_MODLAR or not self.rpi_thread.is_connected:
             self._stop_all_manual_movement()
             return
 
@@ -1037,7 +1295,8 @@ class HavaSavunmaArayuz(QWidget):
                 self._update_status_label("Uyarı: Ateşsiz bölgedesiniz! Ateşleme engellendi.")
                 return
 
-            if self.active_task == 'full_manual':
+            # Aşama 1 tamamen manuel: nişan kilidi aranmaz, operatör karar verir.
+            if self.active_task in self.MANUEL_MODLAR:
                 self.send_command_to_rpi({"action": "fire"})
                 self.last_fire_time = current_time
                 return
@@ -1341,6 +1600,21 @@ class HavaSavunmaArayuz(QWidget):
             except queue.Empty:
                 return
 
+            # Gözcü avcıdan bağımsız çalışır; her karede en taze sonucu al.
+            # Gözcü, avcı takip ederken de durmadan çalışır — avcının dar
+            # görüş açısı (22.8x13.3 derece) yüzünden hedef kaybolduğunda
+            # kurtarma ağı odur.
+            self._gozcu_oku()
+            self._gozcu_ciz()
+            if self.gozcu_izler:
+                en_iyi = self.gozcu_izler[0]
+                self.spotter_info_label.setText(
+                    f"Gözcü: {len(self.gozcu_izler)} iz | ilk: "
+                    f"{en_iyi['yaw']:+.1f}° {en_iyi['pitch']:+.1f}° "
+                    f"({en_iyi['sinif']}, {en_iyi['yaw_hiz']:+.1f}°/s)")
+            else:
+                self.spotter_info_label.setText("Gözcü: iz yok")
+
             display_frame = frame
             current_frame_time = time.time()
             # Karenin ÇEKİLME zamanı (kamera sürecinde, aynı PC saatiyle
@@ -1545,41 +1819,39 @@ class HavaSavunmaArayuz(QWidget):
                         esik = en_iyi - config.ACQUIRE_CONFIDENCE_MARGIN
                         return [d for d in liste if d['score'] >= esik]
 
-                    if self.active_task == 'task1':
-                        for det in guvene_gore_ayikla(detections):
-                            x, y, det_w, det_h = det['bbox']
-                            det_center_x = x + det_w // 2
-                            det_center_y = y + det_h // 2
-                            distance = np.sqrt((det_center_x - center_x_frame) ** 2 + (det_center_y - center_y_frame) ** 2)
-                            if distance < minimum_distance:
-                                minimum_distance = distance
-                                candidate_target = det
-                        if candidate_target:
-                            self.target_info_label.setText(
-                                f"Hedef Bilgisi: {candidate_target['class_name']} algılandı.")
-                            detected_class_status = candidate_target['class_name']
-                            self._update_status_label("Durum: Aşama 1 - Hedef kilitlendi.")
-                        else:
-                            self.target_info_label.setText("Hedef Bilgisi: Balon algılanmadı.")
-                            self._update_status_label("Durum: Yeni hedef bekleniyor...")
+                    # --- HEDEF SEÇİMİ: artık tek nesne değil ÇİFT ---
+                    # data.yaml'da tek bir 'balon' sınıfı var, yani balon
+                    # dost/düşman bilgisi TAŞIMIYOR. Karar zorunlu olarak
+                    # üstündeki maketten geliyor. Eşleştirme geometriktir ve
+                    # maketin kutu genişliğine normalize edildiği için
+                    # mesafeden bağımsız çalışır; aynı zamanda hayalet
+                    # eleyicidir (tek başına duran balon hedef sayılmaz).
+                    ciftler = self._ciftleri_sirala(
+                        guvene_gore_ayikla(detections), center_x_frame, center_y_frame)
 
-                    elif self.active_task == 'task2':
-                        red_balloons = [d for d in detections if d['class_name'] == 'red_balloon']
-                        for det in guvene_gore_ayikla(red_balloons):
-                            x, y, det_w, det_h = det['bbox']
-                            det_center_x = x + det_w // 2
-                            det_center_y = y + det_h // 2
-                            distance = np.sqrt((det_center_x - center_x_frame) ** 2 + (det_center_y - center_y_frame) ** 2)
-                            if distance < minimum_distance:
-                                minimum_distance = distance
-                                candidate_target = det
-                        if candidate_target:
-                            self.target_info_label.setText(f"Hedef Bilgisi: Kırmızı Balon algılandı.")
-                            detected_class_status = "red_balloon"
-                            self._update_status_label("Durum: Aşama 2 - Düşman hedef kilitlendi.")
+                    if self.active_task in ('task2', 'task3'):
+                        # Otonom aşamalarda hedefi durum makinesi seçer.
+                        sanal = self._angajman_adimi(ciftler)
+                        if sanal is not None:
+                            candidate_target = sanal
+                            detected_class_status = sanal['class_name']
+                        self.target_info_label.setText(
+                            f"Hedef: {self.angajman.durum} | "
+                            f"{len(ciftler)} çift | imha {self.angajman.imha_sayisi}")
+                    else:
+                        # Aşama 1 ve tam manuel: yalnızca gösterim amaçlı en
+                        # yakın çift işaretlenir, otonom servolama yapılmaz.
+                        if ciftler:
+                            self.aktif_cift = ciftler[0]
+                            sanal = self._nisan_tespiti(ciftler[0])
+                            if sanal is not None:
+                                candidate_target = sanal
+                                detected_class_status = sanal['class_name']
+                            self.target_info_label.setText(
+                                f"Hedef Bilgisi: {ciftler[0].sinif or 'balon'} algılandı.")
                         else:
-                            self.target_info_label.setText(f"Hedef Bilgisi: Kırmızı Balon Yok.")
-                            self._update_status_label("Durum: Yeni hedef bekleniyor...")
+                            self.aktif_cift = None
+                            self.target_info_label.setText("Hedef Bilgisi: Hedef çifti yok.")
 
                     # --- Hayalet tespite karşı zamansal onay ---
                     # YOLO tek tük yanlış pozitif üretiyor. Sahada tavanda
@@ -1676,48 +1948,17 @@ class HavaSavunmaArayuz(QWidget):
                     self.current_qr_char = None
                     self.current_tracked_target_class = None
 
-            # Status Updates
+            # --- Durum metinleri ---
+            # DİKKAT: buradaki eski OTOMATİK ATEŞ yolları KALDIRILDI.
+            # Aşama 2 ateşi `detected_class_status == "red_balloon"` gibi artık
+            # var olmayan bir sınıf adına bakıyordu; Aşama 3 ise HİÇBİR sınıf
+            # kontrolü yapmıyordu ve TAHMİN EDİLMİŞ (görülmemiş) bir hedefe
+            # ateş edebiliyordu. Ateş kararının tek yeri artık
+            # `_otonom_ates_denemesi()` ve `engagement.ates_serbest_mi()`;
+            # orada dokuz koşul birden aranıyor.
             if self.active_task == 'task1':
-                if current_target_bbox_for_pid and not self.target_destroyed:
-                    self._update_status_label("Durum: Aşama 1 - Hedefe Nişan Alıyor (Manuel Ateş).")
-                elif self.target_destroyed:
-                    self._update_status_label("Durum: Aşama 1 - Hedef yok edildi. Yeni hedef bekleniyor.")
-                else:
-                    self._update_status_label("Durum: Aşama 1 - Hedef Aranıyor (Manuel Ateş).")
-            elif self.active_task == 'task2':
-                if current_target_bbox_for_pid and detected_class_status == "red_balloon" and self.is_aimed_at_target and not self.target_destroyed:
-                    try:
-                        self.fire_weapon()
-                        self._update_status_label("Durum: Aşama 2 - Düşman yok edildi! (Otonom)")
-                    except Exception as e:
-                        self._update_status_label(f"Hata: Aşama 2 ateşleme hatası: {str(e)[:50]}...")
-                elif current_target_bbox_for_pid and detected_class_status == 'blue_balloon':
-                    self._update_status_label("Durum: Aşama 2 - Dost hedef algılandı, ateşleme engellendi.")
-                elif current_target_bbox_for_pid and not self.target_destroyed:
-                    self._update_status_label("Durum: Aşama 2 - Düşman hedefe nişan alıyor...")
-                elif self.target_destroyed:
-                    self._update_status_label("Durum: Aşama 2 - Hedef yok edildi. Yeni hedef bekleniyor.")
-                else:
-                    self._update_status_label("Durum: Aşama 2 - Hedef Yok.")
-            elif self.active_task == 'task3':
-                if current_target_bbox_for_pid and self.is_aimed_at_target and not self.target_destroyed:
-                    if not self.is_in_no_fire_zone(self.current_yaw_angle):
-                        try:
-                            self.fire_weapon()
-                            self._update_status_label("Durum: Aşama 3 - Hedef yok edildi! (Otonom)")
-                        except Exception as e:
-                            self._update_status_label(f"Hata: Aşama 3 ateşleme hatası: {str(e)[:50]}...")
-                    else:
-                        self._update_status_label("Durum: Aşama 3 - Ateşsiz bölgede ateşleme engellendi!")
-                elif current_target_bbox_for_pid and not self.target_destroyed:
-                    self._update_status_label(
-                        "Durum: Aşama 3 - Angajman hedefine nişan alıyor...")
-                elif self.target_destroyed:
-                    self._update_status_label("Durum: Aşama 3 - Hedef yok edildi. Ana konuma dönülüyor...")
-                elif not self.is_ready_to_engage_from_qr:
-                    self._update_status_label("Durum: Aşama 3 - Angajman için QR Kodu bekleniyor.")
-                else:
-                    self._update_status_label("Durum: Aşama 3 - Angajman Hedefi Aranıyor.")
+                self._update_status_label(
+                    "Durum: Aşama 1 - Tam manuel kontrol (ok tuşları + ATEŞ ET).")
             elif self.active_task == 'full_manual':
                 if self.is_in_no_fire_zone(self.current_yaw_angle):
                     self._update_status_label(
@@ -1818,8 +2059,19 @@ class HavaSavunmaArayuz(QWidget):
         capture_error_yaw = error_yaw_pixel * self.DEGREES_PER_PIXEL_YAW
         capture_error_pitch = error_pitch_pixel * self.DEGREES_PER_PIXEL_PITCH
 
-        self.is_aimed_at_target = abs(error_yaw_pixel) <= self.aiming_tolerance and \
-                                  abs(error_pitch_pixel) <= self.aiming_tolerance
+        # Nişan toleransı balonun YARIÇAPININ oranı olarak tanımlı. Sabit
+        # piksel eşiği mesafeye göre anlam değiştirirdi: balon 15 metrede
+        # avcıda 30 piksel, 5 metrede 90 piksel. Oran ikisinde de aynı
+        # fiziksel isabet payına karşılık gelir.
+        _yaricap = None
+        if self.current_tracked_target_bbox:
+            _yaricap = max(self.current_tracked_target_bbox[2],
+                           self.current_tracked_target_bbox[3]) / 2.0
+        _tolerans = config.AIM_TOLERANCE_MIN_PIXELS
+        if _yaricap:
+            _tolerans = max(_tolerans, _yaricap * config.AIM_TOLERANCE_RATIO)
+        self.is_aimed_at_target = (abs(error_yaw_pixel) <= _tolerans and
+                                   abs(error_pitch_pixel) <= _tolerans)
 
         # --- ÖLÜ ZAMAN TELAFİSİ ---
         # Kamera + çıkarım gecikmesi boyunca (~100-200 ms) taret hareket etmeye
@@ -1843,6 +2095,15 @@ class HavaSavunmaArayuz(QWidget):
 
         error_yaw_degree = (world_yaw - self.current_yaw_angle + 180) % 360 - 180
         error_pitch_degree = (world_pitch - self.current_pitch_angle + 180) % 360 - 180
+
+        # Kilit durumundayken nişan tutuldu mu diye durum makinesini besle.
+        # Ateş, tolerans AIM_HOLD_FRAMES kare korunduktan sonra serbest kalır.
+        if self.angajman.durum == KILIT:
+            _hata_px = (error_yaw_pixel ** 2 + error_pitch_pixel ** 2) ** 0.5
+            self.angajman.kilit_adimi(_hata_px, _yaricap or 8.0,
+                                      self.balon_gercek_goruldu)
+        if self.angajman.durum == ATES:
+            self._otonom_ates_denemesi()
 
         if self.is_aimed_at_target and self.active_task in ['task2', 'task3'] and not self.target_destroyed:
             current_time = time.time()
@@ -2131,11 +2392,22 @@ if __name__ == '__main__':
     frame_q = mp.Queue(maxsize=2)
     inference_cmd_q = mp.Queue()
     result_q = mp.Queue(maxsize=2)
+    # Gözcü kendi sürecinde hem yakalar hem analiz eder. Kareyi kuyruğa
+    # koymak pahalı (2.7 MB pickle/kare); analizi yakalayan süreçte yapıp
+    # yalnızca birkaç yüz baytlık sonucu göndermek doğru tasarım.
+    spotter_cmd_q = mp.Queue()
+    spotter_result_q = mp.Queue(maxsize=2)
 
     # Start processes
-    cam_process = mp.Process(target=camera_worker, args=(camera_cmd_q, frame_q))
+    cam_process = mp.Process(target=camera_worker,
+                             args=(camera_cmd_q, frame_q, "hunter"))
     cam_process.daemon = True
     cam_process.start()
+
+    spotter_process = mp.Process(target=spotter_worker,
+                                 args=(spotter_cmd_q, spotter_result_q))
+    spotter_process.daemon = True
+    spotter_process.start()
 
     inf_process = mp.Process(target=inference_worker, args=(inference_cmd_q, frame_q, result_q))
     inf_process.daemon = True
@@ -2147,7 +2419,8 @@ if __name__ == '__main__':
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)
-    window = HavaSavunmaArayuz(camera_cmd_q, inference_cmd_q, result_q)
+    window = HavaSavunmaArayuz(camera_cmd_q, inference_cmd_q, result_q,
+                               spotter_cmd_q, spotter_result_q)
     window.showMaximized()
 
     try:
@@ -2159,9 +2432,10 @@ if __name__ == '__main__':
         # Cleanup
         camera_cmd_q.put("QUIT")
         inference_cmd_q.put({"action": "QUIT"})
+        spotter_cmd_q.put("QUIT")
         cam_process.join(timeout=2)
         inf_process.join(timeout=2)
-        if cam_process.is_alive():
-            cam_process.terminate()
-        if inf_process.is_alive():
-            inf_process.terminate()
+        spotter_process.join(timeout=2)
+        for surec in (cam_process, inf_process, spotter_process):
+            if surec.is_alive():
+                surec.terminate()

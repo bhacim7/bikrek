@@ -4,11 +4,17 @@ import queue
 
 import config
 
-def camera_worker(command_queue, frame_queue):
+def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
     """
-    Multiprocessing worker to capture frames from the camera and put them in a queue.
+    Kareleri yakalayıp kuyruğa koyan süreç.
+
+    `kamera_adi` ile hangi kameranın ayarlarının kullanılacağı seçilir.
+    Sistemde iki kamera var (gözcü ve avcı); gözcünün kendi süreci
+    spotter_module'de çünkü orada yakalama ile analiz aynı yerde yapılıyor.
+    Bu işçi normalde AVCI kamera için kullanılır.
     """
-    print("Camera worker started.")
+    ayar = config.KAMERA_AYARLARI[kamera_adi]
+    print(f"Kamera worker basladi: {kamera_adi}")
     capture = None
     is_running = False
 
@@ -18,7 +24,7 @@ def camera_worker(command_queue, frame_queue):
             cmd = command_queue.get_nowait()
             if cmd == "START":
                 if not is_running:
-                    camera_indices = config.CAMERA_INDICES
+                    camera_indices = ayar["indices"]
                     capture = None
                     for index in camera_indices:
                         print(f"Trying camera {index} with CAP_DSHOW...")
@@ -34,17 +40,17 @@ def camera_worker(command_queue, frame_queue):
                     if capture and capture.isOpened():
                         # FOURCC çözünürlükten ÖNCE ayarlanmalı; sonra ayarlanırsa
                         # sürücü çoğu zaman çözünürlüğü sıfırlar.
-                        if config.CAMERA_USE_MJPG:
+                        if ayar["mjpg"]:
                             capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
-                        capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
-                        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+                        capture.set(cv2.CAP_PROP_FRAME_WIDTH, ayar["width"])
+                        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, ayar["height"])
                         actual_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
                         actual_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
                         actual_fps = capture.get(cv2.CAP_PROP_FPS)
-                        print(f"Camera started. Resolution Set: {actual_width}x{actual_height} @ {actual_fps:.0f} fps")
-                        if (actual_width, actual_height) != (config.CAMERA_WIDTH, config.CAMERA_HEIGHT):
-                            print(f"UYARI: Istenen cozunurluk {config.CAMERA_WIDTH}x{config.CAMERA_HEIGHT} "
+                        print(f"{kamera_adi}: {actual_width}x{actual_height} @ {actual_fps:.0f} fps")
+                        if (actual_width, actual_height) != (ayar["width"], ayar["height"]):
+                            print(f"UYARI ({kamera_adi}): istenen {ayar['width']}x{ayar['height']} "
                                   f"alinamadi, kamera {actual_width}x{actual_height} veriyor.")
                         is_running = True
                     else:
