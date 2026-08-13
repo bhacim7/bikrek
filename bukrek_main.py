@@ -1040,7 +1040,15 @@ class HavaSavunmaArayuz(QWidget):
             self._start_manual_movement_timer()
         except Exception as e:
             self._update_status_label(f"Hata: Manuel mod başlatma hatası: {str(e)[:50]}...")
-        self.is_target_active = False
+        # Tespit/kilitlenme hattı AÇIK kalır. Taret otonom hareket etmez
+        # (servolama OTONOM_MODLAR ile sınırlı) ama hedef ekranda işaretlenir
+        # ve `current_tracked_target_class` dolar.
+        #
+        # İkincisi zorunlu: "Derece/Piksel Ölç" kalibrasyonu Aşama 1 + KİLİTLİ
+        # HEDEF şartı arıyor. Burayı False bırakmak kalibrasyon butonunu
+        # "kilitli bir hedef gerekli" hatasıyla çalışmaz hale getiriyordu.
+        # (Tam Manuel Kontrol'de False kalır — orada YOLO hiç kullanılmaz.)
+        self.is_target_active = True
         self.is_aimed_at_target = False
 
     def task2(self):
