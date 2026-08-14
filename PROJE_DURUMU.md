@@ -1,7 +1,11 @@
 # BUKREK Hava Savunma Sistemi — Proje Durumu ve Devir Belgesi
 
 > Bu belge, bir oturum boyunca yapılan tüm çalışmanın özetidir. Yeni bir
-> konuşmada bağlam olarak paylaşılabilir. Son güncelleme: 2026-08-10.
+> konuşmada bağlam olarak paylaşılabilir. Son güncelleme: 2026-08-14.
+>
+> **En güncel durum için önce en sondaki "FAZ 3" bölümünü okuyun.** Belge
+> kronolojik büyüyor; aşağıdaki eski bölümlerde geçen bazı sayılar FAZ 3'te
+> güncellendi.
 
 ---
 
@@ -66,11 +70,17 @@ motor hareketi için bloklanmaz.
 
 | | Yaw | Pitch |
 |---|---|---|
-| pulse/rev (sürücü DIP) | 3200 | 6400 |
-| Redüksiyon | 3.0 | 1.0 |
-| adım/derece | 26.667 | 17.778 |
-| **1 tam tur** | **9600 adım** | **6400 adım** |
-| Yön çevirme | `True` | `True` |
+| pulse/rev (sürücü DIP) | 3200 | 3200 |
+| Redüksiyon | 3.0 (10→30 diş) | **5.0 (PLF060 planet redüktör)** |
+| adım/derece | 26.667 | **44.444** |
+| **1 tam tur** | **9600 adım** | **16000 adım** |
+| Yön çevirme | `True` | `False` |
+| tepe hız (manuel) | 125°/s | **75°/s** |
+| tepe hız (otonom) | 100°/s | **75°/s (kırpılmış)** |
+
+> Pitch redüktörü FAZ 3'te eklendi; gerekçesi ve ölçümleri en sondaki
+> bölümde. Planet redüktör yön çevirmez, bu yüzden `INVERT_PITCH_DIR`
+> değişmedi (o bayrak 2026-08-14'te ayrı bir sebeple `False` yapılmıştı).
 
 **Pi 5 notu:** 40 pinli başlık `/dev/gpiochip0` DEĞİL. Kod chip'i etiketinden
 (`pinctrl-rp1`) bulur; çekirdek güncellemesi numaraları kaydırsa da çalışır.
@@ -227,21 +237,23 @@ CAMERA_WIDTH = 1280 ; CAMERA_HEIGHT = 720 ; CAMERA_USE_MJPG = True
 
 ### Kodda duran gerçek sorunlar
 
-1. **Aşama 3 görülmeyen hedefe ateş edebilir.** Aşama 2'nin ateş koşulu
-   `detected_class_status == "red_balloon"` kontrolü içeriyor, Aşama 3'ünki
-   içermiyor. Hedef kaybolduğunda `current_target_bbox_for_pid` tahmin edilmiş
-   bir kutu olur ve Aşama 3 ona ateş edebilir.
+> 1. ve 4. maddeler FAZ 2'de (ateş kilidi), 5. madde FAZ 3'te (angajman
+> makinesi hedefin tek sahibi) kapandı. Kalanlar:
+
+1. ~~Aşama 3 görülmeyen hedefe ateş edebilir.~~ **ÇÖZÜLDÜ** —
+   `engagement.ates_serbest_mi()` dokuz koşulu birden arıyor.
 2. **`is_aimed_at_target` bayat hatadan hesaplanıyor.** Ölü zaman telafisinden
    sonra gerçek anlık hata `error_yaw_degree`, ama nişan kontrolü hâlâ çekilme
    anındaki piksel hatasını kullanıyor. Otonom ateş doğruluğunu etkiler.
+   **AÇIK.**
 3. **Ateşleme Pi'nin soket döngüsünü 0.2 sn blokluyor** (`fire_weapon` içinde
-   `sleep`, `process_command`'dan çağrılıyor).
-4. **Ateşsiz bölge varsayılanı (0,0) tam 0.0°'de ateşi engelliyor** — mantık
-   bunu "0.0 derece yasak" diye yorumluyor.
-5. **Sessiz hedef değiştirme.** Takip eşleştirmesi balonları ayırt etmiyor
-   (sadece sınıf + 250 px yakınlık = 13°). Takip edilen balon bir kare
-   kaybolursa, yakındaki başka bir balona sessizce geçilir. Çok balonlu
-   testte beklenmelidir.
+   `sleep`, `process_command`'dan çağrılıyor). **AÇIK.**
+4. ~~Ateşsiz bölge varsayılanı (0,0) tam 0.0°'de ateşi engelliyor.~~
+   **ÇÖZÜLDÜ** — başlangıç = bitiş ise bölge tanımsız sayılıyor.
+5. ~~Sessiz hedef değiştirme.~~ **ÇÖZÜLDÜ** — otonom aşamalarda hedefi artık
+   yalnızca angajman makinesi seçiyor; `dogrulanan_sinif` ile eşleşen çift
+   tercih ediliyor. Eski "sınıf + yakınlık" takip dalı yalnızca hedef bir
+   kare kaybolduğunda tahmin için devreye giriyor.
 
 ### Yanıltıcı ama hata olmayanlar
 
@@ -606,3 +618,250 @@ düzeltildi (başlangıç = bitiş ise bölge tanımsız sayılıyor).
 5. **İki kamera aynı anda açılabiliyor mu** — USB bant genişliği testi.
    `SPOTTER_CAMERA_INDICES` ve `HUNTER_CAMERA_INDICES` doğru ayarlanmalı.
 6. **`BALLISTIC_PITCH_OFFSET`** — 15 metrede mermi düşüşü.
+
+---
+
+# FAZ 3: Saha kaydı çözümlemesi, redüktör ve yeni avcı kamera (2026-08-14)
+
+## 1. Ekran kaydından bulunan dört hata
+
+`AnalizVideo.mp4` (35 sn, 1062 kare) kare kare çözümlendi: durum çubuğu, açı
+okuması ve avcı görüntüsü ayrı ayrı çıkarıldı. Üç şikâyetin **üç ayrı kök
+nedeni** vardı, üstüne hepsini görünmez kılan bir dördüncü.
+
+### A. Aşama 3'te taret hiç kıpırdamıyordu — ölü QR kapısı
+
+`update_frame` içindeki
+
+```python
+if active_task == 'task3' and waiting_for_new_engagement_command \
+        and not is_ready_to_engage_from_qr:
+```
+
+koşulu `task3()` sonrası **her karede doğruydu**. Sistem artık var olmayan bir
+QR kodunu bekliyor, angajman makinesine giden `elif` dalına hiç ulaşılmıyordu.
+Kilit kalıcıydı: `waiting_for_new_engagement_command` yalnızca o dalda
+temizlenebiliyordu. Kayıtta yaw 29-35 sn arası 3.7°'de çakılı kaldı.
+
+**Kaynak:** `018750b` commit'i `task3()`/`_task3_baslat()` ekledi, eski QR
+kapısı yerinde kaldı. Blok ve ona bağlı "eve dön" yolu kaldırıldı.
+
+### B. Aşama 2'de taret sola dönüp duruyordu — gözcü hizalaması
+
+Bu bir hata değildi: `tarama_adimi` gözcünün ilk izini seçip mutlak açıya
+gitti (9.3° → -21.0°, 0.6 sn, kare 651-662). Sorun hedefin orada olmaması.
+Yalpalama sırasında kare 658'de (yaw -10.2) avcı gerçek düşman çiftini
+**0.82/0.83 güvenle çerçeveleyip önünden geçti**.
+
+Duran karelerden ölçüldü:
+
+| kaynak | gözcünün dediği | avcıdan ölçülen gerçek |
+|---|---|---|
+| mavi dost-F16 | ≈ +3.0° | ≈ **+11.5°** |
+| kırmızı düşman + balon | −20.7° | ≈ **−8.5°** |
+
+Doğrusal uydurma: `avcı ≈ 0.84 × gözcü + 9.0`. Yani **hem ofset hem kazanç**
+yanlış: `SPOTTER_YAW_OFFSET ≈ +9°` (şu an 0.0) ve `SPOTTER_DPP_YAW ≈ 0.045`
+(şu an 0.0535 — gözcünün gerçek yatay görüş açısı ~58°, varsayılan 68.5°
+değil). Pitch için ≈ −2.4°. **Bunlar tahmin, ölçüm değil — sahada
+doğrulanmalı.**
+
+İkincil: doğrulama zaman aşımı adayı kara listeye almadığı için TARAMA aynı
+izi tekrar seçiyordu; taret 4 saniye boş duvara baktı.
+`BLACKLIST_VERIFY_TTL_SEC = 5.0` eklendi.
+
+### C. "Derece/Piksel Ölç" hiç ilerlemiyordu — erişilemez durum makinesi
+
+`_calibration_tick`'in tek çağıranı `process_tracking`, o da
+`active_task in OTONOM_MODLAR` kapısının arkasındaydı; kalibrasyon ise
+`task1` şartı arıyordu. **Birbirini dışlıyorlardı.** Buton ilk mesajı
+yazıyor, tick bir kez bile çalışmıyor, 60 sn sonra zaman aşımına düşüyordu.
+Kayıtta durum 10-16 sn arası "ölçüm başlıyor..." satırında dondu.
+
+**Kaynak:** `ea368a0` servolamayı `OTONOM_MODLAR` ile sınırladı, `44ca604`
+kalibrasyonun *kilit* şartını düzeltti ama tick çağrısı erişilemez yolda kaldı.
+
+### D. Durum çubuğu her şeyi eziyordu
+
+`update_frame` sonundaki `elif self.active_task != 'task3_setup'` dalı
+Aşama 2/3 dahil **her karede koşulsuz** "Durum: Hazır." yazıyordu. `task2()`'nin
+mesajı ve angajman makinesinin bütün ara durumları 40 ms sonra siliniyordu.
+Bu, `8044af5`'in kalibrasyon butonu için çözdüğü hatanın aynısıydı; görev
+durumlarına uygulanmamıştı. Otonom aşamalarda tek yazar artık
+`_angajman_adimi`.
+
+### E. Bonus: makine kilitlendikten sonra donuyordu
+
+`_angajman_adimi` yalnızca "hedef edinme" dalından çağrılıyordu; hedefe
+kilitlenir kilitlenmez o dal devre dışı kalıyor, makine DOĞRULAMA'da
+donuyordu — KİLİT'e hiç geçilemediği için `kilit_adimi` ve **otonom ateş
+fiilen erişilemezdi**. Adım artık daldan bağımsız, her karede bir kez atılıyor.
+
+Buna bağlı ikinci düzeltme: `_nisan_tespiti` balonun üstüne nişan alıp kutuya
+**maketin** sınıf adını yazıyor; eski takip dalı hedefi sınıf adıyla yeniden
+bulduğu için maket kutusunu seçiyor ve taret **balona değil maketin kendisine**
+nişan alıyordu. Yeni `_otonom_hedefi_benimse` bunu kapatıyor.
+
+## 2. Yapısal rezonans ölçümü (hssMotorDeneme.mp4 / 2.mp4)
+
+Motor enerjiliyken elle itme testi. Kamera sarsıntısı optik akış + RANSAC
+afin kestirimiyle giderildi, sonra her piksel için düşey hız zaman serisi
+2-6 Hz bandına süzülüp referansla korelasyona sokuldu.
+
+**Sehpa ve taban suçsuz.** Taret tabanı AC salınımı 1.8 px — ölçüm gürültü
+tabanının (2.8 px) altında. Namlu 12.6, tüp arkası 17.2 px.
+
+**Düğüm tam pitch ekseninde.** Sütun profili x≈350'de belirgin minimum
+(0.18 px) veriyor, iki yana doğru 1.0'a çıkıyor; faz haritasında namlu tarafı
+kırmızı, tüp tarafı mavi (ters faz). Yakın çekim videosunda pivot kelepçesi
+yoke'a göre ötelenmiyor (3.2 px ≈ iki kanat arası gürültü 2.3 px). Yani
+**hareket saf dönme; esneklik pitch tahrik hattında.**
+
+**Frekans ve sönüm** — beş bağımsız sönüm treni:
+
+| itme | frekans | ζ | başlangıç genliği |
+|---|---|---|---|
+| 2.40-2.93 s | 2.81 Hz | 0.053 | 22.2 px |
+| 4.03-4.97 s | 2.68 Hz | 0.046 | 25.7 px |
+| 6.70-7.33 s | 3.16 Hz | 0.072 | 20.3 px |
+| 8.10-9.27 s | 2.57 Hz | 0.059 | 29.0 px |
+| 10.07-11.37 s | 2.31 Hz | 0.062 | 36.4 px |
+
+**f ≈ 2.7 Hz, ζ ≈ 0.058 (Q ≈ 8.6).** 1/20'ye inmesi 3.0 saniye; 1°'lik
+çınlamanın nişan toleransı altına inmesi ~1.9 saniye.
+
+**Frekans genlikle monoton düşüyor** (20.3 px → 3.16 Hz ... 36.4 px → 2.31 Hz;
+beş noktanın beşi sıralı). Yumuşayan yay = boşluklu/sürtünmeli bağlantı;
+doğrusal malzeme esnekliği böyle davranmaz.
+
+### Henüz uygulanmayan, ölçümden çıkan iki kod maddesi
+
+1. **PID bu modu besliyor olabilir.** Ölü zaman 0.22 sn, modun periyodu
+   0.37 sn → **214° faz gecikmesi**, neredeyse tam ters faz. "KD 0.001→0.03
+   aşımı 6 px'den 25 px'e ÇIKARIYOR" ölçümünün açıklaması bu olabilir.
+2. **`AIM_HOLD_FRAMES = 3` çok kısa.** ~20 fps'de 0.15 sn; salınım periyodu
+   0.37 sn. Sistem namlu salınımın ortasından geçerken "nişan tamam" diyebilir.
+   Bir tam periyodu kapsaması için ~8 kare olmalı.
+
+Bunlar **redüktör takılıp yeniden ölçüldükten sonra** ele alınacak.
+
+## 3. Pitch redüktörü: PLF060-L1-5 (1:5)
+
+Elde 1:5 vardı, o takıldı. Sahada doğrulandı: motor enerjiliyken silahı elle
+itmek artık çok zor.
+
+| | eski (doğrudan) | **1:5** |
+|---|---|---|
+| adım/derece | 17.778 | **44.444** |
+| çözünürlük | 0.0563°/adım | **0.0225°/adım = 1.0 px** |
+| yansıyan yük ataleti | ×1 | **÷25** |
+| çıkış torku | ×1 | **×4.85** |
+| manuel tepe hız | 187°/s | **75°/s** |
+
+DIP **3200'de kaldı**. 6400 seçilseydi adım/derece 88.9 olur, donanım tavanı
+(3333 darbe/sn) pitch'i 37.5°/s'ye düşürürdü.
+
+`SERVO_MAX_DEG_PER_SEC` hâlâ 100; saf pitch hareketinde
+`_servo_gecikme_siniri` bunu donanım tavanına **kırpıyor** (75°/s). Kırpma
+bilinçli — 20°'lik en kötü pitch yolu 0.27 sn sürüyor, `ENGAGE_SLEW_TIMEOUT`
+2.5 sn. Yavaş pitch 2.7 Hz'lik modu da daha az uyarır. Yaw etkilenmiyor.
+
+Ayrıca `_servo_gecikme_siniri` ve `SERVO_MIN_DELAY` artık `MIN_DELAY` tabanını
+uyguluyor: dişli oranı veya DIP değişikliği bir daha sessizce donanım
+tavanının üstünde darbe hızı isteyemez.
+
+**Beklenen sonuç (sınanabilir):** sertlik 25 kat arttıysa çınlama frekansı
+2.7 → ~13 Hz olmalı. Frekans değişmediyse yumuşak eleman motor değil,
+braket/kaplin demektir.
+
+## 4. Yeni avcı kamera: Arducam B0495C (AR0234) + 12 mm
+
+Zoomlu Logitech'in yerine geçti. Global shutter, 2.3 MP, USB3, UVC
+(tak-çalıştır).
+
+```
+AR0234 piksel 3.0 um, odak 12 mm -> sensör piksel başına 0.014324 derece
+tam genişlik 1920 x 3.0 um = 5.76 mm -> yatay görüş açısı 27.0 derece
+1280 genişlikte: 0.014324 x 1920/1280 = 0.021486 derece/piksel
+```
+
+**Çözünürlük 1280x720'de kaldı.** Belirleyici olan model girişi: motor
+**1056x608** olarak export edilmiş (`convert_to_engine.py`).
+
+| kaynak | küçültme | en/boy bozulması |
+|---|---|---|
+| **1280x720** | **1.21x** | **%2.4** |
+| 1920x1080 | 1.82x | %2.4 |
+| 1920x1200 | 1.82x | %8.5 |
+
+`_preprocess` varsayılan `INTER_LINEAR` kullanıyor; 1.82 katta örnekleme
+atlanır (aliasing), 1.21 katta pratikte sorun yok. Ayrıca **çözünürlük
+artırmak hedefi büyütmez**: modele giren karede nesnenin boyutu yalnızca
+görüş açısına bağlıdır (balon 15 m'de her iki halde de 20.5 px). Buna karşılık
+1920x1080 her karede 2.25 kat piksel = daha fazla ölü zaman.
+
+**Bir varsayıma dayanıyor:** modülün 1280x720 modunun tam genişliği
+ÖLÇEKLEDİĞİ varsayıldı. KIRPIYORSA görüş açısı 18.3°'ye düşer, doğru değer
+0.014324 olur ve açısal eşikler 1.5 katına çıkmalıdır. Ayırt etme testi
+`config.py`'daki yorumda.
+
+### Buna bağlı yeniden ölçeklenen eşikler
+
+Açısal olguyu koruyanlar (derece/piksel ile ters orantılı):
+
+| ayar | eski (0.01783) | yeni (0.021486) | açı |
+|---|---|---|---|
+| `FEEDFORWARD_ERROR_GATE_PIXELS` | (90, 360) | **(75, 299)** | 1.61° / 6.42° |
+| `LOCK_CONFIRM_TOL_PX` | 120 | **100** | 2.15° |
+| `MAX_REACQUISITION_DISTANCE_PIXELS` | 250 | **208** | 4.47° |
+
+Tespit gürültüsüne bağlı olanlar (`PID_DEADBAND_PIXELS`, `MIN_OUTPUT_PIXELS`,
+`AIM_TOLERANCE_MIN_PIXELS`) **değişmedi**: bunlar kaynak çözünürlüğe bağlı,
+lense değil, ve 1280x720'de kaldık.
+
+### Uyarılar
+
+- **Global shutter bulanıklığı çözmez.** Yalnızca rolling shutter çarpılmasını
+  kaldırır. Pozlama yine ~10 ms'ye elle sabitlenmeli.
+- **Yeni lens eskisinden biraz geniş** (27.5° vs hesaplanan 22.8°): 15 m'de
+  balon modele giren karede ~%17 daha küçük (25 px yerine 20.5 px). Tespit
+  zayıflarsa çözüm 16 mm lens; yazılımda ayarlanacak bir şey yok.
+- **`CAPTURE_LATENCY_OFFSET` hâlâ 0.08** — Logitech + MJPG için ölçülmüştü.
+  USB3 global shutter büyük olasılıkla daha kısa. 0.04'ten başlayıp tara.
+- `HUNTER_USE_MJPG = False` (YUY2) denemeye değer: USB3'te bant genişliği
+  yeterli, JPEG çözme gecikmesi kalkar. Kare hızı düşerse geri al.
+- **Kamera indeksleri kaydı.** `python kamera_tani.py` ile yeniden ayarla.
+
+## 5. Test durumu
+
+```bash
+python tests_yeni_mimari.py     # 11 bölüm, tamamı geçiyor
+```
+
+9. bölüm doğrulama zaman aşımı + kara liste, 10. bölüm redüktör (adım/derece,
+darbe tavanı, devir teslim bütçesi), 11. bölüm yeni kamera (optik tutarlılığı,
+model girişi uyumu, küçültme çarpanı, model uzayında hedef boyutu) eklendi.
+
+Ayrıca scratchpad'de `verify_arayuz.py`: gerçek `update_frame` döngüsünü
+offscreen Qt + sahte kuyruklarla çalıştırıp yukarıdaki A/C/D/E maddelerini
+davranış olarak doğruluyor (20 kontrol). Zinciri baştan sona sürüyor:
+Aşama 3 → gözcü izine açı komutu → YÖNELME → DOĞRULAMA → KİLİT → ATEŞ →
+`fire` → kara liste → TARAMA; dost reddi; Aşama 1'de kalibrasyonun ilk
+tick'te gerçekten komut göndermesi.
+
+## 6. SAHADA SIRADAKİ ADIMLAR (sıra zorunlu)
+
+| # | iş | neden bu sırada |
+|---|---|---|
+| 1 | Pitch sürücüsü DIP = **3200** | kod buna göre |
+| 2 | `motor_fire_module.py` + `rpi_motor_server.py` Pi'ye, sunucuyu yeniden başlat | Pi tarafı |
+| 3 | **Pitch'e +30° ver, açıölçerle ölç** | açı defteri komut edilen adımlardan üretiliyor; yanlış oran KENDİ KENDİNİ tutarlı kılar, kalibrasyon aracı yakalayamaz |
+| 4 | `kamera_tani.py` → yeni avcı indeksi | görüntü gelmezse hiçbir şey ölçülemez |
+| 5 | 12 mm lensin odağını ~15 m'ye ayarla ve halkayı kilitle | sabit lens, bir kez |
+| 6 | Manuel pozlama ~10 ms, oto beyaz dengesi kapalı | bulanıklık |
+| 7 | 1280x720 KIRPIYOR mu ÖLÇEKLİYOR mu (30 sn'lik test) | `HUNTER_DPP` bunun üstüne kurulu |
+| 8 | **Aşama 1 + Derece/Piksel Ölç** → gerçek `HUNTER_DPP` | 9 ve 10 buna bağlı |
+| 9 | `CAPTURE_LATENCY_OFFSET` tara (0.04 → 0.06 → 0.08) | |
+| 10 | **Gözcü ofset + DPP ölç** | Aşama 2/3 devir teslimi buna bağlı |
+| 11 | Redüktörlü çınlama frekansını yeniden ölç | 2. bölümdeki iki kod maddesinin kaderi buna bağlı |
+| 12 | `KP_PITCH` ince ayarı | en son |

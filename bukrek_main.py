@@ -133,8 +133,12 @@ class HavaSavunmaArayuz(QWidget):
         # Hayalet tespitleri birkaç kare sürüyor; gerçek hedef sürekli görünür.
         self._aday_ardisik = 0
         self._aday_konum = None
-        self.LOCK_CONFIRM_TOL_PX = 120  # aday "aynı yerde" sayılma toleransı
-        self.MAX_REACQUISITION_DISTANCE_PIXELS = 250
+        # Bu iki eşik AÇISAL olguları korur, dolayısıyla derece/piksel
+        # değişince yeniden ölçeklenmeleri gerekir. 3x zoomlu Logitech'te
+        # (0.01783 d/px) 120 px = 2.14 derece, 250 px = 4.46 derece idi;
+        # AR0234 + 12 mm lenste (0.021486 d/px) aynı açılar 100 ve 208 px.
+        self.LOCK_CONFIRM_TOL_PX = 100  # aday "aynı yerde" sayılma toleransı
+        self.MAX_REACQUISITION_DISTANCE_PIXELS = 208
 
         # --- PID Kontrol Değişkenleri ---
         # Kazançlar ve derece/piksel artık config.py'da: saha ayarı tek dosyadan
@@ -774,6 +778,22 @@ class HavaSavunmaArayuz(QWidget):
             'yaricap': yaricap,
         }
 
+    @staticmethod
+    def _guvene_gore_ayikla(liste):
+        """
+        Aday havuzunu GÜVENE göre ayıklar.
+
+        Eski kural yalnızca "kareye en yakın" idi ve güveni hiç dikkate
+        almıyordu; sahada tavandaki hayalet (0.66) tam merkezde olduğu için
+        gerçek balonu (0.81) yenmişti. Belirgin şekilde daha güvenli bir
+        tespit varsa, zayıf olanlar yarışa hiç girmiyor.
+        """
+        if not liste:
+            return liste
+        en_iyi = max(d['score'] for d in liste)
+        esik = en_iyi - config.ACQUIRE_CONFIDENCE_MARGIN
+        return [d for d in liste if d['score'] >= esik]
+
     def _ciftleri_sirala(self, detections, merkez_x, merkez_y, tek_balon=False):
         """Tespitlerden çiftleri kurup kare merkezine yakınlığa göre sıralar."""
         ciftler = engagement.cift_eslestir(detections, tek_balonlara_izin=tek_balon)
@@ -791,6 +811,15 @@ class HavaSavunmaArayuz(QWidget):
         """
         Durum makinesini bir adım ilerletir.
 
+        HER KAREDE çağrılır (bkz. `update_frame`). Eskiden yalnızca "hedef
+        edinme" dalından çağrılıyordu; hedefe kilitlenir kilitlenmez o dal
+        devre dışı kalıyor ve makine DOĞRULAMA'da donuyordu — KİLİT'e hiç
+        geçilemediği için `kilit_adimi` de, ATEŞ de erişilemezdi.
+
+        Ayrıca otonom aşamalarda DURUM ÇUBUĞUNUN TEK YAZARIDIR: her durum
+        için bir metin yazar, böylece `update_frame` sonundaki genel
+        "Durum: Hazır." yazısı otonom aşamalara hiç dokunmaz.
+
         Döner: PID'e verilecek sanal tespit (veya None). TARAMA/YÖNELME
         durumlarında taret gözcünün verdiği MUTLAK açıya gider; bu açı gövde
         çerçevesinde olduğu için taretin mevcut konumundan bağımsızdır.
@@ -800,7 +829,8 @@ class HavaSavunmaArayuz(QWidget):
             secim = m.tarama_adimi(self.gozcu_izler)
             if secim is None:
                 self._update_status_label(
-                    f"Durum: {self.active_task} - gözcü tarıyor, aday yok.")
+                    f"Durum: TARAMA — gözcüde uygun aday yok "
+                    f"({len(self.gozcu_izler)} iz).")
                 return None
             yaw, pitch = secim
             self.send_angle_command(yaw, pitch + config.BALLISTIC_PITCH_OFFSET,
@@ -813,6 +843,11 @@ class HavaSavunmaArayuz(QWidget):
             if not m.yonelme_adimi(self.current_yaw_angle, self.current_pitch_angle):
                 # Taret henüz oturmadı; hedefi yeniden komut etmeye gerek yok
                 # (pozisyon servosu son hedefi zaten tutuyor).
+                if m.durum == YONELME and m.hedef_yaw is not None:
+                    self._update_status_label(
+                        f"Durum: YÖNELME — {m.hedef_yaw:+.1f}°, {m.hedef_pitch:+.1f}° "
+                        f"(şu an {self.current_yaw_angle:+.1f}°, "
+                        f"{self.current_pitch_angle:+.1f}°)")
                 return None
             self._update_status_label("Durum: Taret yerleşti, doğrulanıyor...")
             return None
@@ -825,6 +860,10 @@ class HavaSavunmaArayuz(QWidget):
                 self._update_status_label("Durum: Dost tespit edildi, sıradaki adaya geçiliyor.")
             elif sonuc is not None:
                 self.target_info_label.setText(f"Hedef Bilgisi: DÜŞMAN ({sonuc}).")
+            else:
+                self._update_status_label(
+                    f"Durum: DOĞRULAMA — {len(ciftler)} çift görülüyor "
+                    f"({m.gecen():.1f}/{config.ENGAGE_VERIFY_TIMEOUT:.1f} sn)")
             # Doğrulama sırasında da nişan almaya devam et: çift varsa PID
             # onu ortalasın, böylece KİLİT'e geçince zaten yakınız.
             if ciftler:
@@ -832,6 +871,9 @@ class HavaSavunmaArayuz(QWidget):
             return None
 
         if m.durum in (KILIT, ATES):
+            self._update_status_label(
+                f"Durum: {m.durum} — {m.dogrulanan_sinif or '?'} "
+                f"({len(ciftler)} çift, imha {m.imha_sayisi})")
             # Doğrulanan sınıfla eşleşen çifti tercih et; yoksa merkeze en
             # yakını. Çoklu balon senaryosunda sessiz hedef değişimini önler.
             secili = None
@@ -847,6 +889,67 @@ class HavaSavunmaArayuz(QWidget):
             return self._nisan_tespiti(secili)
 
         return None
+
+    def _otonom_hedefi_benimse(self, sanal, kare_zamani):
+        """
+        Durum makinesinin seçtiği sanal hedefi PID'in takip hedefi yapar.
+
+        Otonom aşamalarda hedefin TEK kaynağı budur. Eski akışta hedef bir kez
+        kilitlendikten sonra "YOLO takip" dalı devralıyordu; o dal hedefi
+        SINIF ADIYLA yeniden buluyor, `_nisan_tespiti` ise balonun üstüne
+        nişan alıp kutuya MAKETİN sınıf adını yazıyor. Sonuç: takip dalı maket
+        kutusunu buluyor ve taret balona değil maketin kendisine nişan alıyordu.
+
+        Döner: PID'e verilecek kutu, veya zamansal onay tamamlanmadıysa None.
+        """
+        bbox = sanal['bbox']
+        cx = bbox[0] + bbox[2] // 2
+        cy = bbox[1] + bbox[3] // 2
+
+        if self.current_tracked_target_class is None:
+            # İlk kilit: hayalet tespite karşı zamansal onay. Sahada tavandaki
+            # hayalet (0.66) gerçek balondan (0.44) yüksek güvenle çıkmıştı ve
+            # yalnızca 2 kare sürmüştü.
+            if (self._aday_konum is not None
+                    and abs(cx - self._aday_konum[0]) <= self.LOCK_CONFIRM_TOL_PX
+                    and abs(cy - self._aday_konum[1]) <= self.LOCK_CONFIRM_TOL_PX):
+                self._aday_ardisik += 1
+            else:
+                self._aday_ardisik = 1
+            self._aday_konum = (cx, cy)
+            if self._aday_ardisik < config.LOCK_CONFIRM_FRAMES:
+                self._update_status_label(
+                    f"Durum: Aday hedef doğrulanıyor "
+                    f"({self._aday_ardisik}/{config.LOCK_CONFIRM_FRAMES})...")
+                return None
+            self._aday_ardisik = 0
+            self._aday_konum = None
+            self.reset_pid_state()
+            self.last_target_velocity_x = 0.0
+            self.last_target_velocity_y = 0.0
+        elif self.last_target_x is not None and self.last_frame_time is not None:
+            dt = kare_zamani - self.last_frame_time
+            if dt > 0:
+                self.last_target_velocity_x = (cx - self.last_target_x) / dt
+                self.last_target_velocity_y = (cy - self.last_target_y) / dt
+
+        self.current_tracked_target_class = sanal['class_name']
+        self.current_tracked_target_bbox = bbox
+        self.target_destroyed = False
+        self.waiting_for_new_engagement_command = False
+        self.target_lost_time = 0.0
+        self.missing_frames = 0
+        self.last_target_x = cx
+        self.last_target_y = cy
+        self.last_frame_time = kare_zamani
+
+        # GERÇEK tespitin dünya açısı; hedef bir kare kaybolursa tahmin
+        # bundan yürütülür (piksel uzayında değil — taretin kendi dönüşü
+        # hedefin hareketi sanılmasın).
+        self._son_gorulen_dunya_yaw, self._son_gorulen_dunya_pitch = \
+            self._piksel_to_dunya(cx, cy, self._capture_time or kare_zamani)
+        self._son_gorulen_zaman = kare_zamani
+        return bbox
 
     def _otonom_ates_denemesi(self):
         """
@@ -1758,37 +1861,50 @@ class HavaSavunmaArayuz(QWidget):
             current_target_bbox_for_pid = None
             detected_class_status = None
 
+            # =========== ANGAJMAN DURUM MAKİNESİ — HER KAREDE BİR ADIM ===========
+            # Eskiden bu adım yalnızca aşağıdaki "hedef edinme" dalından
+            # çağrılıyordu. Hedefe kilitlenir kilitlenmez o dal devre dışı
+            # kalıyor, makine DOĞRULAMA'da donuyor, KİLİT'e hiç geçilemiyordu;
+            # dolayısıyla `kilit_adimi` ve otonom ateş fiilen erişilemezdi.
+            # Adım artık daldan bağımsız, her karede bir kez atılıyor.
+            ciftler = []
+            sanal_hedef = None
+            if self.is_target_active and self.active_task in self.OTONOM_MODLAR:
+                ciftler = self._ciftleri_sirala(
+                    self._guvene_gore_ayikla(detections),
+                    center_x_frame, center_y_frame, tek_balon=False)
+                # Genel bilgi önce yazılır; makinenin daha özel mesajları
+                # (DOST/DÜŞMAN) bunun üstüne yazsın diye.
+                self.target_info_label.setText(
+                    f"Hedef: {self.angajman.durum} | {len(ciftler)} çift | "
+                    f"imha {self.angajman.imha_sayisi}")
+                sanal_hedef = self._angajman_adimi(ciftler)
+
+                # Taret gözcünün verdiği MUTLAK açıya giderken avcı hattındaki
+                # eski kilit yaşamamalı: yaşarsa aşağıdaki "YOLO takip" dalı
+                # PID'i çalıştırır ve `send_angle_command` ile TARAMA'nın
+                # gönderdiği açı arasında iki komut yarışır. Bu durumlarda
+                # hedefin tek sahibi durum makinesidir.
+                if self.angajman.durum in (BOSTA, TARAMA, YONELME):
+                    self.current_tracked_target_class = None
+                    self.current_tracked_target_bbox = None
+                    self.missing_frames = 0
+                    self._aday_ardisik = 0
+                    self._aday_konum = None
+
             if self.is_target_active:
-                if self.active_task == 'task3' and self.waiting_for_new_engagement_command and not self.is_ready_to_engage_from_qr:
-                    if qr_data and qr_data in self.qr_degrees:
-                        closest_target_to_qr = None
-                        min_dist_to_qr = float('inf')
-                        qr_center_x = qr_bbox[0][0][0] + (qr_bbox[0][2][0] - qr_bbox[0][0][0]) / 2
-
-                        for det in detections:
-                            det_center_x = det['bbox'][0] + det['bbox'][2] / 2
-                            dist = abs(det_center_x - qr_center_x)
-                            if dist < min_dist_to_qr:
-                                min_dist_to_qr = dist
-                                closest_target_to_qr = det
-
-                        if closest_target_to_qr:
-                            self.current_qr_char = qr_data
-                            self.current_tracked_target_class = closest_target_to_qr['class_name']
-                            target_yaw_from_qr = self.qr_degrees[self.current_qr_char]
-
-                            self.send_angle_command(target_yaw_from_qr, self.current_pitch_angle)
-                            self.is_ready_to_engage_from_qr = True
-                            self.waiting_for_new_engagement_command = False
-
-                            self._update_status_label(
-                                f"Durum: QR Kodu '{qr_data}' okundu. Hedef '{self.current_tracked_target_class}' kilitlendi. Açıya dönülüyor: {target_yaw_from_qr}°")
-                            self.target_info_label.setText(
-                                f"Hedef: {self.current_tracked_target_class}. Açıya dönülüyor.")
-                        else:
-                            self._update_status_label(f"Uyarı: QR Kodu okundu ancak yanında hedef bulunamadı.")
-                    elif qr_data and qr_data not in self.qr_degrees:
-                        self._update_status_label(f"Uyarı: QR Kodu okundu ancak geçerli değil: '{qr_data}'")
+                # NOT: Aşama 3'ün eski QR tabanlı akışı BURADAN KALDIRILDI.
+                # Koşulu `active_task == 'task3' and waiting_for_new_engagement_command
+                # and not is_ready_to_engage_from_qr` idi; `task3()` bu üçünü de
+                # sağladığı için Aşama 3'te HER KARE bu dala giriliyor, artık
+                # olmayan bir QR kodu bekleniyor ve durum makinesine hiç
+                # ulaşılamıyordu. Sahada "Aşama 3'e basıyorum, taret hiç
+                # kıpırdamıyor" olarak görüldü (AnalizVideo.mp4, 29-35 sn).
+                if sanal_hedef is not None:
+                    current_target_bbox_for_pid = self._otonom_hedefi_benimse(
+                        sanal_hedef, current_frame_time)
+                    if current_target_bbox_for_pid is not None:
+                        detected_class_status = sanal_hedef['class_name']
 
                 elif self.current_tracked_target_class is not None and not self.target_destroyed:
                     closest_locked_detection = None
@@ -1908,44 +2024,33 @@ class HavaSavunmaArayuz(QWidget):
                     candidate_target = None
                     minimum_distance = float('inf')
 
-                    # Aday havuzunu önce GÜVENE göre ayıkla. Eski kural yalnızca
-                    # "kareye en yakın" idi ve güveni hiç dikkate almıyordu;
-                    # sahada tavandaki hayalet (0.66) tam merkezde olduğu için
-                    # gerçek balonu (0.81) yenmişti. Belirgin şekilde daha
-                    # güvenli bir tespit varsa, zayıf olanlar yarışa girmiyor.
-                    def guvene_gore_ayikla(liste):
-                        if not liste:
-                            return liste
-                        en_iyi = max(d['score'] for d in liste)
-                        esik = en_iyi - config.ACQUIRE_CONFIDENCE_MARGIN
-                        return [d for d in liste if d['score'] >= esik]
-
-                    # --- HEDEF SEÇİMİ: artık tek nesne değil ÇİFT ---
-                    # data.yaml'da tek bir 'balon' sınıfı var, yani balon
-                    # dost/düşman bilgisi TAŞIMIYOR. Karar zorunlu olarak
-                    # üstündeki maketten geliyor. Eşleştirme geometriktir ve
-                    # maketin kutu genişliğine normalize edildiği için
-                    # mesafeden bağımsız çalışır; aynı zamanda hayalet
-                    # eleyicidir (tek başına duran balon hedef sayılmaz).
-                    # Otonom aşamalarda hedef ZORUNLU olarak maket+balon
-                    # çiftidir. Aşama 1 ve manuel modda tek başına duran balon
-                    # da kilitlenebilir: kalibrasyon aracının sabit bir piksel
-                    # referansına ihtiyacı var ve elde çoğu zaman yalnızca
-                    # balon oluyor.
-                    ciftler = self._ciftleri_sirala(
-                        guvene_gore_ayikla(detections), center_x_frame, center_y_frame,
-                        tek_balon=(self.active_task not in self.OTONOM_MODLAR))
-
-                    if self.active_task in ('task2', 'task3'):
-                        # Otonom aşamalarda hedefi durum makinesi seçer.
-                        sanal = self._angajman_adimi(ciftler)
-                        if sanal is not None:
-                            candidate_target = sanal
-                            detected_class_status = sanal['class_name']
-                        self.target_info_label.setText(
-                            f"Hedef: {self.angajman.durum} | "
-                            f"{len(ciftler)} çift | imha {self.angajman.imha_sayisi}")
+                    if self.active_task in self.OTONOM_MODLAR:
+                        # Otonom aşamalarda hedefi durum makinesi seçer ve o
+                        # adım YUKARIDA, her karede zaten atıldı. Buraya
+                        # düşülmesi "makine bu karede hedef vermedi" demektir
+                        # (TARAMA / YÖNELME, veya çift görünmüyor).
+                        self._aday_ardisik = 0
+                        self._aday_konum = None
+                        current_target_bbox_for_pid = None
+                        self.current_tracked_target_class = None
+                        self.current_tracked_target_bbox = None
+                        self.target_lost_time = 0.0
                     else:
+                        # --- HEDEF SEÇİMİ: artık tek nesne değil ÇİFT ---
+                        # data.yaml'da tek bir 'balon' sınıfı var, yani balon
+                        # dost/düşman bilgisi TAŞIMIYOR. Karar zorunlu olarak
+                        # üstündeki maketten geliyor. Eşleştirme geometriktir ve
+                        # maketin kutu genişliğine normalize edildiği için
+                        # mesafeden bağımsız çalışır; aynı zamanda hayalet
+                        # eleyicidir (tek başına duran balon hedef sayılmaz).
+                        # Aşama 1 ve manuel modda tek başına duran balon da
+                        # kilitlenebilir: kalibrasyon aracının sabit bir piksel
+                        # referansına ihtiyacı var ve elde çoğu zaman yalnızca
+                        # balon oluyor.
+                        ciftler = self._ciftleri_sirala(
+                            self._guvene_gore_ayikla(detections),
+                            center_x_frame, center_y_frame, tek_balon=True)
+
                         # Aşama 1 ve tam manuel: yalnızca gösterim amaçlı en
                         # yakın çift işaretlenir, otonom servolama yapılmaz.
                         if ciftler:
@@ -2010,7 +2115,11 @@ class HavaSavunmaArayuz(QWidget):
                         current_target_bbox_for_pid = None
                         self.current_tracked_target_class = None
                         self.current_tracked_target_bbox = None
-                        if self.target_destroyed and self.waiting_for_new_engagement_command:
+                        # Otonom aşamalarda bilgi satırının yazarı durum
+                        # makinesidir; burada ezilmemeli.
+                        if (self.active_task not in self.OTONOM_MODLAR
+                                and self.target_destroyed
+                                and self.waiting_for_new_engagement_command):
                             self.target_info_label.setText("Hedef Bilgisi: Yok Edildi. Yeni angajman bekleniyor.")
                         self.target_lost_time = 0.0
 
@@ -2036,12 +2145,21 @@ class HavaSavunmaArayuz(QWidget):
                 cv2.putText(display_frame, f"YOLO: {det['class_name']} ({det['score']:.2f})", (x, y - 25),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.4, yolo_draw_color, 1)
 
-            # --- Otonom servolama ---
-            # YALNIZCA Aşama 2 ve 3'te. Aşama 1 tamamen manuel olduğu için
-            # orada tespit edilen hedef yalnızca ekranda işaretlenir, taret
-            # kendiliğinden hareket etmez.
+            # --- Otonom servolama / kalibrasyon ---
+            # Servolama YALNIZCA Aşama 2 ve 3'te. Aşama 1 tamamen manuel olduğu
+            # için orada tespit edilen hedef yalnızca ekranda işaretlenir.
+            #
+            # AMA: `process_tracking` aynı zamanda KALİBRASYON durum makinesinin
+            # tek çağıranıdır (`_calibration_tick`). Kalibrasyon `task1` şartı
+            # arıyor, servolama ise `OTONOM_MODLAR` şartı — ikisi birbirini
+            # dışlıyordu ve "Derece/Piksel Ölç" butonu hiç ilerlemiyordu:
+            # ilk mesaj yazılıyor, tick bir kez bile çağrılmıyor, 60 sn sonra
+            # zaman aşımına düşüyordu (AnalizVideo.mp4, 10-16 sn).
+            # `process_tracking` kalibrasyon sırasında zaten PID'i atlayıp
+            # doğrudan tick'e gidiyor, dolayısıyla burada kapıyı açmak taretin
+            # Aşama 1'de kendiliğinden hareket etmesine yol açmaz.
             if (current_target_bbox_for_pid and not self.target_destroyed
-                    and self.active_task in self.OTONOM_MODLAR):
+                    and (self.active_task in self.OTONOM_MODLAR or self._calibrating)):
                 x_pid, y_pid, w_pid, h_pid = [int(v) for v in current_target_bbox_for_pid]
                 target_center_x = x_pid + w_pid // 2
                 target_center_y = y_pid + h_pid // 2
@@ -2049,15 +2167,18 @@ class HavaSavunmaArayuz(QWidget):
             else:
                 self.reset_pid_state()
                 self.is_aimed_at_target = False
-                if self.active_task not in ['full_manual']:
+                if self.active_task not in ['full_manual'] and self.active_task not in self.OTONOM_MODLAR:
                     if not self.target_destroyed and not self.waiting_for_new_engagement_command:
                         self.target_info_label.setText("Hedef Bilgisi: Yok.")
 
-                if self.active_task == 'task3' and self.target_destroyed and self.waiting_for_new_engagement_command:
-                    self.process_tracking_to_home_position()
-                    self.is_ready_to_engage_from_qr = False
-                    self.current_qr_char = None
-                    self.current_tracked_target_class = None
+                # NOT: burada eskiden Aşama 3 için "eve dön" yolu vardı
+                # (`process_tracking_to_home_position`). O da QR akışının
+                # parçasıydı ve `engagement_home_position` hiçbir zaman
+                # ayarlanmadığı için taret her hedef kaybında (0,0)'a
+                # sürülüyordu. Angajman makinesi hedef kaybını zaten kendi
+                # yönetiyor (TARAMA'ya döner ve sıradaki adaya yönelir);
+                # ikisi aynı anda çalışsaydı taret iki farklı açıya
+                # çekiştirilirdi. Kaldırıldı.
 
             # --- Durum metinleri ---
             # DİKKAT: buradaki eski OTOMATİK ATEŞ yolları KALDIRILDI.
@@ -2067,9 +2188,22 @@ class HavaSavunmaArayuz(QWidget):
             # ateş edebiliyordu. Ateş kararının tek yeri artık
             # `_otonom_ates_denemesi()` ve `engagement.ates_serbest_mi()`;
             # orada dokuz koşul birden aranıyor.
+            #
+            # DURUM ÇUBUĞU: her mod için TEK yazar.
+            # Eskiden son dal `elif self.active_task != 'task3_setup'` idi ve
+            # Aşama 2/3 dahil her karede koşulsuz "Durum: Hazır." yazıyordu.
+            # `task2()`/`_task3_baslat()`'ın yazdığı mesaj ve angajman
+            # makinesinin bütün ara durumları 40 ms sonra siliniyordu; sahada
+            # Aşama 2 ve 3 boyunca ekranda yalnızca "Hazır." görülüyordu ve
+            # sistemin ne yaptığı hiç anlaşılamıyordu. Otonom aşamalarda yazar
+            # artık `_angajman_adimi` (ve ateş engellenirse
+            # `_otonom_ates_denemesi`); burası onlara dokunmuyor.
             if self.active_task == 'task1':
-                self._update_status_label(
-                    "Durum: Aşama 1 - Tam manuel kontrol (ok tuşları + ATEŞ ET).")
+                if self._calibrating:
+                    pass  # kalibrasyon durum makinesi kendi metnini yazıyor
+                else:
+                    self._update_status_label(
+                        "Durum: Aşama 1 - Tam manuel kontrol (ok tuşları + ATEŞ ET).")
             elif self.active_task == 'full_manual':
                 if self.is_in_no_fire_zone(self.current_yaw_angle):
                     self._update_status_label(
@@ -2078,6 +2212,8 @@ class HavaSavunmaArayuz(QWidget):
                     self._update_status_label(
                         f"Durum: Tam Manuel Kontrol Modu - Yaw: {self.current_yaw_angle:.1f}°, Pitch: {self.current_pitch_angle:.1f}°")
                 self.target_info_label.setText("Hedef Bilgisi: Kullanıcı Kontrollü.")
+            elif self.active_task in self.OTONOM_MODLAR:
+                pass
             elif self.active_task != 'task3_setup':
                 self._update_status_label("Durum: Hazır.")
                 self.target_info_label.setText("Hedef Bilgisi: Yok.")

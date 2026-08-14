@@ -298,6 +298,22 @@ class AngajmanMakinesi:
             self._gec(TARAMA)
         return False
 
+    def _dogrulama_zaman_asimi(self):
+        """
+        Doğrulama süresi doldu: adayı KISA süreliğine kara listeye alıp
+        TARAMA'ya dön.
+
+        Kara listeye almadan dönmek sonsuz döngü demekti: TARAMA aynı izi
+        (en büyük kırmızı alan) yine ilk sıraya koyuyor, aynı açı gönderiliyor,
+        avcı yine bir şey göremiyor. Sahada taret 4 saniye boyunca boş bir
+        duvara bakıp kaldı. TTL kısa olduğu için aday kalıcı olarak elenmez.
+        """
+        if self.gecen() <= config.ENGAGE_VERIFY_TIMEOUT:
+            return False
+        self.kara_listeye_al(config.BLACKLIST_VERIFY_TTL_SEC, 'dogrulanamadi')
+        self._gec(TARAMA)
+        return True
+
     def dogrulama_adimi(self, ciftler):
         """
         Avcının YOLO çıktısıyla dost/düşman kararı.
@@ -306,15 +322,13 @@ class AngajmanMakinesi:
         gözcü yanılsa bile dostun vurulmasını imkânsız kılan katman.
         """
         if not ciftler:
-            if self.gecen() > config.ENGAGE_VERIFY_TIMEOUT:
-                self._gec(TARAMA)
+            self._dogrulama_zaman_asimi()
             return None
 
         # Merkeze en yakın çifti al: taret zaten adaya dönmüş durumda.
         cift = ciftler[0]
         if cift.maket is None or cift.guven < config.VERIFY_MIN_CONFIDENCE:
-            if self.gecen() > config.ENGAGE_VERIFY_TIMEOUT:
-                self._gec(TARAMA)
+            self._dogrulama_zaman_asimi()
             return None
 
         self._sinif_gecmisi.append(cift.sinif)
@@ -324,8 +338,7 @@ class AngajmanMakinesi:
         yeterli = len(self._sinif_gecmisi) >= config.VERIFY_CONFIRM_FRAMES
         tutarli = yeterli and len(set(self._sinif_gecmisi)) == 1
         if not tutarli:
-            if self.gecen() > config.ENGAGE_VERIFY_TIMEOUT:
-                self._gec(TARAMA)
+            self._dogrulama_zaman_asimi()
             return None
 
         sinif = self._sinif_gecmisi[0]

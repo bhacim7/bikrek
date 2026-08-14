@@ -77,6 +77,10 @@ RPI_PORT = 12345
 #
 # Sahada ölçüldü (kamera_tani.py): indeks 0 = dizüstünün dahili kamerası,
 # indeks 1 = taret üzerindeki kamera, indeks 2 = gövdeye sabit kamera.
+#
+# DİKKAT: avcı kamera Logitech'ten Arducam B0495C'ye değiştiği için
+# indeksler büyük ihtimalle KAYDI. `python kamera_tani.py` çalıştırıp
+# aşağıdaki listeleri yeniden ayarlayın; ilk deneme listedeki sırayla yapılır.
 HUNTER_CAMERA_INDICES = [1, 3, 4]
 SPOTTER_CAMERA_INDICES = [2, 3, 4]
 
@@ -84,6 +88,26 @@ SPOTTER_WIDTH = 1280
 SPOTTER_HEIGHT = 720
 SPOTTER_USE_MJPG = True
 
+# AVCI: Arducam B0495C (AR0234 global shutter, 2.3 MP, USB3) + 12 mm sabit lens.
+#
+# 1280x720'DE KALIYORUZ. Belirleyici olan MODEL GIRISI: motor
+# 1056x608 olarak export edildi (bkz. convert_to_engine.py, IMG_WIDTH/HEIGHT).
+#   1280x720 -> 1056x608 : 1.21 kat kucultme, neredeyse birebir
+#   1920x1080 -> 1056x608 : 1.82 kat kucultme
+# `_preprocess` varsayilan INTER_LINEAR ile kuculttugu icin 1.82 katta
+# ornekleme atlanir (aliasing) ve ince detay kaybolur; 1.21 katta bu sorun
+# pratik olarak yoktur.
+#
+# Cozunurlugu artirmak hedefi BUYUTMEZ: modele giren karede nesnenin boyutu
+# yalnizca GORUS ACISINA baglidir (balon 15 metrede her iki halde de ~20 px).
+# Buna karsilik 1920x1080 her karede 2.25 kat fazla piksel demek — daha fazla
+# USB bant genisligi, MJPG cozme ve yeniden olcekleme, yani dogrudan daha
+# fazla OLU ZAMAN. Bu projede olu zamanla zaten ugrastik (FEEDFORWARD_LEAD_TIME
+# 0.22 sn); bedavaya artirilmaz.
+#
+# En-boy: kamera 16:9 (1.778), model girisi 1056/608 = 1.737. Fark %2.3,
+# yani yeniden olcekleme neredeyse duzgun. 1920x1200 (16:10) secilseydi bu
+# fark %8.5'e cikardi — o yuzden 1200 satirli mod kullanilmiyor.
 HUNTER_WIDTH = 1280
 HUNTER_HEIGHT = 720
 HUNTER_USE_MJPG = True
@@ -98,14 +122,23 @@ KAMERA_AYARLARI = {
 }
 
 # Pozlama süresi üst sınırı (saniye). Hareket bulanıklığı =
-# taret_hızı x pozlama / derece_piksel. Avcıda derece/piksel 3 kat küçük
-# olduğu için aynı hareket 3 kat fazla bulanıklık üretir:
-#   pozlama 33 ms (1/30 s), taret 89 derece/sn  -> 165 piksel bulanıklık
-#   pozlama 10 ms, taret 89 derece/sn           ->  50 piksel
-#   pozlama 10 ms, taret  3 derece/sn (takip)   ->   1.7 piksel
-# Balon avcıda 15 metrede 30 piksel; 33 ms'de tamamen sıvanır.
+# taret_hızı x pozlama / derece_piksel.
+#
+# GLOBAL SHUTTER YANLIŞ ANLAŞILMASIN: AR0234 global shutter olduğu için
+# yalnızca ROLLING SHUTTER ÇARPILMASI (hızlı dönüşte dikey çizgilerin
+# eğrilmesi) ortadan kalkar. HAREKET BULANIKLIĞI tamamen pozlama süresine
+# bağlıdır ve global shutter onu azaltmaz — pozlama yine kısaltılmalıdır.
+#
+# Yeni avcıda (0.021486 derece/piksel, 1280x720):
+#   pozlama 33 ms (1/30 s), taret 89 derece/sn  -> 137 piksel bulanıklık
+#   pozlama 10 ms, taret 89 derece/sn           ->  41 piksel
+#   pozlama 10 ms, taret  3 derece/sn (takip)   ->   1.4 piksel
+# Balon avcıda 15 metrede 25 piksel; 33 ms'de tamamen sıvanır.
+#
 # Bu değer bilgi amaçlı burada; kamerada ELLE ayarlanmalı (OpenCV'nin
 # CAP_PROP_EXPOSURE davranışı sürücüye göre değişiyor, güvenilir değil).
+# Arducam modülleri UVC uyumlu; Windows Kamera uygulamasından veya
+# Arducam'in kendi aracından manuel pozlama + manuel beyaz dengesi ayarlanır.
 CAMERA_TARGET_EXPOSURE_SEC = 0.010
 
 
@@ -123,11 +156,38 @@ CAMERA_TARGET_EXPOSURE_SEC = 0.010
 SPOTTER_DPP_YAW = 0.05350
 SPOTTER_DPP_PITCH = -0.05547
 
-# AVCI: sabit 3x zoom. Aşağıdaki değerler gözcününkinin üçte biri olarak
-# HESAPLANDI, ölçülmedi. İlk sahada "Derece/Piksel Ölç" ile DOĞRULANMALI.
-# Beklenen görüş açısı: 22.8 derece yatay / 13.3 derece dikey.
-HUNTER_DPP_YAW = 0.01783
-HUNTER_DPP_PITCH = -0.01849
+# AVCI: Arducam B0495C (AR0234) + 12 mm sabit lens.
+# Zoomlu Logitech'in yerine geçti; artık değer tahmin değil OPTİKTEN türetildi:
+#
+#   AR0234 piksel boyutu 3.0 um, odak uzaklığı 12 mm, dizi 1920x1200
+#   sensör piksel başına = atan(0.0030 / 12) = 0.014324 derece
+#   tam genişlik 1920 x 3.0 um = 5.76 mm -> yatay görüş açısı 27.0 derece
+#
+# 1280x720 çalıştığımız için görüntü piksel başına açı 1920/1280 = 1.5 kat:
+#   0.014324 x 1.5 = 0.021486 derece/piksel
+#   görüş açısı 1280 x 0.021486 = 27.5 derece yatay / 15.5 derece dikey
+#
+# ---- BU DEĞER BİR VARSAYIMA DAYANIYOR ----
+# Modülün 1280x720 modu tam genişliği ÖLÇEKLİYOR varsayıldı (webcam'lerin
+# olağan davranışı ve senin "kamera uygulamasında normal çıkıyor" gözlemine
+# uyuyor). Eğer modül bunun yerine sensörü KIRPIYORSA görüş açısı 18.3
+# dereceye düşer ve doğru değer 0.014324 olur.
+#
+# 30 SANİYELİK AYIRT ETME TESTİ: kamerayı sabit bir sahneye tut, önce
+# 1920x1080 sonra 1280x720 ile bir kare al. Aynı sahne görünüyorsa ÖLÇEKLİYOR
+# (aşağıdaki değer doğru). 1280x720'de daha dar bir kesit görünüyorsa
+# KIRPIYOR -> bu iki sayıyı 0.014324 / -0.014324 yap ve aşağıdaki açısal
+# eşikleri (FEEDFORWARD_ERROR_GATE_PIXELS, LOCK_CONFIRM_TOL_PX,
+# MAX_REACQUISITION_DISTANCE_PIXELS) 1.5 katına çıkar.
+#
+# HER HALÜKÂRDA "Derece/Piksel Ölç" İLE DOĞRULANMALI.
+#
+# Eski (3x zoom, ölçülmemiş) değerler: 0.01783 / -0.01849, aynı 1280x720'de.
+# Yeni lens ESKİSİNDEN BİRAZ GENİŞ (27.5 yerine 22.8 derece); 15 metrede
+# balon modele giren karede ~%17 daha küçük görünüyor (25 px yerine 20 px).
+# Tespit zayıflarsa çözüm 16 mm lens; yazılımda ayarlanacak bir şey yok.
+HUNTER_DPP_YAW = 0.021486
+HUNTER_DPP_PITCH = -0.021486
 
 # Geriye uyumluluk: denetim döngüsü avcı kamerayı kullanır.
 DEGREES_PER_PIXEL_YAW = HUNTER_DPP_YAW
@@ -243,11 +303,14 @@ FEEDFORWARD_MAX_DEGREE = 5.0
 #   kapı yok     -> ort 19.0 px, tepe 137 px, oturma 6.34 sn
 #   kapı açık    -> ort  2.2 px, tepe  49 px, oturma 0.88 sn
 #
-# DEĞERLER 3x ZOOM İÇİN YENİDEN ÖLÇEKLENDİ. Kapının koruduğu şey AÇISAL bir
-# olgu; geniş kamerada (30, 120) piksel = (1.6, 6.4) dereceydi. Avcıda aynı
-# açıyı korumak için piksel değerleri 3 katına çıkmalı, yoksa kapı hedefi
-# takip ederken bile kapanır ve feedforward'ı tam ihtiyaç anında öldürür.
-FEEDFORWARD_ERROR_GATE_PIXELS = (90.0, 360.0)
+# DEĞERLER KAMERA DEĞİŞTİKÇE YENİDEN ÖLÇEKLENİYOR. Kapının koruduğu şey
+# AÇISAL bir olgu; geniş kamerada (30, 120) piksel = (1.6, 6.4) dereceydi.
+# Aynı açıyı korumak için piksel değerleri derece/piksel ile ters orantılı
+# ölçeklenmeli, yoksa kapı hedefi takip ederken bile kapanır ve
+# feedforward'ı tam ihtiyaç anında öldürür.
+#   3x zoomlu Logitech (0.01783  d/px) -> (90, 360)
+#   AR0234 + 12 mm     (0.021486 d/px) -> (75, 299)
+FEEDFORWARD_ERROR_GATE_PIXELS = (75.0, 299.0)
 
 # Feedforward'ın bir denetim çevriminde değişebileceği en büyük miktar
 # (derece). İki kapıdan sonra bile hız tahmini kare kare zıplayabiliyor;
@@ -267,10 +330,14 @@ MAX_TARGET_RATE_DEG_S = 30.0
 PREDICTION_MAX_RATE_DEG_S = 8.0
 
 # --- Ölü bant (duruşta titremeyi engeller) ---
-# PİKSEL cinsinden tanımlı, çünkü gürültü kaynağı YOLO kutu merkezidir ve o
-# piksel cinsinden oynar. 3x zoomda da geçerli: tespit gürültüsü ölçekten
-# bağımsız olarak birkaç pikseldir. Avcıda 5 piksel = 0.089 derece =
-# 15 metrede 2.3 cm.
+# PİKSEL cinsinden tanımlı, çünkü gürültü kaynağı YOLO kutu merkezidir.
+#
+# ZOOM veya LENS bu değeri etkilemez; etkileyen tek şey KAYNAK ÇÖZÜNÜRLÜK
+# olur, çünkü kutu gürültüsü model giriş uzayında (1056x608) kabaca sabittir
+# ve kaynak piksele geri ölçeklenirken kare genişliğiyle çarpılır.
+# Kamera değişti ama çözünürlük 1280x720'de kaldığı için bu değerler AYNEN
+# GEÇERLİ. (1920x1080'e geçilseydi 1.5 katına çıkmaları gerekirdi.)
+# 5 piksel = 0.107 derece = 15 metrede 2.8 cm.
 PID_DEADBAND_PIXELS = 5.0
 MIN_OUTPUT_PIXELS = 3.0
 
@@ -382,7 +449,11 @@ VERIFY_MIN_CONFIDENCE = 0.55
 AIM_TOLERANCE_RATIO = 0.35
 
 # Nişan toleransı ayrıca bu mutlak piksel değerinin altına inmek zorunda
-# değil — çok yakın hedefte gereksiz katılık yapmasın diye alt sınır.
+# değil — tespit gürültüsünün altında bir hassasiyet istememek için alt sınır.
+# Ölü bantla aynı gerekçeyle çözünürlüğe bağlıdır, kameraya değil; 1280x720'de
+# kaldığımız için 6.0 aynen geçerli. 15 metrede balon yarıçapı 12 px olduğundan
+# oran terimi (0.35 x 12 = 4.4 px) bu sınırın altında kalır; yani 15 metrede
+# tolerans 6 px = 0.13 derece = 3.4 cm.
 AIM_TOLERANCE_MIN_PIXELS = 6.0
 
 # Ateşten önce nişan kaç kare korunmalı.
@@ -394,6 +465,15 @@ AIM_HOLD_FRAMES = 3
 BLACKLIST_RADIUS_DEG = 4.0
 BLACKLIST_TTL_SEC = 12.0          # imha edilenler için
 BLACKLIST_FRIEND_TTL_SEC = 600.0  # dost maketler için pratikte kalıcı
+
+# Doğrulaması zaman aşımına uğrayan aday için KISA ömürlü kara liste.
+# Sahada ölçüldü (AnalizVideo.mp4, 17-23 sn): taret gözcünün verdiği açıya
+# gitti, avcıda hiçbir çift göremedi, DOĞRULAMA 1.5 sn'de zaman aşımına
+# uğradı, TARAMA aynı adayı yine ilk sıraya koydu ve aynı açı tekrar
+# gönderildi — taret 4 saniye boş duvara baktı. Kısa bir kara liste sıradaki
+# adaya geçmeyi sağlar; süre dolunca aday yeniden denenir, yani gerçek bir
+# hedefi kalıcı olarak kaybetme riski yok.
+BLACKLIST_VERIFY_TTL_SEC = 5.0
 
 # Balistik: 15 metrede mermi düşüşünü telafi eden sabit pitch ofseti
 # (derece, pozitif = yukarı nişan al). SAHADA ÖLÇÜLMELİ; ölçülene kadar 0.

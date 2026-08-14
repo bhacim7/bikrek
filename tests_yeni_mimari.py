@@ -277,6 +277,132 @@ kontrol("manuel: cift + yalniz balon = 2 hedef",
 kontrol("otonom: yalniz balon elenir = 1 hedef",
         len(engagement.cift_eslestir(_kar)) == 1)
 
+
+# --- 9. DOGRULAMA ZAMAN ASIMI: aday kisa sureli kara listeye girmeli ---
+print()
+print("=" * 70)
+print("9. DOGRULAMA ZAMAN ASIMI — bos acida sonsuz dongu olmamali")
+print("=" * 70)
+# Saha kaydi (AnalizVideo.mp4 17-23 sn): taret gozcunun -21 derece dedigi
+# adaya gitti, avcida hicbir cift goremedi, DOGRULAMA zaman asimina ugradi,
+# TARAMA ayni adayi yine sectii ve taret 4 saniye bos duvara bakti.
+_iz_a = {'id': 1, 'yaw': -21.0, 'pitch': -0.4, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+         'sinif': 'dusman', 'kirmizi_alan': 5000, 'gorulme': 9}
+_iz_b = {'id': 2, 'yaw': 12.0, 'pitch': 1.0, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+         'sinif': 'dusman', 'kirmizi_alan': 2000, 'gorulme': 9}
+_m9 = engagement.AngajmanMakinesi()
+_m9.basla('task2')
+_ilk = _m9.tarama_adimi([_iz_a, _iz_b])
+kontrol("once en buyuk kirmizi alanli aday secilir", _ilk is not None and abs(_ilk[0] + 21.0) < 0.01,
+        f"{_ilk}")
+_m9._gec(engagement.DOGRULAMA)
+_m9.durum_zamani = time.time() - (config.ENGAGE_VERIFY_TIMEOUT + 0.1)
+_m9.dogrulama_adimi([])          # avcida hicbir cift yok
+kontrol("zaman asiminda TARAMA'ya donuldu", _m9.durum == engagement.TARAMA, _m9.durum)
+kontrol("basarisiz aday kara listeye alindi",
+        _m9.kara_liste.icinde_mi(-21.0, -0.4))
+_ikinci = _m9.tarama_adimi([_iz_a, _iz_b])
+kontrol("TARAMA artik SIRADAKI adaya geciyor",
+        _ikinci is not None and abs(_ikinci[0] - 12.0) < 0.01, f"{_ikinci}")
+kontrol("kara liste KISA omurlu (kalici eleme degil)",
+        0 < config.BLACKLIST_VERIFY_TTL_SEC < config.BLACKLIST_TTL_SEC,
+        f"{config.BLACKLIST_VERIFY_TTL_SEC} sn")
+
+# --- 10. PITCH REDUKTORU: adim/derece ve darbe hizi tavani ---
+print()
+print("=" * 70)
+print("10. PITCH REDUKTORU (PLF060 1:5) — adim/derece ve darbe tavani")
+print("=" * 70)
+import motor_fire_module as mfm
+kontrol("pitch redüksiyonu 5.0", abs(mfm.GEAR_RATIO_PITCH - 5.0) < 1e-9,
+        f"{mfm.GEAR_RATIO_PITCH}")
+kontrol("pitch yaw'dan daha ince cozunurluklu",
+        mfm.STEPS_PER_DEGREE_PITCH > mfm.STEPS_PER_DEGREE_YAW,
+        f"pitch {mfm.STEPS_PER_DEGREE_PITCH:.3f} > yaw {mfm.STEPS_PER_DEGREE_YAW:.3f}")
+_tavan = 1.0 / (2 * mfm.MIN_DELAY)
+for _ad, _oy, _op in (("saf yaw", 1.0, 0.0), ("saf pitch", 0.0, 1.0),
+                      ("capraz", 1.0, 1.0)):
+    _hiz = 1.0 / (2 * mfm._servo_gecikme_siniri(_oy, _op))
+    kontrol(f"otonom darbe hizi donanim tavanini asmiyor ({_ad})",
+            _hiz <= _tavan + 1e-6, f"{_hiz:.0f} <= {_tavan:.0f} darbe/sn")
+# 1:5'te SERVO_MAX_DEG_PER_SEC (100) pitch'te donanim tavanina kirpilir.
+_pitch_otonom = (1.0 / (2 * mfm._servo_gecikme_siniri(0.0, 1.0))
+                 / mfm.STEPS_PER_DEGREE_PITCH)
+_yaw_otonom = (1.0 / (2 * mfm._servo_gecikme_siniri(1.0, 0.0))
+               / mfm.STEPS_PER_DEGREE_YAW)
+print(f"  otonom tepe hiz: yaw {_yaw_otonom:.0f} derece/sn, "
+      f"pitch {_pitch_otonom:.0f} derece/sn (kirpilmis)")
+kontrol("yaw tam hizina cikabiliyor",
+        abs(_yaw_otonom - mfm.SERVO_MAX_DEG_PER_SEC) < 1.0, f"{_yaw_otonom:.0f}")
+# Devir teslim butcesi: en kotu pitch yolu ~20 derece, ENGAGE_SLEW_TIMEOUT icinde
+# bitmeli. Pitch hizi bunun altina duserse yalpalama zaman asimina ugrar.
+kontrol("pitch hizi devir teslim butcesine yetiyor",
+        20.0 / _pitch_otonom < config.ENGAGE_SLEW_TIMEOUT * 0.5,
+        f"20 derece / {_pitch_otonom:.0f} = {20.0/_pitch_otonom:.2f} sn "
+        f"< {config.ENGAGE_SLEW_TIMEOUT*0.5:.2f} sn")
+_coz = 1.0 / mfm.STEPS_PER_DEGREE_PITCH
+kontrol("pitch cozunurlugu olu bandin altinda",
+        _coz / abs(config.HUNTER_DPP_PITCH) < config.PID_DEADBAND_PIXELS,
+        f"{_coz:.4f} derece/adim = {_coz/abs(config.HUNTER_DPP_PITCH):.1f} px")
+
+# --- 11. YENI AVCI KAMERA (Arducam B0495C / AR0234 + 12 mm) ---
+print()
+print("=" * 70)
+print("11. YENI AVCI KAMERA (AR0234 + 12 mm) ve MODEL GIRISI UYUMU")
+print("=" * 70)
+_PIKSEL_UM, _ODAK_MM, _SENSOR_GEN = 3.0, 12.0, 1920
+_sensor_dpp = np.degrees(np.arctan(_PIKSEL_UM * 1e-3 / _ODAK_MM))
+_beklenen = _sensor_dpp * _SENSOR_GEN / config.HUNTER_WIDTH
+print(f"  sensor piksel basina {_sensor_dpp:.6f} derece; "
+      f"{config.HUNTER_WIDTH} piksele olceklenince {_beklenen:.6f}")
+kontrol("HUNTER_DPP_YAW optik + olcekleme ile uyumlu",
+        abs(config.HUNTER_DPP_YAW - _beklenen) < 1e-4,
+        f"{config.HUNTER_DPP_YAW} ~ {_beklenen:.6f}")
+kontrol("kare piksel: yaw ve pitch olcegi ayni buyuklukte",
+        abs(abs(config.HUNTER_DPP_PITCH) - config.HUNTER_DPP_YAW) < 1e-6)
+kontrol("pitch isareti negatif (goruntude asagi = pitch azalir)",
+        config.HUNTER_DPP_PITCH < 0)
+
+# --- Kamera karesi ile MODEL GIRISI arasindaki uyum ---
+_kamera_en = config.HUNTER_WIDTH / config.HUNTER_HEIGHT
+_model_en = config.IMG_WIDTH / config.IMG_HEIGHT
+print(f"  kamera {config.HUNTER_WIDTH}x{config.HUNTER_HEIGHT} (en/boy "
+      f"{_kamera_en:.3f})  ->  model {config.IMG_WIDTH}x{config.IMG_HEIGHT} "
+      f"(en/boy {_model_en:.3f})")
+kontrol("en/boy bozulmasi ihmal edilebilir (<%5)",
+        abs(_kamera_en / _model_en - 1.0) < 0.05,
+        f"%{abs(_kamera_en/_model_en - 1)*100:.1f}")
+_kucultme = config.HUNTER_WIDTH / config.IMG_WIDTH
+print(f"  kucultme carpani: {_kucultme:.2f}x "
+      f"(INTER_LINEAR ile 1.4 ustunde ornekleme atlanmaya baslar)")
+kontrol("kucultme carpani INTER_LINEAR icin makul (<1.4)", _kucultme < 1.4,
+        f"{_kucultme:.2f}x")
+
+_gs = config.HUNTER_WIDTH * config.HUNTER_DPP_YAW
+_gd = config.HUNTER_HEIGHT * abs(config.HUNTER_DPP_PITCH)
+print(f"  gorus acisi: {_gs:.1f} x {_gd:.1f} derece")
+kontrol("dikey yari gorus acisi devir tesleme yetiyor (>5 derece)",
+        _gd / 2 > 5.0, f"{_gd/2:.1f} derece")
+
+_balon_px = balon_aci / config.HUNTER_DPP_YAW
+_balon_model = _balon_px * config.IMG_WIDTH / config.HUNTER_WIDTH
+print(f"  15 m'de balon: kaynak {_balon_px:.0f} px -> model uzayinda "
+      f"{_balon_model:.0f} px")
+kontrol("balon model uzayinda YOLO icin yeterli (>=16 px)", _balon_model >= 16,
+        f"{_balon_model:.0f} px")
+# Model uzayindaki boyut YALNIZCA gorus acisina bagli olmali; cozunurlugu
+# degistirmek hedefi buyutmez. Bu ozdeslik bozulursa bir yerde tutarsizlik var.
+_dogrudan = balon_aci / _gs * config.IMG_WIDTH
+kontrol("model uzayi boyutu yalnizca gorus acisina bagli",
+        abs(_balon_model - _dogrudan) < 0.5,
+        f"{_balon_model:.1f} == {_dogrudan:.1f}")
+# Tespit gurultusu esikleri KAYNAK COZUNURLUGE bagli; 1280x720'de kaldigimiz
+# icin eski (sahada ayarlanmis) degerler aynen gecerli olmali.
+kontrol("olu bant 1280x720 icin ayarlanmis degerinde",
+        abs(config.PID_DEADBAND_PIXELS - 5.0) < 1e-9,
+        f"{config.PID_DEADBAND_PIXELS} px = "
+        f"{config.PID_DEADBAND_PIXELS*config.HUNTER_DPP_YAW:.3f} derece")
+
 print()
 print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
