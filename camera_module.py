@@ -58,7 +58,14 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
                         actual_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
                         actual_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
                         actual_fps = capture.get(cv2.CAP_PROP_FPS)
-                        print(f"{kamera_adi}: kamera {index}, {actual_width}x{actual_height} @ {actual_fps:.0f} fps")
+                        # Gerçekleşen FOURCC de yazılıyor: MJPG kayıplı sıkıştırma
+                        # olduğu için hangi formatın müzakere edildiğini bilmeden
+                        # "görüntü neden bulanık" sorusuna cevap verilemiyor.
+                        _fcc = int(capture.get(cv2.CAP_PROP_FOURCC))
+                        fourcc = "".join(chr((_fcc >> (8 * i)) & 0xFF) for i in range(4)) if _fcc else "?"
+                        print(f"{kamera_adi}: kamera {index}, {actual_width}x{actual_height} "
+                              f"@ {actual_fps:.0f} fps, format {fourcc} "
+                              f"(istenen: {'MJPG' if ayar['mjpg'] else 'surucu varsayilani'})")
                         if (actual_width, actual_height) != (ayar["width"], ayar["height"]):
                             print(f"UYARI ({kamera_adi}): istenen {ayar['width']}x{ayar['height']} "
                                   f"alinamadi, kamera {actual_width}x{actual_height} veriyor.")

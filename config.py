@@ -81,8 +81,8 @@ RPI_PORT = 12345
 # DİKKAT: avcı kamera Logitech'ten Arducam B0495C'ye değiştiği için
 # indeksler büyük ihtimalle KAYDI. `python kamera_tani.py` çalıştırıp
 # aşağıdaki listeleri yeniden ayarlayın; ilk deneme listedeki sırayla yapılır.
-HUNTER_CAMERA_INDICES = [1, 3, 4]
-SPOTTER_CAMERA_INDICES = [2, 3, 4]
+HUNTER_CAMERA_INDICES = [2, 3, 4]
+SPOTTER_CAMERA_INDICES = [1, 3, 4]
 
 SPOTTER_WIDTH = 1280
 SPOTTER_HEIGHT = 720
@@ -110,7 +110,19 @@ SPOTTER_USE_MJPG = True
 # fark %8.5'e cikardi — o yuzden 1200 satirli mod kullanilmiyor.
 HUNTER_WIDTH = 1280
 HUNTER_HEIGHT = 720
-HUNTER_USE_MJPG = True
+
+# MJPG KAPALI. True iken kod FOURCC'yi MJPG'ye ZORLUYOR; MJPG kayıplı
+# sıkıştırmadır ve avcıda gördüğümüz ince detay (15 metrede 25 pikselllik
+# balon) tam olarak sıkıştırmanın attığı bölgede. Logitech USB2 iken MJPG
+# zorunluydu (bant genişliği), Arducam USB3'te değil: 1280x720 sıkıştırmasız
+# YUY2 = 55 MB/s, USB3'ün onda biri.
+#
+# False olduğunda kod FOURCC'ye HİÇ DOKUNMUYOR, sürücü kendi varsayılanını
+# seçiyor. Yani bu ayar "kamerayı olduğu gibi aç" demek.
+#
+# Kamera açılışında konsola yazılan satırda gerçekleşen format ve fps var.
+# Kare hızı 30'un belirgin altına düşerse buraya True'ya dön.
+HUNTER_USE_MJPG = False
 
 # camera_module tek bir sözlükten okur; yeni bir kamera eklemek için buraya
 # bir satır yetiyor.
@@ -140,6 +152,24 @@ KAMERA_AYARLARI = {
 # Arducam modülleri UVC uyumlu; Windows Kamera uygulamasından veya
 # Arducam'in kendi aracından manuel pozlama + manuel beyaz dengesi ayarlanır.
 CAMERA_TARGET_EXPOSURE_SEC = 0.010
+
+# Çıkarım sürecinden ARAYÜZE gönderilen karenin genişliği (piksel).
+# TESPİTİ ETKİLEMEZ — YOLO her zaman ham kareyi görür; bu yalnızca IPC
+# yükünü azaltmak için küçültülen GÖSTERİM kopyasıdır.
+#
+# 810 idi ve sahada "kamera bulanık" olarak görüldü. Zincir şuydu:
+#   1280x720 kare -> 810x456'ya küçült (IPC) -> 1920x1080 etikete BÜYÜT
+# yani önce detay atılıyor, sonra 2.37 kat geri şişiriliyor. Windows Kamera
+# uygulamasının daha net görünmesinin sebebi buydu; kameranın kendisiyle
+# ilgisi yoktu.
+#
+# HUNTER_WIDTH'e eşit veya büyük olduğunda küçültme HİÇ yapılmaz (kare
+# olduğu gibi gider) ve çizim ölçeği 1.0 olur, yani kutular/yazılar ham
+# piksellere birebir oturur.
+#
+# Bedeli IPC: kare başına 1.1 MB yerine 2.8 MB. Kare hızı düşerse veya
+# gecikme artarsa 960'a çekilebilir.
+DISPLAY_WIDTH = 1280
 
 
 # =====================================================================

@@ -2281,8 +2281,13 @@ class HavaSavunmaArayuz(QWidget):
                 if not rgb_image.flags['C_CONTIGUOUS']:
                     rgb_image = np.ascontiguousarray(rgb_image)
                 qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
+                # Qt.SmoothTransformation ZORUNLU: varsayılan Qt.FastTransformation
+                # en yakın komşu demek. Etiket 1920x1080, kare 1280x720 olduğu
+                # için 1.5 kat büyütme yapılıyor ve en yakın komşuyla bu
+                # merdivenli/bulanık görünüyordu. Sahada "kamera netsiz" diye
+                # görülen sorunun ikinci yarısı buydu.
                 pixmap_obj = qt_image.scaled(self.camera_label.width(), self.camera_label.height(),
-                                             Qt.KeepAspectRatio)
+                                             Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 self.camera_label.setPixmap(QPixmap.fromImage(pixmap_obj))
                 self._tani['ciz'] += 1
                 if not self._ilk_kare_bildirildi:

@@ -8,7 +8,8 @@ import json
 import config
 
 # UI'a gönderilen karenin genişliği. Yükseklik en-boy oranından hesaplanır.
-DISPLAY_WIDTH = 810
+# Saha ayarı olduğu için config.py'a taşındı (gerekçe orada).
+DISPLAY_WIDTH = config.DISPLAY_WIDTH
 
 # --- Sınıf adından renk çıkarımı (hayalet filtresi için) ---
 # Anahtar: sınıf adında aranacak parça. Değer: HSV aralıkları listesi.
