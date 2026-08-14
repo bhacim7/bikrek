@@ -2,6 +2,7 @@ import cv2
 import time
 import queue
 import numpy as np
+import sys
 import traceback
 import json
 import config
@@ -309,15 +310,34 @@ class YoloModel:
 
         return self._postprocess(output, orig_width, orig_height, classes_list)
 
+# Çıkarım hatası tekrar tekrar yazdırılmasın diye tek seferlik bayrak.
+_cikarim_hatasi_yazildi = [False]
+
+
 def inference_worker(command_queue, frame_queue, result_queue):
     """
     Multiprocessing worker to run AI inference on frames.
     """
     print("Inference worker started.")
+    sys.stdout.flush()
 
     # ÜÇ AŞAMA DA TEK MODELİ KULLANIR. Eskiden Aşama 3 ayrı bir ağırlık
     # yüklüyordu; artık görev değişiminde model yeniden yükleme gecikmesi yok.
-    model = YoloModel(config.YOLO_MODEL_PATH, config.IMG_WIDTH, config.IMG_HEIGHT)
+    #
+    # Model yüklemesi HATA VERİRSE süreç ölmemeli. Eskiden ölüyordu ve sonuç
+    # kuyruğuna hiçbir şey gelmediği için arayüzde görüntü tamamen kayboluyordu
+    # — kamera sapasağlam çalışırken ekran siyah kalıyordu ve sebebi
+    # arayüzden hiç anlaşılmıyordu. Artık model yoksa tespit yapılmaz ama
+    # KARELER AKMAYA DEVAM EDER; en azından görüntü görülür ve hata bellidir.
+    model = None
+    try:
+        model = YoloModel(config.YOLO_MODEL_PATH, config.IMG_WIDTH, config.IMG_HEIGHT)
+        print("Cikarim: model hazir.")
+    except Exception:
+        print("!!! CIKARIM: MODEL YUKLENEMEDI — tespit calismayacak, "
+              "goruntu akmaya devam edecek !!!")
+        traceback.print_exc()
+    sys.stdout.flush()
 
     current_task = None
     is_running = False
@@ -363,8 +383,19 @@ def inference_worker(command_queue, frame_queue, result_queue):
             qr_data = None
             qr_bbox = None
 
-            if is_running and current_task is not None:
-                detections = model.infer(frame, config.CLASSES)
+            if is_running and current_task is not None and model is not None:
+                # Tek bir çıkarım hatası da süreci öldürmemeli: kare akışı
+                # tespitten daha önceliklidir, operatör hiç değilse görüntüyü
+                # görebilmeli.
+                try:
+                    detections = model.infer(frame, config.CLASSES)
+                except Exception:
+                    if not _cikarim_hatasi_yazildi[0]:
+                        _cikarim_hatasi_yazildi[0] = True
+                        print("!!! CIKARIM HATASI (bir kez yazdirilir) !!!")
+                        traceback.print_exc()
+                        sys.stdout.flush()
+                    detections = []
 
                 # Hayalet eleme: sınıfının rengini içermeyen tespitleri at.
                 # Burada yapılıyor çünkü ham çözünürlüklü kare yalnızca bu

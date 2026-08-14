@@ -455,6 +455,10 @@ class HavaSavunmaArayuz(QWidget):
         # çizim yapılıyor mu.
         self._tani = {'tik': 0, 'bos': 0, 'sonuc': 0, 'ciz': 0, 'hata': 0}
         self._tani_son_yazdirma = 0.0
+        # Arka plan süreçleri (ana bloktan atanır). Canlı olup olmadıklarını
+        # bilmeden "kuyruk neden boş" sorusu cevaplanamıyor: süreç ölmüşse
+        # kuyruk sonsuza kadar boş kalır ve arayüzde bu hiç görünmez.
+        self.surecler = {}
 
         self.crosshair_movable = False
         self.crosshair_fixed_center = True
@@ -1615,8 +1619,11 @@ class HavaSavunmaArayuz(QWidget):
         if simdi_tani - self._tani_son_yazdirma >= 2.0:
             self._tani_son_yazdirma = simdi_tani
             t = self._tani
+            canli = " ".join(
+                f"{ad}={'CANLI' if p.is_alive() else 'OLDU'}"
+                for ad, p in self.surecler.items()) or "surec bilgisi yok"
             print(f"TANI: tik={t['tik']} bos_kuyruk={t['bos']} sonuc={t['sonuc']} "
-                  f"cizim={t['ciz']} hata={t['hata']} | "
+                  f"cizim={t['ciz']} hata={t['hata']} | {canli} | "
                   f"etiket={self.camera_label.width()}x{self.camera_label.height()} "
                   f"gorunur={self.camera_label.isVisible()} "
                   f"pixmap={'VAR' if self.camera_label.pixmap() else 'YOK'}")
@@ -2499,6 +2506,8 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = HavaSavunmaArayuz(camera_cmd_q, inference_cmd_q, result_q,
                                spotter_cmd_q, spotter_result_q)
+    window.surecler = {'kamera': cam_process, 'cikarim': inf_process,
+                       'gozcu': spotter_process}
     window.showMaximized()
 
     try:
