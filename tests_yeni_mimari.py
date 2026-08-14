@@ -255,13 +255,6 @@ print(f"  avci gorus acisi: {fov_y:.1f} x {fov_p:.1f} derece")
 kontrol("devir teslim payi yeterli (yari-pitch > 5 derece)", fov_p / 2 > 5,
         f"{fov_p/2:.1f}")
 
-print()
-print("=" * 70)
-print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
-print("=" * 70)
-sys.exit(1 if hata else 0)
-
-
 # --- 8. TEK BASINA BALON (kalibrasyon senaryosu) ---
 print()
 print("=" * 70)
