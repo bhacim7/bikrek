@@ -141,7 +141,25 @@ class YoloModel:
         except Exception:
             TRT_AVAILABLE = False
 
-        import onnxruntime as ort
+        # onnxruntime import'u BİLEREK tembel: yalnızca ONNX yoluna
+        # girildiğinde yapılır.
+        #
+        # Eskiden burada koşulsuz `import onnxruntime as ort` vardı ve model
+        # bir .engine olsa, TensorRT sorunsuz hazır olsa bile bu satır önce
+        # çalışıyordu. Arayüzden başlatılan çıkarım sürecinde bu satır
+        # ImportError (DLL yüklenemedi) atıyor ve load_model TensorRT dalına
+        # HİÇ ULAŞAMADAN ölüyordu.
+        #
+        # Sebebi ölçüldü: Windows'ta multiprocessing "spawn" kullanır ve çocuk
+        # süreç ana modülü (bukrek_main) yeniden import eder; bukrek_main de
+        # PyQt5 import eder. PyQt5 kendi Qt DLL'lerini arama yoluna eklediği
+        # için onnxruntime'ın yerel DLL'i yüklenemez hale geliyor. Kontrollü
+        # deney (aynı çocuk süreç, tek fark ana modülde PyQt5 olup olmaması):
+        #     PyQt5 YOK : tensorrt OK, onnxruntime OK, model OK
+        #     PyQt5 VAR : tensorrt OK, onnxruntime DLL HATASI, model HATA
+        # Görüldüğü gibi TensorRT bundan etkilenmiyor; sorun yalnızca gereksiz
+        # yere yapılan onnxruntime import'uydu.
+        ort = None
 
         if self.model_path.endswith(".engine") and TRT_AVAILABLE:
             try:
@@ -199,6 +217,8 @@ class YoloModel:
 
         if self.model_path.endswith(".onnx"):
             try:
+                if ort is None:
+                    import onnxruntime as ort
                 providers = []
                 if 'CUDAExecutionProvider' in ort.get_available_providers():
                     providers.append('CUDAExecutionProvider')
