@@ -22,6 +22,33 @@ _UVC_OZELLIKLERI = [
 ]
 
 
+def _model_oranina_kirp(frame, kamera_adi):
+    """
+    Kareyi modelin en/boy oranına ORTADAN kırpar (yalnızca avcı).
+
+    Modül 1920x1080 istense de 1920x1200 (16:10) veriyor; model girişi ise
+    1056x608 (1.737). Fark yeniden ölçeklemede %7.9 yatay gerilme olarak
+    geçiyor ve model bu bozulmayı eğitimde hiç görmedi.
+
+    Kırpma BURADA yapılıyor — yani boru hattının tamamı tek ve tutarlı bir
+    kare boyutu görüyor. Çıkarımdan sonra kırpmak, tespit kutularının kırpma
+    ofsetiyle geri taşınmasını gerektirirdi; sessiz koordinat hatası üretmeye
+    çok müsait bir yol.
+
+    Derece/piksel DEĞİŞMEZ (aynı optik, aynı piksel); yalnızca dikey görüş
+    açısı kısalır.
+    """
+    if kamera_adi != "hunter" or not config.HUNTER_CROP_TO_MODEL_ASPECT:
+        return frame
+    yuk, gen = frame.shape[:2]
+    hedef_oran = config.IMG_WIDTH / float(config.IMG_HEIGHT)
+    hedef_yuk = int(round(gen / hedef_oran))
+    if hedef_yuk >= yuk:
+        return frame                      # zaten yeterince dar veya daha dar
+    ust = (yuk - hedef_yuk) // 2
+    return frame[ust:ust + hedef_yuk, :, :]
+
+
 def _fourcc_metni(capture):
     """Sürücüyle müzakere edilen görüntü formatını okunur hale getirir."""
     try:
@@ -135,6 +162,11 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
                         # oturduktan SONRA uygulanmalı; bazı sürücüler format
                         # değişiminde bu denetimleri sıfırlıyor.
                         _uvc_uygula(capture, kamera_adi)
+                        if kamera_adi == "hunter" and config.HUNTER_CROP_TO_MODEL_ASPECT:
+                            _eg, _ey = config.hunter_etkin_kare()
+                            print(f"{kamera_adi}: model en/boy orani icin "
+                                  f"{_eg}x{_ey}'e kirpiliyor "
+                                  f"(dikey gorus {_ey*abs(config.HUNTER_DPP_PITCH):.1f} derece)")
                         if (actual_width, actual_height) != (ayar["width"], ayar["height"]):
                             print(f"UYARI ({kamera_adi}): istenen {ayar['width']}x{ayar['height']} "
                                   f"alinamadi, kamera {actual_width}x{actual_height} veriyor.")
@@ -172,6 +204,7 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
         if is_running and capture and capture.isOpened():
             ret, frame = capture.read()
             if ret and frame is not None and frame.size > 0:
+                frame = _model_oranina_kirp(frame, kamera_adi)
                 ardisik_hata = 0
                 # Discard old frames if queue is full (keep it real-time)
                 if frame_queue.full():

@@ -357,25 +357,41 @@ print()
 print("=" * 70)
 print("11. YENI AVCI KAMERA (AR0234 + 12 mm) ve MODEL GIRISI UYUMU")
 print("=" * 70)
-_PIKSEL_UM, _ODAK_MM, _SENSOR_GEN = 3.0, 12.0, 1920
-_sensor_dpp = np.degrees(np.arctan(_PIKSEL_UM * 1e-3 / _ODAK_MM))
-_beklenen = _sensor_dpp * _SENSOR_GEN / config.HUNTER_WIDTH
-print(f"  sensor piksel basina {_sensor_dpp:.6f} derece; "
-      f"{config.HUNTER_WIDTH} piksele olceklenince {_beklenen:.6f}")
-kontrol("HUNTER_DPP_YAW optik + olcekleme ile uyumlu",
-        abs(config.HUNTER_DPP_YAW - _beklenen) < 1e-4,
-        f"{config.HUNTER_DPP_YAW} ~ {_beklenen:.6f}")
+_PIKSEL_UM, _ODAK_MM = 3.0, 12.0
+
+
+def _ima_odak(dpp, piksel_sayisi):
+    """Olculen derece/pikselin ima ettigi odak uzakligi (mm)."""
+    fov = piksel_sayisi * dpp
+    return (piksel_sayisi * _PIKSEL_UM / 1000.0) / (2 * np.tan(np.radians(fov / 2)))
+
+
+_fy = _ima_odak(config.HUNTER_DPP_YAW, config.HUNTER_WIDTH)
+_fp = _ima_odak(abs(config.HUNTER_DPP_PITCH), config.HUNTER_HEIGHT)
+_ETK_G0, _ETK_Y0 = config.hunter_etkin_kare()
+print(f"  ima edilen odak: yaw {_fy:.2f} mm, pitch {_fp:.2f} mm "
+      f"(takilan lens {_ODAK_MM:.0f} mm)")
+# Olculen degeri teorik degere ZORLAMIYORUZ (lens gercekte 11.5-12.5 mm
+# olabilir); yalnizca fiziksel olarak makul mu diye bakiyoruz.
+kontrol("derece/piksel takilan lensle uyumlu (12 +- 1.5 mm)",
+        abs(_fy - _ODAK_MM) < 1.5 and abs(_fp - _ODAK_MM) < 1.5,
+        f"yaw {_fy:.2f} mm, pitch {_fp:.2f} mm")
+# KARE PIKSEL + REKTILINEER LENS => iki eksende |derece/piksel| AYNI.
+# Farkli cikiyorsa bir eksenin adim/derece defteri yanlistir; sahada bir kez
+# 1.40 kat fark cikti ve yaw kazanci sessizce %40 hatali calisiyordu.
 kontrol("kare piksel: yaw ve pitch olcegi ayni buyuklukte",
-        abs(abs(config.HUNTER_DPP_PITCH) - config.HUNTER_DPP_YAW) < 1e-6)
+        abs(abs(config.HUNTER_DPP_PITCH) - config.HUNTER_DPP_YAW) < 1e-6,
+        f"{config.HUNTER_DPP_YAW} vs {abs(config.HUNTER_DPP_PITCH)}")
 kontrol("pitch isareti negatif (goruntude asagi = pitch azalir)",
         config.HUNTER_DPP_PITCH < 0)
 
 # --- Kamera karesi ile MODEL GIRISI arasindaki uyum ---
-_kamera_en = config.HUNTER_WIDTH / config.HUNTER_HEIGHT
+_ETK_G, _ETK_Y = config.hunter_etkin_kare()
+_kamera_en = _ETK_G / _ETK_Y
 _model_en = config.IMG_WIDTH / config.IMG_HEIGHT
-print(f"  kamera {config.HUNTER_WIDTH}x{config.HUNTER_HEIGHT} (en/boy "
-      f"{_kamera_en:.3f})  ->  model {config.IMG_WIDTH}x{config.IMG_HEIGHT} "
-      f"(en/boy {_model_en:.3f})")
+print(f"  kamera {config.HUNTER_WIDTH}x{config.HUNTER_HEIGHT} -> kirpma sonrasi "
+      f"{_ETK_G}x{_ETK_Y} (en/boy {_kamera_en:.3f})  ->  model "
+      f"{config.IMG_WIDTH}x{config.IMG_HEIGHT} (en/boy {_model_en:.3f})")
 kontrol("en/boy bozulmasi ihmal edilebilir (<%5)",
         abs(_kamera_en / _model_en - 1.0) < 0.05,
         f"%{abs(_kamera_en/_model_en - 1)*100:.1f}")
@@ -391,7 +407,7 @@ kontrol("suzgec adi gecerli",
         config.MODEL_RESIZE_INTERPOLATION)
 
 _gs = config.HUNTER_WIDTH * config.HUNTER_DPP_YAW
-_gd = config.HUNTER_HEIGHT * abs(config.HUNTER_DPP_PITCH)
+_gd = _ETK_Y0 * abs(config.HUNTER_DPP_PITCH)
 print(f"  gorus acisi: {_gs:.1f} x {_gd:.1f} derece")
 kontrol("dikey yari gorus acisi devir tesleme yetiyor (>5 derece)",
         _gd / 2 > 5.0, f"{_gd/2:.1f} derece")
@@ -417,11 +433,12 @@ kontrol("olu bant kaynak cozunurluge gore olceklenmis",
         abs(config.PID_DEADBAND_PIXELS - _beklenen_olu) <= 1.0,
         f"{config.PID_DEADBAND_PIXELS} px (beklenen ~{_beklenen_olu}) = "
         f"{config.PID_DEADBAND_PIXELS*config.HUNTER_DPP_YAW:.3f} derece")
-# En sik yapilan hata: cozunurluk degistirilip derece/piksel unutuluyor.
-# Ima edilen gorus acisi lensten bilinen degerden sapmamali.
-_ima_fov = config.HUNTER_WIDTH * config.HUNTER_DPP_YAW
+# En sik yapilan hata: cozunurluk degistirilip derece/piksel unutuluyor
+# (veya tersi). Ima edilen ODAK UZAKLIGI bu ikisinin BIRLIKTE dogru olmasini
+# gerektirir; biri degisip digeri kalirsa odak sacma bir degere firlar.
 kontrol("cozunurluk ve derece/piksel BIRLIKTE guncellenmis",
-        abs(_ima_fov - 27.5) < 1.0, f"ima edilen FOV {_ima_fov:.1f} derece")
+        abs(_ima_odak(config.HUNTER_DPP_YAW, config.HUNTER_WIDTH) - _ODAK_MM) < 1.5,
+        f"ima edilen odak {_ima_odak(config.HUNTER_DPP_YAW, config.HUNTER_WIDTH):.2f} mm")
 
 # --- 12. ISTER UYUMU: avci onceligi, dost eleme, asamaya gore ceza ---
 print()

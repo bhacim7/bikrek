@@ -59,6 +59,24 @@ IMG_WIDTH = 1056
 # ölçüp karşılaştırır; karar tahminle değil o ölçümle verilmeli.
 MODEL_RESIZE_INTERPOLATION = "AREA"   # "AREA" veya "LINEAR"
 
+# Kamera karesini MODELİN EN/BOY ORANINA kırp.
+#
+# Arducam modülü 1920x1080 istense de 1920x1200 (16:10 = 1.600) veriyor.
+# Model girişi 1056x608 = 1.737. Aradaki fark yeniden ölçeklemede YATAY
+# GERİLME olarak geçiyor: %7.9. Model bugüne kadar 16:9 kaynaktan beslendi,
+# yani bu gerilme eğitimde hiç görülmemiş bir bozulma.
+#
+# Çözüm kareyi ortadan kırpmak. Kırpma derece/pikseli DEĞİŞTİRMEZ (aynı
+# optik, aynı piksel), yalnızca dikey görüş açısını kısaltır:
+#     1920x1200 -> 16.3 derece dikey
+#     1920x1105 -> 15.0 derece dikey   (devir teslim için gereken 5'ten fazla)
+#
+# Kırpma KAMERA SÜRECİNDE yapılıyor; böylece boru hattının tamamı (çıkarım,
+# PID, nişan merkezi, kalibrasyon) tek ve tutarlı bir kare boyutu görüyor.
+# Sonradan kırpmak, tespit kutularının kırpma ofsetiyle geri taşınmasını
+# gerektirirdi — sessiz koordinat hatası üretmeye çok müsait bir yol.
+HUNTER_CROP_TO_MODEL_ASPECT = True
+
 # --- RPi Bağlantısı ---
 RPI_IP = '192.168.137.229'
 RPI_PORT = 12345
@@ -123,8 +141,21 @@ SPOTTER_USE_MJPG = True
 # Bedeli: kare başına 2.25 kat fazla piksel = daha fazla USB bandı ve
 # yeniden ölçekleme, yani biraz daha ölü zaman. CAPTURE_LATENCY_OFFSET
 # taramasında bu hesaba katılmalı.
+# YÜKSEKLİK 1200 — 1080 İSTENSE DE MODÜL 1200 VERİYOR.
+# Sahada doğrulandı: arayüzde pixmap 1728x1080 çıkıyor (16:10'un 1080
+# satıra sığdırılmış hali) ve kalibrasyon aracı dikey görüş açısını 16
+# derece ölçüyor — 1080 satırla bu 14.6 derece çıkardı. Config'in gerçeği
+# yansıtması şart: görüş açısı, piksel eşikleri ve testlerdeki ölçek
+# kontrolleri buradan türetiliyor.
+#
+# BEDELİ — EN/BOY BOZULMASI: 1920x1200 (1.600) kare model girişine
+# 1056x608'e (1.737) ezilirken yatayda %8.6 geriliyor; model bugüne kadar
+# 16:9 kaynaktan beslendi. Çözüm çıkarımdan önce ortadan 1920x1080'e
+# KIRPMAK olurdu (dikey görüş 16.3 -> 14.7 derece; devir teslim için
+# gereken 5 dereceden hâlâ fazla). Henüz yapılmadı — `yolo_kalite.py`
+# ile ölçülüp karar verilmeli.
 HUNTER_WIDTH = 1920
-HUNTER_HEIGHT = 1080
+HUNTER_HEIGHT = 1200
 
 # MJPG KAPALI. True iken kod FOURCC'yi MJPG'ye ZORLUYOR; MJPG kayıplı
 # sıkıştırmadır ve avcıda gördüğümüz ince detay (15 metrede 25 pikselllik
@@ -284,8 +315,25 @@ SPOTTER_DPP_PITCH = -0.05547
 # Yeni lens ESKİSİNDEN BİRAZ GENİŞ (27.5 yerine 22.8 derece); 15 metrede
 # balon modele giren karede ~%17 daha küçük görünüyor (25 px yerine 20 px).
 # Tespit zayıflarsa çözüm 16 mm lens; yazılımda ayarlanacak bir şey yok.
-HUNTER_DPP_YAW = 0.014324
-HUNTER_DPP_PITCH = -0.014324
+# İKİ EKSEN AYNI DEĞERDE — FİZİKSEL ZORUNLULUK.
+# AR0234 pikselleri kare (3.0 x 3.0 um) ve lens rektilineer; bu durumda
+# |derece/piksel| iki eksende AYNI olmak zorundadır. Kalibrasyon aracı
+# şunları ölçtü:
+#     yaw  : 0.01374 , 0.01592   (aralarında %16 fark)
+#     pitch: 0.01335 , 0.01362   (aralarında %2 fark)
+# Pitch ölçümü sıkı, yaw ölçümü dağınık. Muhtemel sebep yaw'daki 10:30
+# DÜZ DİŞLİ BOŞLUĞU: kalibrasyon ileri ve geri hareket yapıyor, yön
+# değişiminde boşluk kadar hareket yutuluyor, o yönün ölçümü yüksek
+# çıkıyor. (Pitch'te planet redüktör var, boşluğu 1-2 açı dakikası.)
+# Birbirini tutan üç ölçümün ortalaması alındı: 0.01374, 0.01335, 0.01362
+# -> 0.01357, yuvarlanarak 0.01360. İma ettiği odak uzaklığı 12.6 mm,
+# yani takılan 12 mm lensle uyumlu.
+#
+# YAW ÖLÇÜMÜNÜ 2-3 KEZ TEKRARLAYIN. Sürekli pitch'ten yüksek çıkıyorsa
+# fark dişli boşluğudur ve ayrıca ölçülmesi gerekir (yön değiştirirken
+# kaç derece kayboluyor).
+HUNTER_DPP_YAW = 0.01360
+HUNTER_DPP_PITCH = -0.01360
 
 # Geriye uyumluluk: denetim döngüsü avcı kamerayı kullanır.
 DEGREES_PER_PIXEL_YAW = HUNTER_DPP_YAW
@@ -600,3 +648,18 @@ DETECTION_MAX_AREA_RATIO = 0.25
 
 # Bir adayın mevcut hedefin yerine geçebilmesi için gereken güven farkı.
 ACQUIRE_CONFIDENCE_MARGIN = 0.15
+
+
+def hunter_etkin_kare():
+    """
+    Boru hattına GERÇEKTEN giren avcı kare boyutu (kırpma sonrası).
+
+    Görüş açısı, piksel eşiklerinin açısal karşılığı ve testlerdeki ölçek
+    kontrolleri bunu kullanmalı — `HUNTER_HEIGHT` yalnızca kameradan
+    İSTENEN yüksekliktir.
+    """
+    if not HUNTER_CROP_TO_MODEL_ASPECT:
+        return HUNTER_WIDTH, HUNTER_HEIGHT
+    hedef_oran = IMG_WIDTH / float(IMG_HEIGHT)
+    yuk = int(round(HUNTER_WIDTH / hedef_oran))
+    return HUNTER_WIDTH, min(yuk, HUNTER_HEIGHT)

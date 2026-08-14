@@ -45,6 +45,21 @@ class HavaSavunmaArayuz(QWidget):
         print("HATA AYIKLAMA: UI elemanları oluşturuluyor.")
         self.camera_label = QLabel(self)
         self.camera_label.setFixedSize(1920, 1080)
+        # HİZALAMA AÇIKÇA ORTALANIYOR — VARSAYILAN DEĞİL.
+        # QLabel'in pixmap varsayılanı `AlignLeft | AlignVCenter`'dır. Kamera
+        # 1920x1200 (16:10) verdiği için pixmap KeepAspectRatio ile 1728x1080
+        # oluyor ve 1920 genişliğindeki etikete SOLA YASLI çiziliyordu:
+        #   - sağda 192 piksellik boşluk (sahada "kamera ile butonlar arasında
+        #     boşluk var" olarak görüldü),
+        #   - görüntünün merkezi etiketin 864'ünde, oysa tıklama kodu etiket
+        #     merkezini (960) kullanıyordu -> 96 piksellik sabit kayma.
+        # Sonuç: nişangahın 96 piksel sağına kadar yapılan tıklamalar NEGATİF
+        # hata üretip tareti SOLA gönderiyordu. Ekran kaydından doğrulandı:
+        # imleç nişangahın 27 piksel sağındayken taret -1.3 derece gitti;
+        # (27-96) x 0.01919 = -1.32 derece.
+        # Ortalamak hem boşluğu simetrik yapıyor hem de `_etiket_to_kare`
+        # dönüşümünü kesinleştiriyor.
+        self.camera_label.setAlignment(Qt.AlignCenter)
         self.camera_label.setStyleSheet("background-color: black;")
 
         self.image_label = QLabel(self)
