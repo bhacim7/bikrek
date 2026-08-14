@@ -886,8 +886,7 @@ class HavaSavunmaArayuz(QWidget):
         simdi = time.time()
         if simdi - self._son_aci_etiketi >= 0.066:
             self._son_aci_etiketi = simdi
-            self.update_info_panel(
-                f"Mevcut Yaw: {self.current_yaw_angle:.1f}°, Pitch: {self.current_pitch_angle:.1f}°")
+            self._bilgi_panelini_yenile()
 
     def _process_rpi_response(self, response_data):
         if response_data.get("status") == "ok":
@@ -1296,6 +1295,23 @@ class HavaSavunmaArayuz(QWidget):
         if self.rpi_thread.is_connected:
             # force=True: duruş komutu her koşulda gitmeli.
             self._send_manual_direction(0, 0, force=True)
+
+    def _bilgi_panelini_yenile(self):
+        """
+        Üst bilgi satırının TEK yazarı.
+
+        Eskiden iki ayrı yer bu satıra FARKLI metinler yazıyordu:
+        `_update_current_angles` (Pi'den ~15 Hz) yalnızca açıları,
+        `update_frame` (~25 Hz) açıları + kare sayaçlarını. İki metin
+        saniyede ~40 kez dönüşümlü yazıldığı için satır gözle okunamayacak
+        kadar titriyordu — sahada "yazılar çakarlı gibi açılıp kapanıyor"
+        olarak görüldü. Artık ikisi de bu fonksiyonu çağırıyor, dolayısıyla
+        içerik her zaman aynı.
+        """
+        self.update_info_panel(
+            f"Mevcut Yaw: {self.current_yaw_angle:.1f}°, "
+            f"Pitch: {self.current_pitch_angle:.1f}°  |  "
+            f"kare {self._tani['sonuc']} / çizim {self._tani['ciz']}")
 
     def update_info_panel(self, text):
         self.info_label.setText(f"<h2 style='color: white; text-align: center;'>{text}</h2>")
@@ -1737,10 +1753,7 @@ class HavaSavunmaArayuz(QWidget):
                      (center_x_display, center_y_display + crosshair_size),
                      crosshair_color, 2)
 
-            self.update_info_panel(
-                f"Mevcut Yaw: {self.current_yaw_angle:.1f}°, "
-                f"Pitch: {self.current_pitch_angle:.1f}°  |  "
-                f"kare {self._tani['sonuc']} / çizim {self._tani['ciz']}")
+            self._bilgi_panelini_yenile()
 
             current_target_bbox_for_pid = None
             detected_class_status = None
