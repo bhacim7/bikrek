@@ -1593,11 +1593,33 @@ class HavaSavunmaArayuz(QWidget):
         # Send quit signals to processes
         self.camera_cmd_q.put("QUIT")
         self.inference_cmd_q.put({"action": "QUIT"})
+        if self.spotter_cmd_q is not None:
+            self.spotter_cmd_q.put("QUIT")
 
         if event is not None:
             event.accept()
 
     def update_frame(self):
+        # GÖZCÜ ÖNCE. Avcı hattından (kamera -> çıkarım -> sonuç kuyruğu)
+        # bağımsız olmalı: aşağıdaki erken çıkışların arkasında kalırsa,
+        # avcı veya YOLO tarafında bir sorun olduğunda gözcü paneli de
+        # kararıyor ve hangi hattın bozuk olduğu anlaşılamıyor.
+        try:
+            self._gozcu_oku()
+            self._gozcu_ciz()
+            if self.gozcu_izler:
+                en_iyi = self.gozcu_izler[0]
+                self.spotter_info_label.setText(
+                    f"Gözcü: {len(self.gozcu_izler)} iz | ilk: "
+                    f"{en_iyi['yaw']:+.1f}° {en_iyi['pitch']:+.1f}° "
+                    f"({en_iyi['sinif']}, {en_iyi['yaw_hiz']:+.1f}°/s)")
+            elif self.gozcu_onizleme is not None:
+                self.spotter_info_label.setText("Gözcü: çalışıyor, iz yok")
+            else:
+                self.spotter_info_label.setText("Gözcü: veri gelmiyor")
+        except Exception as e:
+            self.spotter_info_label.setText(f"Gözcü hatası: {str(e)[:40]}")
+
         try:
             # Poll result queue
             try:
@@ -1619,21 +1641,6 @@ class HavaSavunmaArayuz(QWidget):
 
             except queue.Empty:
                 return
-
-            # Gözcü avcıdan bağımsız çalışır; her karede en taze sonucu al.
-            # Gözcü, avcı takip ederken de durmadan çalışır — avcının dar
-            # görüş açısı (22.8x13.3 derece) yüzünden hedef kaybolduğunda
-            # kurtarma ağı odur.
-            self._gozcu_oku()
-            self._gozcu_ciz()
-            if self.gozcu_izler:
-                en_iyi = self.gozcu_izler[0]
-                self.spotter_info_label.setText(
-                    f"Gözcü: {len(self.gozcu_izler)} iz | ilk: "
-                    f"{en_iyi['yaw']:+.1f}° {en_iyi['pitch']:+.1f}° "
-                    f"({en_iyi['sinif']}, {en_iyi['yaw_hiz']:+.1f}°/s)")
-            else:
-                self.spotter_info_label.setText("Gözcü: iz yok")
 
             display_frame = frame
             current_frame_time = time.time()
