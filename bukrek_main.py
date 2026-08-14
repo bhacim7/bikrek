@@ -67,7 +67,8 @@ class HavaSavunmaArayuz(QWidget):
 
         self.info_label = QLabel(self)
         self.info_label.move(1530, 5)
-        self.info_label.setFixedSize(350, 30)
+        # Tanı sayaçları da bu satıra yazılıyor; 350 piksel yetmiyordu.
+        self.info_label.setFixedSize(760, 30)
         self.update_info_panel("BUKREK Hava Savunma Sistemi")
         print("HATA AYIKLAMA: UI elemanları oluşturuldu.")
 
@@ -447,6 +448,13 @@ class HavaSavunmaArayuz(QWidget):
         self.timer.timeout.connect(self.update_frame)
 
         self.frame_counter = 0
+        # --- Görüntü yolu sayaçları (tanılama) ---
+        # "Kamera açık ama ekran siyah" gibi durumlarda zincirin hangi
+        # halkasında koptuğunu ekrandan görebilmek için. Konsola bakmadan
+        # ayırt edilebilmeli: zamanlayıcı çalışıyor mu, sonuç geliyor mu,
+        # çizim yapılıyor mu.
+        self._tani = {'tik': 0, 'bos': 0, 'sonuc': 0, 'ciz': 0, 'hata': 0}
+        self._tani_son_yazdirma = 0.0
 
         self.crosshair_movable = False
         self.crosshair_fixed_center = True
@@ -1602,6 +1610,17 @@ class HavaSavunmaArayuz(QWidget):
             event.accept()
 
     def update_frame(self):
+        self._tani['tik'] += 1
+        simdi_tani = time.time()
+        if simdi_tani - self._tani_son_yazdirma >= 2.0:
+            self._tani_son_yazdirma = simdi_tani
+            t = self._tani
+            print(f"TANI: tik={t['tik']} bos_kuyruk={t['bos']} sonuc={t['sonuc']} "
+                  f"cizim={t['ciz']} hata={t['hata']} | "
+                  f"etiket={self.camera_label.width()}x{self.camera_label.height()} "
+                  f"gorunur={self.camera_label.isVisible()} "
+                  f"pixmap={'VAR' if self.camera_label.pixmap() else 'YOK'}")
+
         # GÖZCÜ ÖNCE. Avcı hattından (kamera -> çıkarım -> sonuç kuyruğu)
         # bağımsız olmalı: aşağıdaki erken çıkışların arkasında kalırsa,
         # avcı veya YOLO tarafında bir sorun olduğunda gözcü paneli de
@@ -1636,7 +1655,9 @@ class HavaSavunmaArayuz(QWidget):
                     latest_result = self.result_q.get_nowait()
 
                 if latest_result is None:
+                    self._tani['bos'] += 1
                     return # No new frame yet
+                self._tani['sonuc'] += 1
 
                 frame_time, frame, detections, qr_data, qr_bbox, original_w, original_h = latest_result
 
@@ -1686,7 +1707,9 @@ class HavaSavunmaArayuz(QWidget):
                      crosshair_color, 2)
 
             self.update_info_panel(
-                f"Mevcut Yaw: {self.current_yaw_angle:.1f}°, Pitch: {self.current_pitch_angle:.1f}°")
+                f"Mevcut Yaw: {self.current_yaw_angle:.1f}°, "
+                f"Pitch: {self.current_pitch_angle:.1f}°  |  "
+                f"kare {self._tani['sonuc']} / çizim {self._tani['ciz']}")
 
             current_target_bbox_for_pid = None
             detected_class_status = None
@@ -2013,6 +2036,7 @@ class HavaSavunmaArayuz(QWidget):
             self.frame_counter += 1
 
         except Exception as main_loop_error:
+            self._tani['hata'] += 1
             print(f"KRİTİK HATA: update_frame ana döngüsünde beklenmedik hata: {main_loop_error}")
             traceback.print_exc()
             self._update_status_label(f"KRİTİK HATA: UI Güncelleme Hatası: {str(main_loop_error)[:50]}...")
@@ -2074,6 +2098,7 @@ class HavaSavunmaArayuz(QWidget):
                 pixmap_obj = qt_image.scaled(self.camera_label.width(), self.camera_label.height(),
                                              Qt.KeepAspectRatio)
                 self.camera_label.setPixmap(QPixmap.fromImage(pixmap_obj))
+                self._tani['ciz'] += 1
                 if not self._ilk_kare_bildirildi:
                     self._ilk_kare_bildirildi = True
                     print(f"TANI: ilk kare cizildi | kaynak {w}x{h} | "
