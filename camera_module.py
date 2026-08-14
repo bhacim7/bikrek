@@ -17,6 +17,16 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
     print(f"Kamera worker basladi: {kamera_adi}")
     capture = None
     is_running = False
+    ardisik_hata = 0
+    acilis_zamani = 0.0
+
+    # Kamera açıldıktan hemen sonraki ilk okumalar boş dönebilir: UVC
+    # kameralar (özellikle Logitech BRIO) çözünürlük/FOURCC ayarlandıktan
+    # sonra akışa başlamak için birkaç yüz milisaniye ister.
+    ISINMA_SN = 2.0
+    # Isınmadan sonra kamerayı ölü saymak için gereken ARDIŞIK hata sayısı.
+    # Tek bir boş okuma kalıcı arıza değildir; USB'de tekil kare kaybı olur.
+    MAX_ARDISIK_HATA = 30
 
     while True:
         # Check for commands
@@ -48,11 +58,13 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
                         actual_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
                         actual_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
                         actual_fps = capture.get(cv2.CAP_PROP_FPS)
-                        print(f"{kamera_adi}: {actual_width}x{actual_height} @ {actual_fps:.0f} fps")
+                        print(f"{kamera_adi}: kamera {index}, {actual_width}x{actual_height} @ {actual_fps:.0f} fps")
                         if (actual_width, actual_height) != (ayar["width"], ayar["height"]):
                             print(f"UYARI ({kamera_adi}): istenen {ayar['width']}x{ayar['height']} "
                                   f"alinamadi, kamera {actual_width}x{actual_height} veriyor.")
                         is_running = True
+                        ardisik_hata = 0
+                        acilis_zamani = time.time()
                     else:
                         print("ERROR: Could not open any camera.")
                         # Send an error frame to notify the inference/UI process
@@ -84,6 +96,7 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
         if is_running and capture and capture.isOpened():
             ret, frame = capture.read()
             if ret and frame is not None and frame.size > 0:
+                ardisik_hata = 0
                 # Discard old frames if queue is full (keep it real-time)
                 if frame_queue.full():
                     try:
@@ -96,9 +109,22 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
                 except queue.Full:
                     pass
             else:
-                print("Error reading frame.")
-                is_running = False # Stop on error
-                # Send an error frame to notify the inference/UI process
+                # ESKİDEN: tek bir başarısız okuma kamerayı KALICI olarak ölü
+                # sayıyordu (is_running = False). Logitech BRIO açılıştan
+                # hemen sonra birkaç boş kare veriyor ve kamera bir daha hiç
+                # açılmıyordu — arayüzde "ışık yanıyor ama görüntü siyah"
+                # olarak görülen sorun buydu. Gözcü süreci aynı durumu
+                # tolere ettiği için orada sorun çıkmıyordu.
+                ardisik_hata += 1
+                if time.time() - acilis_zamani < ISINMA_SN:
+                    time.sleep(0.02)      # ısınma: sessizce bekle
+                    continue
+                if ardisik_hata < MAX_ARDISIK_HATA:
+                    time.sleep(0.005)     # tekil kare kaybı: yut
+                    continue
+                print(f"HATA ({kamera_adi}): {ardisik_hata} ardisik bos okuma, "
+                      f"kamera olu sayiliyor.")
+                is_running = False
                 try:
                     frame_queue.put_nowait((-1.0, None))
                 except queue.Full:

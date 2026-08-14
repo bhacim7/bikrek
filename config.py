@@ -41,7 +41,7 @@ BALLOON_CLASS = 'balon'
 FRIEND_PREFIX = 'dost-'
 ENEMY_PREFIX = 'dusman-'
 
-IMG_HEIGHT = 1056
+IMG_HEIGHT = 608
 IMG_WIDTH = 1056
 
 # --- RPi Bağlantısı ---
