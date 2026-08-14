@@ -254,8 +254,19 @@ class YoloModel:
         else:
             print("Unsupported model format.")
 
+    # Küçültme süzgeci. `yolo_kalite.py` bunu örnek üzerinden değiştirip
+    # iki seçeneği aynı sahnede karşılaştırabiliyor.
+    INTERPOLASYONLAR = {"AREA": cv2.INTER_AREA, "LINEAR": cv2.INTER_LINEAR}
+
     def _preprocess(self, frame):
-        img = cv2.resize(frame, (self.img_width, self.img_height))
+        # 1920 -> 1056 küçültmesi 1.82 kat; INTER_LINEAR bu oranda piksel
+        # atlar (aliasing + gürültü geçirir), INTER_AREA alanın tamamını
+        # ortalar. Gerekçe ve ölçüm: config.MODEL_RESIZE_INTERPOLATION.
+        yontem = self.INTERPOLASYONLAR.get(
+            getattr(self, "interpolasyon", config.MODEL_RESIZE_INTERPOLATION),
+            cv2.INTER_AREA)
+        img = cv2.resize(frame, (self.img_width, self.img_height),
+                         interpolation=yontem)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
         img = np.expand_dims(img, axis=0)

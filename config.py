@@ -44,6 +44,21 @@ ENEMY_PREFIX = 'dusman-'
 IMG_HEIGHT = 608
 IMG_WIDTH = 1056
 
+# Kamera karesini model girişine küçültürken kullanılacak süzgeç.
+#
+# "LINEAR" (OpenCV varsayılanı) küçültmede yalnızca birkaç komşu pikseli
+# örnekler; 1.4 kattan büyük küçültmelerde aradaki pikselleri ATLAR, yani
+# aliasing ve gürültü geçirir. "AREA" küçültülen alanın TAMAMINI ortalar:
+# doğru süzgeç budur ve ortalama aldığı için sensör gürültüsünü de düşürür.
+#
+# 1920x1080 -> 1056x608 küçültmesi 1.82 kat olduğu için AREA seçildi.
+# Kaynak 1280x720 olsaydı (1.21 kat) ikisi arasında pratik fark olmazdı.
+#
+# NOT: eğitim tarafı (Ultralytics) LINEAR kullanır, yani AREA küçük bir
+# eğitim/çıkarım farkı yaratır. `yolo_kalite.py` ikisini GERÇEK modelle
+# ölçüp karşılaştırır; karar tahminle değil o ölçümle verilmeli.
+MODEL_RESIZE_INTERPOLATION = "AREA"   # "AREA" veya "LINEAR"
+
 # --- RPi Bağlantısı ---
 RPI_IP = '192.168.137.229'
 RPI_PORT = 12345
@@ -90,26 +105,26 @@ SPOTTER_USE_MJPG = True
 
 # AVCI: Arducam B0495C (AR0234 global shutter, 2.3 MP, USB3) + 12 mm sabit lens.
 #
-# 1280x720'DE KALIYORUZ. Belirleyici olan MODEL GIRISI: motor
-# 1056x608 olarak export edildi (bkz. convert_to_engine.py, IMG_WIDTH/HEIGHT).
-#   1280x720 -> 1056x608 : 1.21 kat kucultme, neredeyse birebir
-#   1920x1080 -> 1056x608 : 1.82 kat kucultme
-# `_preprocess` varsayilan INTER_LINEAR ile kuculttugu icin 1.82 katta
-# ornekleme atlanir (aliasing) ve ince detay kaybolur; 1.21 katta bu sorun
-# pratik olarak yoktur.
+# 1920x1080. Bu karar SAHADA ÖLÇÜLEREK değişti; önce 1280x720 seçilmişti.
 #
-# Cozunurlugu artirmak hedefi BUYUTMEZ: modele giren karede nesnenin boyutu
-# yalnizca GORUS ACISINA baglidir (balon 15 metrede her iki halde de ~20 px).
-# Buna karsilik 1920x1080 her karede 2.25 kat fazla piksel demek — daha fazla
-# USB bant genisligi, MJPG cozme ve yeniden olcekleme, yani dogrudan daha
-# fazla OLU ZAMAN. Bu projede olu zamanla zaten ugrastik (FEEDFORWARD_LEAD_TIME
-# 0.22 sn); bedavaya artirilmaz.
+# Kâğıt üstündeki gerekçe 1280 lehineydi: model girişi 1056x608 olduğu için
+# 1280 -> 1056 yalnızca 1.21 kat küçültme, 1920 -> 1056 ise 1.82 kat.
+# AMA sahada görüldü ki bu modülün 1280x720 modu sensörü ÖLÇEKLEMİYOR,
+# SATIR ATLIYOR (decimation): karanlık bölgelerde renkli benek ve moire
+# çıkıyor. Atlanan satırın bilgisi geri gelmez — yazılımla düzeltilemez.
 #
-# En-boy: kamera 16:9 (1.778), model girisi 1056/608 = 1.737. Fark %2.3,
-# yani yeniden olcekleme neredeyse duzgun. 1920x1200 (16:10) secilseydi bu
-# fark %8.5'e cikardi — o yuzden 1200 satirli mod kullanilmiyor.
-HUNTER_WIDTH = 1280
-HUNTER_HEIGHT = 720
+# 1920x1080 tam okuma yapıyor ve görüntü temiz. Temiz kaynaktan 1.82 kat
+# küçültmek, kirli kaynaktan 1.21 kat küçültmekten iyi. Ölçüm kaydı:
+# `kamera_kalite.py` ve `yolo_kalite.py`.
+#
+# 1920x1200 DEĞİL çünkü 16:10; model girişi 1056/608 = 1.737 (16:9'a yakın)
+# olduğu için en-boy bozulması %2.3'ten %8.5'e çıkardı.
+#
+# Bedeli: kare başına 2.25 kat fazla piksel = daha fazla USB bandı ve
+# yeniden ölçekleme, yani biraz daha ölü zaman. CAPTURE_LATENCY_OFFSET
+# taramasında bu hesaba katılmalı.
+HUNTER_WIDTH = 1920
+HUNTER_HEIGHT = 1080
 
 # MJPG KAPALI. True iken kod FOURCC'yi MJPG'ye ZORLUYOR; MJPG kayıplı
 # sıkıştırmadır ve avcıda gördüğümüz ince detay (15 metrede 25 pikselllik
@@ -199,11 +214,11 @@ KAMERA_AYARLARI = {
 # eğrilmesi) ortadan kalkar. HAREKET BULANIKLIĞI tamamen pozlama süresine
 # bağlıdır ve global shutter onu azaltmaz — pozlama yine kısaltılmalıdır.
 #
-# Yeni avcıda (0.021486 derece/piksel, 1280x720):
-#   pozlama 33 ms (1/30 s), taret 89 derece/sn  -> 137 piksel bulanıklık
-#   pozlama 10 ms, taret 89 derece/sn           ->  41 piksel
-#   pozlama 10 ms, taret  3 derece/sn (takip)   ->   1.4 piksel
-# Balon avcıda 15 metrede 25 piksel; 33 ms'de tamamen sıvanır.
+# Yeni avcıda (0.014324 derece/piksel, 1920x1080):
+#   pozlama 33 ms (1/30 s), taret 89 derece/sn  -> 205 piksel bulanıklık
+#   pozlama 10 ms, taret 89 derece/sn           ->  62 piksel
+#   pozlama 10 ms, taret  3 derece/sn (takip)   ->   2.1 piksel
+# Balon avcıda 15 metrede 37 piksel; 33 ms'de tamamen sıvanır.
 #
 # Bu değer bilgi amaçlı burada; kamerada ELLE ayarlanmalı (OpenCV'nin
 # CAP_PROP_EXPOSURE davranışı sürücüye göre değişiyor, güvenilir değil).
@@ -251,31 +266,26 @@ SPOTTER_DPP_PITCH = -0.05547
 #   sensör piksel başına = atan(0.0030 / 12) = 0.014324 derece
 #   tam genişlik 1920 x 3.0 um = 5.76 mm -> yatay görüş açısı 27.0 derece
 #
-# 1280x720 çalıştığımız için görüntü piksel başına açı 1920/1280 = 1.5 kat:
-#   0.014324 x 1.5 = 0.021486 derece/piksel
-#   görüş açısı 1280 x 0.021486 = 27.5 derece yatay / 15.5 derece dikey
+# 1920 GENİŞLİK sensörün tam genişliği olduğu için görüntü piksel başına açı
+# doğrudan sensör değerine eşittir:
+#   0.014324 derece/piksel
+#   görüş açısı 1920 x 0.014324 = 27.5 derece yatay / 15.5 derece dikey
 #
-# ---- BU DEĞER BİR VARSAYIMA DAYANIYOR ----
-# Modülün 1280x720 modu tam genişliği ÖLÇEKLİYOR varsayıldı (webcam'lerin
-# olağan davranışı ve senin "kamera uygulamasında normal çıkıyor" gözlemine
-# uyuyor). Eğer modül bunun yerine sensörü KIRPIYORSA görüş açısı 18.3
-# dereceye düşer ve doğru değer 0.014324 olur.
-#
-# 30 SANİYELİK AYIRT ETME TESTİ: kamerayı sabit bir sahneye tut, önce
-# 1920x1080 sonra 1280x720 ile bir kare al. Aynı sahne görünüyorsa ÖLÇEKLİYOR
-# (aşağıdaki değer doğru). 1280x720'de daha dar bir kesit görünüyorsa
-# KIRPIYOR -> bu iki sayıyı 0.014324 / -0.014324 yap ve aşağıdaki açısal
-# eşikleri (FEEDFORWARD_ERROR_GATE_PIXELS, LOCK_CONFIRM_TOL_PX,
-# MAX_REACQUISITION_DISTANCE_PIXELS) 1.5 katına çıkar.
+# DİKKAT — ÇÖZÜNÜRLÜK DEĞİŞİRSE BU DEĞER DE DEĞİŞİR. 1280x720'ye dönülürse
+# aynı görüş açısı 1280 piksele sığar, yani derece/piksel 1.5 KATINA çıkar
+# (0.021486) ve aşağıdaki açısal eşiklerin hepsi 1.5'e BÖLÜNMELİDİR.
+# Sahada bir kez bu ikisi ayrı düştü ve ima edilen görüş açısı 41 derece
+# olarak hesaplandı; PID kazancı sessizce 1.5 kat yanlış çalışıyordu.
+# `tests_yeni_mimari.py` 11. bölüm artık bu tutarlılığı kontrol ediyor.
 #
 # HER HALÜKÂRDA "Derece/Piksel Ölç" İLE DOĞRULANMALI.
 #
-# Eski (3x zoom, ölçülmemiş) değerler: 0.01783 / -0.01849, aynı 1280x720'de.
+# Eski (3x zoom, ölçülmemiş) değerler: 0.01783 / -0.01849, 1280x720'de.
 # Yeni lens ESKİSİNDEN BİRAZ GENİŞ (27.5 yerine 22.8 derece); 15 metrede
 # balon modele giren karede ~%17 daha küçük görünüyor (25 px yerine 20 px).
 # Tespit zayıflarsa çözüm 16 mm lens; yazılımda ayarlanacak bir şey yok.
-HUNTER_DPP_YAW = 0.021486
-HUNTER_DPP_PITCH = -0.021486
+HUNTER_DPP_YAW = 0.014324
+HUNTER_DPP_PITCH = -0.014324
 
 # Geriye uyumluluk: denetim döngüsü avcı kamerayı kullanır.
 DEGREES_PER_PIXEL_YAW = HUNTER_DPP_YAW
@@ -397,8 +407,8 @@ FEEDFORWARD_MAX_DEGREE = 5.0
 # ölçeklenmeli, yoksa kapı hedefi takip ederken bile kapanır ve
 # feedforward'ı tam ihtiyaç anında öldürür.
 #   3x zoomlu Logitech (0.01783  d/px) -> (90, 360)
-#   AR0234 + 12 mm     (0.021486 d/px) -> (75, 299)
-FEEDFORWARD_ERROR_GATE_PIXELS = (75.0, 299.0)
+#   AR0234 + 12 mm     (0.014324 d/px) -> (112, 448)   <- 1920x1080
+FEEDFORWARD_ERROR_GATE_PIXELS = (112.0, 448.0)
 
 # Feedforward'ın bir denetim çevriminde değişebileceği en büyük miktar
 # (derece). İki kapıdan sonra bile hız tahmini kare kare zıplayabiliyor;
@@ -423,11 +433,13 @@ PREDICTION_MAX_RATE_DEG_S = 8.0
 # ZOOM veya LENS bu değeri etkilemez; etkileyen tek şey KAYNAK ÇÖZÜNÜRLÜK
 # olur, çünkü kutu gürültüsü model giriş uzayında (1056x608) kabaca sabittir
 # ve kaynak piksele geri ölçeklenirken kare genişliğiyle çarpılır.
-# Kamera değişti ama çözünürlük 1280x720'de kaldığı için bu değerler AYNEN
-# GEÇERLİ. (1920x1080'e geçilseydi 1.5 katına çıkmaları gerekirdi.)
-# 5 piksel = 0.107 derece = 15 metrede 2.8 cm.
-PID_DEADBAND_PIXELS = 5.0
-MIN_OUTPUT_PIXELS = 3.0
+#   1280 genişlik -> gürültü x 1280/1056 = 1.21
+#   1920 genişlik -> gürültü x 1920/1056 = 1.82   (1.5 kat artış)
+# 1920x1080'e geçildiği için eşikler 1.5 katına çıkarıldı.
+# 7 piksel = 0.100 derece = 15 metrede 2.6 cm (1280'de 5 px = 0.107 idi),
+# yani açısal anlamı neredeyse aynı kaldı.
+PID_DEADBAND_PIXELS = 7.0
+MIN_OUTPUT_PIXELS = 4.0
 
 # Bir aday hedefe kilitlenmeden önce ard arda kaç karede aynı yerde görülmeli.
 # YOLO tek tük yanlış pozitif üretiyor ve hayaletler 1-2 kare sürüyor.
@@ -538,11 +550,11 @@ AIM_TOLERANCE_RATIO = 0.35
 
 # Nişan toleransı ayrıca bu mutlak piksel değerinin altına inmek zorunda
 # değil — tespit gürültüsünün altında bir hassasiyet istememek için alt sınır.
-# Ölü bantla aynı gerekçeyle çözünürlüğe bağlıdır, kameraya değil; 1280x720'de
-# kaldığımız için 6.0 aynen geçerli. 15 metrede balon yarıçapı 12 px olduğundan
-# oran terimi (0.35 x 12 = 4.4 px) bu sınırın altında kalır; yani 15 metrede
-# tolerans 6 px = 0.13 derece = 3.4 cm.
-AIM_TOLERANCE_MIN_PIXELS = 6.0
+# Ölü bantla aynı gerekçeyle çözünürlüğe bağlıdır, kameraya değil; 1920x1080'e
+# geçildiği için 1.5 katına çıkarıldı (6 -> 9). 15 metrede balon yarıçapı 19 px
+# olduğundan oran terimi (0.35 x 19 = 6.5 px) bu sınırın altında kalır; yani
+# 15 metrede tolerans 9 px = 0.13 derece = 3.4 cm.
+AIM_TOLERANCE_MIN_PIXELS = 9.0
 
 # Ateşten önce nişan kaç kare korunmalı.
 AIM_HOLD_FRAMES = 3

@@ -373,10 +373,15 @@ kontrol("en/boy bozulmasi ihmal edilebilir (<%5)",
         abs(_kamera_en / _model_en - 1.0) < 0.05,
         f"%{abs(_kamera_en/_model_en - 1)*100:.1f}")
 _kucultme = config.HUNTER_WIDTH / config.IMG_WIDTH
-print(f"  kucultme carpani: {_kucultme:.2f}x "
-      f"(INTER_LINEAR ile 1.4 ustunde ornekleme atlanmaya baslar)")
-kontrol("kucultme carpani INTER_LINEAR icin makul (<1.4)", _kucultme < 1.4,
-        f"{_kucultme:.2f}x")
+print(f"  kucultme carpani: {_kucultme:.2f}x, suzgec {config.MODEL_RESIZE_INTERPOLATION}")
+# INTER_LINEAR kucultmede yalnizca birkac komsuyu ornekler; 1.4 katin
+# ustunde piksel ATLAR (aliasing + gurultu). O bolgede AREA zorunlu.
+kontrol("buyuk kucultmede dogru suzgec kullaniliyor",
+        _kucultme <= 1.4 or config.MODEL_RESIZE_INTERPOLATION == "AREA",
+        f"{_kucultme:.2f}x -> {config.MODEL_RESIZE_INTERPOLATION}")
+kontrol("suzgec adi gecerli",
+        config.MODEL_RESIZE_INTERPOLATION in ("AREA", "LINEAR"),
+        config.MODEL_RESIZE_INTERPOLATION)
 
 _gs = config.HUNTER_WIDTH * config.HUNTER_DPP_YAW
 _gd = config.HUNTER_HEIGHT * abs(config.HUNTER_DPP_PITCH)
@@ -398,10 +403,18 @@ kontrol("model uzayi boyutu yalnizca gorus acisina bagli",
         f"{_balon_model:.1f} == {_dogrudan:.1f}")
 # Tespit gurultusu esikleri KAYNAK COZUNURLUGE bagli; 1280x720'de kaldigimiz
 # icin eski (sahada ayarlanmis) degerler aynen gecerli olmali.
-kontrol("olu bant 1280x720 icin ayarlanmis degerinde",
-        abs(config.PID_DEADBAND_PIXELS - 5.0) < 1e-9,
-        f"{config.PID_DEADBAND_PIXELS} px = "
+# Tespit gurultusu kaynak genisligiyle olcekleniyor (model girisi 1056 sabit).
+# Esikler bu orana gore ayarlanmis olmali; 1280'de 5 px, 1920'de 7 px.
+_beklenen_olu = round(5.0 * (config.HUNTER_WIDTH / 1280.0))
+kontrol("olu bant kaynak cozunurluge gore olceklenmis",
+        abs(config.PID_DEADBAND_PIXELS - _beklenen_olu) <= 1.0,
+        f"{config.PID_DEADBAND_PIXELS} px (beklenen ~{_beklenen_olu}) = "
         f"{config.PID_DEADBAND_PIXELS*config.HUNTER_DPP_YAW:.3f} derece")
+# En sik yapilan hata: cozunurluk degistirilip derece/piksel unutuluyor.
+# Ima edilen gorus acisi lensten bilinen degerden sapmamali.
+_ima_fov = config.HUNTER_WIDTH * config.HUNTER_DPP_YAW
+kontrol("cozunurluk ve derece/piksel BIRLIKTE guncellenmis",
+        abs(_ima_fov - 27.5) < 1.0, f"ima edilen FOV {_ima_fov:.1f} derece")
 
 print()
 print("=" * 70)

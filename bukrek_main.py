@@ -136,9 +136,10 @@ class HavaSavunmaArayuz(QWidget):
         # Bu iki eşik AÇISAL olguları korur, dolayısıyla derece/piksel
         # değişince yeniden ölçeklenmeleri gerekir. 3x zoomlu Logitech'te
         # (0.01783 d/px) 120 px = 2.14 derece, 250 px = 4.46 derece idi;
-        # AR0234 + 12 mm lenste (0.021486 d/px) aynı açılar 100 ve 208 px.
-        self.LOCK_CONFIRM_TOL_PX = 100  # aday "aynı yerde" sayılma toleransı
-        self.MAX_REACQUISITION_DISTANCE_PIXELS = 208
+        # AR0234 + 12 mm lenste 1920x1080'de (0.014324 d/px) aynı açılar
+        # 150 ve 311 px. Çözünürlük 1280'e düşerse ikisi de 1.5'e bölünmeli.
+        self.LOCK_CONFIRM_TOL_PX = 150  # aday "aynı yerde" sayılma toleransı
+        self.MAX_REACQUISITION_DISTANCE_PIXELS = 311
 
         # --- PID Kontrol Değişkenleri ---
         # Kazançlar ve derece/piksel artık config.py'da: saha ayarı tek dosyadan
