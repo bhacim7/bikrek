@@ -2047,9 +2047,14 @@ class HavaSavunmaArayuz(QWidget):
                 is_within_zone = True
         return is_within_zone
 
+    # İlk karenin gerçekten çizildiğini konsola bir kez bildirmek için.
+    _ilk_kare_bildirildi = False
+
     def _display_frame(self, frame):
         try:
             if frame is None or frame.size == 0:
+                if not self._ilk_kare_bildirildi:
+                    print("TANI: _display_frame BOS KARE aldi")
                 return
 
             try:
@@ -2062,10 +2067,20 @@ class HavaSavunmaArayuz(QWidget):
                 pixmap_obj = qt_image.scaled(self.camera_label.width(), self.camera_label.height(),
                                              Qt.KeepAspectRatio)
                 self.camera_label.setPixmap(QPixmap.fromImage(pixmap_obj))
-            except Exception as e:
-                self._update_status_label(f"Hata: Görüntü Dönüşüm Hatası: {str(e)[:50]}...")
-        except Exception as e:
-            self._update_status_label(f"Hata: Görüntüleme Hatası: {str(e)[:50]}...")
+                if not self._ilk_kare_bildirildi:
+                    self._ilk_kare_bildirildi = True
+                    print(f"TANI: ilk kare cizildi | kaynak {w}x{h} | "
+                          f"etiket {self.camera_label.width()}x{self.camera_label.height()} | "
+                          f"pixmap {pixmap_obj.width()}x{pixmap_obj.height()} | "
+                          f"etiket gorunur: {self.camera_label.isVisible()}")
+            except Exception:
+                # Konsola TAM izi yaz: durum çubuğundaki 50 karakterlik kırpılmış
+                # mesajla hata ayıklamak imkânsız.
+                traceback.print_exc()
+                self._update_status_label("Hata: Görüntü dönüşüm hatası (ayrıntı konsolda)")
+        except Exception:
+            traceback.print_exc()
+            self._update_status_label("Hata: Görüntüleme hatası (ayrıntı konsolda)")
 
     def process_tracking(self, target_x, target_y, frame, target_area_unused, current_frame_time):
         if not self.rpi_thread.is_connected or self.active_task == 'full_manual' or self.target_destroyed:
