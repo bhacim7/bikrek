@@ -865,3 +865,67 @@ tick'te gerçekten komut göndermesi.
 | 10 | **Gözcü ofset + DPP ölç** | Aşama 2/3 devir teslimi buna bağlı |
 | 11 | Redüktörlü çınlama frekansını yeniden ölç | 2. bölümdeki iki kod maddesinin kaderi buna bağlı |
 | 12 | `KP_PITCH` ince ayarı | en son |
+
+## 7. İster uyumu denetimi ve üç düzeltme (2026-08-15)
+
+Şartname maddeleri kodla tek tek eşleştirildi. Üç gerçek boşluk çıktı ve
+düzeltildi; bir sapma bilinçli olarak korundu.
+
+### Düzeltme 1 — Avcı hedefi zaten görüyorsa gözcüye gidilmiyor
+
+İster: *"eğer baktığı yerde imha etmesi gereken balon-hedef ikilisi YOKSA
+gözcüden gelen açıyla döner."* Kod ise TARAMA'da **yalnızca gözcü izlerine**
+bakıyordu. İki yanlış davranış üretiyordu:
+
+- avcı hedefi merkezde görürken taret gözcünün başka adayına savruluyordu
+  (kayıtlı: kare 658'de düşman çifti 0.82/0.83 güvenle çerçevelendi, sistem
+  yanından geçip boş duvara baktı),
+- gözcü iz üretemediğinde (balon blobu çıkmadıysa) avcı hedefi tam merkezde
+  tutsa bile sistem TARAMA'da bekliyor, hiç angaje olmuyordu.
+
+`tarama_adimi(izler, ciftler, acilar)` artık önce avcıya bakıyor. Angaje
+edilebilirlik şartları: maket var, güven >= `VERIFY_MIN_CONFIDENCE`, çiftin
+dünya açısı biliniyor ve **kara listede değil**. Son şart kritik: onsuz, az
+önce reddedilmiş bir dost her karede yeniden doğrulamaya alınır ve sonsuz
+döngü oluşur. Açı `bukrek_main._cift_acilari` ile kare ÇEKİLME anındaki taret
+açısı kullanılarak hesaplanıyor.
+
+### Düzeltme 2 — Aşama 3'te gözcünün "dost" dediği aday elenmiyor, sona sıralanıyor
+
+Eskiden `aday_sirala` bu izleri listeden **siliyordu**. Risk asimetrik: gözcü
+düşmanı yanlışlıkla dost sayarsa hedef bir daha hiç denenmez (görev
+başarısız); sona sıralamanın maliyeti ise yalnızca zamandır, çünkü dostun
+vurulması zaten `ates_serbest_mi` tarafından imkânsız kılınmış durumda.
+Sıra artık: `dusman -> kararsiz -> dost`. Bu, sınıfın kendi ilkesiyle de
+tutarlı ("gözcünün kararı nihai değil, yalnızca sıralama").
+
+### Düzeltme 3 — Dost kara liste ömrü aşamaya göre
+
+`BLACKLIST_FRIEND_TTL_SEC = 600` aşamadan bağımsız uygulanıyordu. Aşama 2'de
+ortamda dost **yok**, yani "dost" verdicti tanımı gereği bir YOLO hatası; ona
+600 saniyelik ceza vermek gerçek bir düşmanı turdan siliyordu. Yeni
+`_dost_ttl()`: Aşama 3'te 600 sn, Aşama 2'de `BLACKLIST_VERIFY_TTL_SEC` (5 sn).
+
+### Korunan bilinçli sapma — "en büyük kırmızı = düşman"
+
+Şartname bunu Aşama 3'ün temel mantığı olarak veriyor. FAZ 2'deki ölçüm
+çuvalladığını gösteriyor (uzak düşman 3.600 kırmızı piksel, yakın dost
+16.200 — 4.5 kat). Sebep şartnamenin kendi metninde: dostun altında da
+kırmızı balon var ve alan mesafenin karesiyle düşüyor. Kod yerine geometrik
+mavi/kırmızı ORAN testi kullanıyor; sıralama yine `kirmizi_alan`'a göre,
+yani şartnamenin sıralama mantığı korunuyor, değişen yalnızca
+sınıflandırma. **Sunumda açıklanmalı.**
+
+### Denetimde çıkan, henüz kapatılmamış maddeler
+
+| konu | durum |
+|---|---|
+| Gözcü izi yalnızca "balon benzeri" kırmızı bloblardan doğuyor (en-boy 0.5-2.0, alan >= 30 px). Balon görünmezse hedef gözcüde HİÇ oluşmaz | açık — 15 m'de balon 10 px / 78 px², eşiğe 2.6 kat pay |
+| İmha doğrulaması yok: ateşten sonra hedef 12 sn kara listede, patlamadıysa geri kazanım yavaş | açık |
+| `BALLISTIC_PITCH_OFFSET = 0.0` — 15 m'de mermi düşüşü telafi edilmiyor | ölçüm bekliyor |
+| `AIM_HOLD_FRAMES = 3` (0.15 sn) yapısal çınlama periyodundan (0.37 sn) kısa | redüktör ölçümünden sonra |
+| `is_aimed_at_target` bayat piksel hatasından hesaplanıyor | açık |
+| Ateşleme Pi'nin soket döngüsünü 0.2 sn bloklıyor | açık |
+
+Testlere 12. bölüm eklendi (avcı önceliği, kara liste etkileşimi, dost
+sıralaması, aşamaya göre ceza); 4. bölüm yeni davranışa göre güncellendi.

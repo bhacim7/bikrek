@@ -193,15 +193,19 @@ def aday_sirala(izler, kara_liste, asama):
             continue
         if iz['gorulme'] < 2:
             continue
-        if asama == 'task3' and iz['sinif'] == 'dost':
-            # Gözcü emin şekilde dost diyorsa sıraya bile alma. Yanılırsa
-            # kaybettiğimiz tek şey zaman; dost vurmak ise diskalifiye.
-            continue
         uygun.append(iz)
 
     def anahtar(iz):
         if asama == 'task3':
-            oncelik = 0 if iz['sinif'] == 'dusman' else 1
+            # ESKİDEN gözcünün 'dost' dediği izler LİSTEDEN SİLİNİYORDU.
+            # Risk asimetrik olduğu için bu yanlıştı: gözcü düşmanı yanlışlıkla
+            # dost sayarsa o hedef bir daha HİÇ denenmez ve görev başarısız
+            # olur. Oysa sona sıralamanın maliyeti yalnızca zamandır — dostun
+            # vurulması zaten `ates_serbest_mi` tarafından imkânsız kılınmış
+            # durumda (sınıf `dusman-` olmadan ateş serbest kalmıyor).
+            # Bu, sınıfın kendi ilkesiyle de tutarlı: "Gözcünün kararı NİHAİ
+            # DEĞİL — yalnızca sıralama."
+            oncelik = {'dusman': 0, 'kararsiz': 1}.get(iz['sinif'], 2)
         else:
             oncelik = 0
         return (oncelik, -iz['kirmizi_alan'])
@@ -259,15 +263,57 @@ class AngajmanMakinesi:
 
     # ---- her karede çağrılır ----
 
-    def tarama_adimi(self, izler):
+    def avcida_hazir_hedef_var(self, ciftler, acilar):
+        """
+        Avcının BU KAREDE gördüğü, merkeze en yakın çift doğrudan angaje
+        edilebilir mi?
+
+        `ciftler[0]` bakılıyor çünkü `dogrulama_adimi` de onu kullanıyor;
+        başka bir çift seçmek ikisini birbirinden ayırırdı.
+
+        `acilar[0]` çiftin nişan noktasının GÖVDE çerçevesindeki dünya açısı.
+        Kara liste bu çerçevede tutulduğu için şart: açı bilinmiyorsa
+        angaje etmiyoruz, yoksa az önce reddedilmiş bir dostu tekrar tekrar
+        doğrulamaya alıp sonsuz döngüye gireriz.
+        """
+        if not ciftler or not acilar or acilar[0] is None:
+            return False
+        cift = ciftler[0]
+        if cift.maket is None or cift.guven < config.VERIFY_MIN_CONFIDENCE:
+            return False
+        yaw, pitch = acilar[0]
+        if self.kara_liste.icinde_mi(yaw, pitch):
+            return False
+        return True
+
+    def tarama_adimi(self, izler, ciftler=(), acilar=()):
         """
         Sıradaki adayı seçer ve YÖNELME'ye geçer.
 
-        Taretin gideceği açı, izin ÖLÇÜLEN değil TAHMİN EDİLEN konumu:
-        gözcü gecikmesi + yalpalama süresi toplamda ~0.5 saniye ve hedef bu
-        sürede yol alır. Avcının yarı görüş açısı yaw'da ±11.4, pitch'te
-        yalnızca ±6.65 derece — ölçülen açıya gitmek hedefi kaçırtabilir.
+        ÖNCE AVCIYA BAKILIR. İster açıkça şöyle: "eğer baktığı yerde imha
+        etmesi gereken balon-hedef ikilisi YOKSA gözcüden gelen açıyla döner."
+        Eskiden bu adım yalnızca gözcü izlerine bakıyordu ve iki yanlış
+        davranış üretiyordu:
+          - avcı hedefi merkezde görürken taret gözcünün başka adayına
+            savruluyordu (sahada kayıtlı: kare 658'de düşman çifti 0.82/0.83
+            güvenle çerçevelendi, sistem yanından geçip boş duvara baktı),
+          - gözcü iz üretemediğinde (balon blobu çıkmadıysa) avcı hedefi tam
+            merkezde tutsa bile sistem TARAMA'da bekliyor, hiç angaje olmuyordu.
+
+        Gözcüye gidilecekse taretin gideceği açı, izin ÖLÇÜLEN değil TAHMİN
+        EDİLEN konumu: gözcü gecikmesi + yalpalama süresi toplamda ~0.5 saniye
+        ve hedef bu sürede yol alır. Avcının yarı görüş açısı yaw'da ±13.75,
+        pitch'te yalnızca ±7.7 derece — ölçülen açıya gitmek hedefi kaçırtabilir.
         """
+        if self.avcida_hazir_hedef_var(ciftler, acilar):
+            # Taret zaten doğru yöne bakıyor: açı komutu YOK, doğrudan
+            # doğrulamaya geç. hedef_yaw/pitch çiftin gerçek açısına
+            # ayarlanıyor ki dost çıkarsa kara liste doğru yere düşsün.
+            self.hedef_yaw, self.hedef_pitch = acilar[0]
+            self.aktif_iz_id = None
+            self._gec(DOGRULAMA)
+            return None
+
         adaylar = aday_sirala(izler, self.kara_liste, self.asama)
         if not adaylar:
             return None
@@ -297,6 +343,22 @@ class AngajmanMakinesi:
         if self.gecen() > config.ENGAGE_SLEW_TIMEOUT:
             self._gec(TARAMA)
         return False
+
+    def _dost_ttl(self):
+        """
+        Doğrulamada DOST çıkan hedefin kara liste ömrü — AŞAMAYA GÖRE.
+
+        Aşama 3'te ortamda gerçekten iki dost var; onları pratikte kalıcı
+        elemek doğru (600 sn).
+
+        Aşama 2'de ise ortamda dost YOK — "dost" verdicti tanımı gereği bir
+        YOLO hatasıdır. Ona 600 saniyelik ceza vermek, gerçek bir düşman
+        hedefini turdan tamamen silmek demekti. Doğrulama zaman aşımıyla
+        aynı kısa ömür veriliyor ki hedef birkaç saniye sonra tekrar denensin.
+        """
+        if self.asama == 'task3':
+            return config.BLACKLIST_FRIEND_TTL_SEC
+        return config.BLACKLIST_VERIFY_TTL_SEC
 
     def _dogrulama_zaman_asimi(self):
         """
@@ -343,7 +405,7 @@ class AngajmanMakinesi:
 
         sinif = self._sinif_gecmisi[0]
         if dost_mu(sinif):
-            self.kara_listeye_al(config.BLACKLIST_FRIEND_TTL_SEC, 'dost')
+            self.kara_listeye_al(self._dost_ttl(), 'dost')
             self._gec(TARAMA)
             return sinif
         if dusman_mi(sinif):

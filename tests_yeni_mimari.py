@@ -127,12 +127,19 @@ if 'sol' in bulunan and 'sag' in bulunan:
 
 print()
 print("=" * 70)
-print("4. ADAY SIRALAMA — Asama 3'te dost hic siraya girmez")
+print("4. ADAY SIRALAMA — Asama 3'te dost EN SONA siralanir (elenmez)")
 print("=" * 70)
 kl = engagement.KaraListe()
 izl = [iz.sozluk() for iz in izler]
 s3 = engagement.aday_sirala(izl, kl, 'task3')
-kontrol("asama3: dost elendi", all(i['sinif'] != 'dost' for i in s3), str([i['sinif'] for i in s3]))
+# ESKIDEN dost adaylari listeden SILINIYORDU. Gozcu dusmani yanlislikla dost
+# sayarsa o hedef bir daha hic denenmiyordu; sona siralamanin maliyeti ise
+# yalnizca zaman, cunku ates kilidi zaten `dusman-` sarti ariyor.
+kontrol("asama3: dost aday listede KALIYOR",
+        any(i['sinif'] == 'dost' for i in s3), str([i['sinif'] for i in s3]))
+kontrol("asama3: dusman dosttan ONCE deneniyor",
+        s3[0]['sinif'] == 'dusman' and s3[-1]['sinif'] == 'dost',
+        str([i['sinif'] for i in s3]))
 s2 = engagement.aday_sirala(izl, kl, 'task2')
 kontrol("asama2: en buyuk kirmizi once", len(s2) >= 1 and s2[0]['kirmizi_alan'] >=
         (s2[1]['kirmizi_alan'] if len(s2) > 1 else 0))
@@ -415,6 +422,86 @@ kontrol("olu bant kaynak cozunurluge gore olceklenmis",
 _ima_fov = config.HUNTER_WIDTH * config.HUNTER_DPP_YAW
 kontrol("cozunurluk ve derece/piksel BIRLIKTE guncellenmis",
         abs(_ima_fov - 27.5) < 1.0, f"ima edilen FOV {_ima_fov:.1f} derece")
+
+# --- 12. ISTER UYUMU: avci onceligi, dost eleme, asamaya gore ceza ---
+print()
+print("=" * 70)
+print("12. ISTER UYUMU — avci onceligi / dost siralamasi / dost cezasi")
+print("=" * 70)
+
+
+def _cift(sinif='dusman-F16', skor=0.9):
+    return engagement.cift_eslestir(
+        [det(sinif, 600, 300, 96, 60, skor), det('balon', 633, 415, 30, 30, skor)])
+
+
+_izl = [{'id': 9, 'yaw': -21.0, 'pitch': -0.4, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+         'sinif': 'dusman', 'kirmizi_alan': 9000, 'gorulme': 9}]
+
+# (a) Avci gecerli bir cift goruyorsa gozcuye HIC gidilmemeli
+m12 = engagement.AngajmanMakinesi(); m12.basla('task2')
+_sec = m12.tarama_adimi(_izl, _cift(), [(2.0, 1.0)])
+kontrol("avci hedefi goruyorken aci komutu URETILMIYOR", _sec is None, str(_sec))
+kontrol("dogrudan DOGRULAMA'ya gecildi", m12.durum == engagement.DOGRULAMA, m12.durum)
+kontrol("hedef acisi ciftin GERCEK acisina ayarlandi",
+        abs(m12.hedef_yaw - 2.0) < 1e-6 and abs(m12.hedef_pitch - 1.0) < 1e-6,
+        f"{m12.hedef_yaw}, {m12.hedef_pitch}")
+
+# (b) Ayni cift kara listedeyse avci onceligi devreye GIRMEMELI
+m12b = engagement.AngajmanMakinesi(); m12b.basla('task2')
+m12b.kara_liste.ekle(2.0, 1.0, 5.0, 'dost')
+_sec = m12b.tarama_adimi(_izl, _cift(), [(2.0, 1.0)])
+kontrol("kara listedeki cifte tekrar angaje OLUNMUYOR",
+        m12b.durum == engagement.YONELME, m12b.durum)
+kontrol("bunun yerine gozcunun acisina gidiliyor",
+        _sec is not None and abs(_sec[0] + 21.0) < 0.01, str(_sec))
+
+# (c) Guveni dusuk veya maketi olmayan cift avci onceligi vermemeli
+m12c = engagement.AngajmanMakinesi(); m12c.basla('task2')
+m12c.tarama_adimi(_izl, _cift(skor=0.30), [(2.0, 1.0)])
+kontrol("dusuk guvenli cift avci onceligi kazanmiyor",
+        m12c.durum == engagement.YONELME, m12c.durum)
+m12d = engagement.AngajmanMakinesi(); m12d.basla('task2')
+m12d.tarama_adimi(_izl, engagement.cift_eslestir(
+    [det('balon', 633, 415, 30, 30)], tek_balonlara_izin=True), [(2.0, 1.0)])
+kontrol("maketi olmayan cift avci onceligi kazanmiyor",
+        m12d.durum == engagement.YONELME, m12d.durum)
+
+# (d) Asama 3: gozcunun 'dost' dedigi iz ELENMEMELI, sona siralanmali
+kl12 = engagement.KaraListe()
+_karisik = [
+    {'id': 1, 'yaw': -10.0, 'pitch': 0.0, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+     'sinif': 'dost', 'kirmizi_alan': 20000, 'gorulme': 9},
+    {'id': 2, 'yaw': 5.0, 'pitch': 0.0, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+     'sinif': 'kararsiz', 'kirmizi_alan': 3000, 'gorulme': 9},
+    {'id': 3, 'yaw': 20.0, 'pitch': 0.0, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+     'sinif': 'dusman', 'kirmizi_alan': 1000, 'gorulme': 9},
+]
+_s3 = engagement.aday_sirala(_karisik, kl12, 'task3')
+kontrol("asama3: dost artik ELENMIYOR (gozcu yanilirsa hedef kaybolmasin)",
+        len(_s3) == 3, f"{len(_s3)} aday")
+kontrol("asama3 sirasi: dusman -> kararsiz -> dost",
+        [i['sinif'] for i in _s3] == ['dusman', 'kararsiz', 'dost'],
+        str([i['sinif'] for i in _s3]))
+_s2 = engagement.aday_sirala(_karisik, kl12, 'task2')
+kontrol("asama2: sinif ayrimi yok, en buyuk kirmizi once",
+        _s2[0]['kirmizi_alan'] == 20000, str(_s2[0]['kirmizi_alan']))
+
+# (e) DOST cezasi asamaya gore: asama 2'de kisa, asama 3'te kalici
+def _dost_cezasi(asama):
+    mm = engagement.AngajmanMakinesi(); mm.basla(asama)
+    h = mm.tarama_adimi(_izl)
+    mm.yonelme_adimi(h[0], h[1])
+    for _ in range(config.VERIFY_CONFIRM_FRAMES):
+        mm.dogrulama_adimi(_cift('dost-F16'))
+    return mm._dost_ttl(), mm.kara_liste.icinde_mi(h[0], h[1])
+
+_ttl2, _var2 = _dost_cezasi('task2')
+_ttl3, _var3 = _dost_cezasi('task3')
+kontrol("asama3'te dost cezasi pratikte kalici", _ttl3 >= 600.0, f"{_ttl3} sn")
+kontrol("asama2'de dost cezasi KISA (ortamda dost yok, bu bir YOLO hatasi)",
+        _ttl2 <= config.BLACKLIST_VERIFY_TTL_SEC, f"{_ttl2} sn")
+kontrol("her iki asamada da kara listeye giriliyor", _var2 and _var3)
 
 print()
 print("=" * 70)

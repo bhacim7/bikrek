@@ -808,6 +808,27 @@ class HavaSavunmaArayuz(QWidget):
 
         return sorted(ciftler, key=uzaklik)
 
+    def _cift_acilari(self, ciftler):
+        """
+        Her hedef çiftinin nişan noktasının GÖVDE çerçevesindeki dünya açısı.
+
+        Durum makinesi kara listeyi bu çerçevede tutuyor; avcının gördüğü bir
+        çifte doğrudan angaje olup olamayacağına karar verebilmek için çiftin
+        piksel konumunun açıya çevrilmesi gerekiyor. Dönüşüm KARE ÇEKİLME
+        anındaki taret açısını kullanır — "şu anki" açıyla yapılırsa taretin
+        dönüşü hedefin hareketi sanılır (bu hata daha önce tahmin patlamasına
+        yol açmıştı).
+        """
+        zaman = self._capture_time or time.time()
+        acilar = []
+        for cift in ciftler:
+            nokta = cift.nisan_noktasi()
+            if nokta is None:
+                acilar.append(None)
+                continue
+            acilar.append(self._piksel_to_dunya(nokta[0], nokta[1], zaman))
+        return acilar
+
     def _angajman_adimi(self, ciftler):
         """
         Durum makinesini bir adım ilerletir.
@@ -827,7 +848,17 @@ class HavaSavunmaArayuz(QWidget):
         """
         m = self.angajman
         if m.durum == TARAMA:
-            secim = m.tarama_adimi(self.gozcu_izler)
+            # ÖNCE AVCI. Elimizdeki karede angaje edilebilir bir çift varsa
+            # gözcüye hiç gidilmez; ister bunu açıkça söylüyor ve sahada
+            # tersinin bedeli ölçüldü (taret gördüğü hedefin yanından geçip
+            # boş açıya gitti).
+            secim = m.tarama_adimi(self.gozcu_izler, ciftler,
+                                   self._cift_acilari(ciftler))
+            if m.durum == DOGRULAMA:
+                self._update_status_label(
+                    f"Durum: Avcı hedefi zaten görüyor "
+                    f"({ciftler[0].sinif}), doğrulanıyor...")
+                return self._nisan_tespiti(ciftler[0])
             if secim is None:
                 self._update_status_label(
                     f"Durum: TARAMA — gözcüde uygun aday yok "
