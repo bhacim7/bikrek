@@ -64,9 +64,21 @@ RPI_PORT = 12345
 #   2) Otomatik beyaz dengesi renk eşiklerini kaydırır; hem gözcünün renk
 #      filtresi hem de hayalet eleyici sabit renk varsayıyor.
 
-# Denenecek kamera indeksleri. İlk açılan kullanılır; İKİSİ AYNI OLMAMALI.
-SPOTTER_CAMERA_INDICES = [1, 2, 3, 4]
-HUNTER_CAMERA_INDICES = [2, 3, 4, 1]
+# Denenecek kamera indeksleri; ilk açılan kullanılır.
+#
+# HANGİ İNDEKS HANGİ KAMERA: Windows'ta indeks numarası USB portuna ve
+# takılma sırasına göre değişir, kamera modeline göre DEĞİL. Yani bu iki
+# listenin doğru olduğunu tahminle bilemeyiz — bakıp ayarlamak gerekir.
+#
+# NASIL DOĞRULARSINIZ: arayüzde ana (büyük) görüntü TARET ÜZERİNDEKİ
+# kamerayı, sağ üstteki küçük panel ise GÖVDEYE SABİT kamerayı göstermeli.
+# Ters görünüyorsa aşağıdaki iki satırı yer değiştirin. Gözcü panelinin
+# altındaki bilgi satırı hangi indeksin açıldığını da yazar.
+#
+# Sahada ölçüldü (kamera_tani.py): indeks 0 = dizüstünün dahili kamerası,
+# indeks 1 = taret üzerindeki kamera, indeks 2 = gövdeye sabit kamera.
+HUNTER_CAMERA_INDICES = [1, 3, 4]
+SPOTTER_CAMERA_INDICES = [2, 3, 4]
 
 SPOTTER_WIDTH = 1280
 SPOTTER_HEIGHT = 720

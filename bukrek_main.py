@@ -86,6 +86,7 @@ class HavaSavunmaArayuz(QWidget):
         # --- Gözcü / angajman durumu ---
         self.gozcu_izler = []          # gözcü sürecinden gelen son iz listesi
         self.gozcu_zamani = 0.0
+        self.gozcu_indeks = None       # gözcünün açtığı kamera indeksi
         self.gozcu_onizleme = None
         self.angajman = engagement.AngajmanMakinesi()
         self.aktif_cift = None         # o karedeki maket+balon çifti
@@ -684,6 +685,7 @@ class HavaSavunmaArayuz(QWidget):
             return
         self.gozcu_izler = son.get('izler', [])
         self.gozcu_zamani = son.get('zaman', time.time())
+        self.gozcu_indeks = son.get('indeks')
         if 'onizleme' in son:
             self.gozcu_onizleme = (son['onizleme'], son.get('onizleme_olcek', 1.0))
 
@@ -1607,14 +1609,19 @@ class HavaSavunmaArayuz(QWidget):
         try:
             self._gozcu_oku()
             self._gozcu_ciz()
+            # Kamera indeksi de yazılıyor: Windows'ta indeks ataması USB
+            # portuna göre değişiyor ve yanlış eşleşme "görüntü gelmiyor"
+            # gibi görünüyor. Hangi kameranın nerede olduğunu ekrandan
+            # görebilmek gerekiyor.
+            _ix = f"kam{self.gozcu_indeks}" if self.gozcu_indeks is not None else "kam?"
             if self.gozcu_izler:
                 en_iyi = self.gozcu_izler[0]
                 self.spotter_info_label.setText(
-                    f"Gözcü: {len(self.gozcu_izler)} iz | ilk: "
+                    f"Gözcü [{_ix}]: {len(self.gozcu_izler)} iz | ilk: "
                     f"{en_iyi['yaw']:+.1f}° {en_iyi['pitch']:+.1f}° "
                     f"({en_iyi['sinif']}, {en_iyi['yaw_hiz']:+.1f}°/s)")
             elif self.gozcu_onizleme is not None:
-                self.spotter_info_label.setText("Gözcü: çalışıyor, iz yok")
+                self.spotter_info_label.setText(f"Gözcü [{_ix}]: çalışıyor, iz yok")
             else:
                 self.spotter_info_label.setText("Gözcü: veri gelmiyor")
         except Exception as e:

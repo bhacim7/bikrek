@@ -162,7 +162,11 @@ DIR_CCW = 1  # Saat yönünün tersi (veya geri/aşağı)
 # Montaj sonrası bir eksen ters dönüyorsa YALNIZCA o eksenin bayrağını True yap.
 # (DIR_CW/DIR_CCW ortak olduğu için tek başına eksen bazlı düzeltme yapamaz.)
 INVERT_YAW_DIR = True    # Sahada dogrulandi: montaj yonu ters, cevrildi.
-INVERT_PITCH_DIR = True  # Sahada dogrulandi: montaj yonu ters, cevrildi.
+# Silah mekanizmasi ters monte edildigi icin yukari/asagi tersine dondu;
+# 2026-08-14'te True'dan False'a cevrildi. Bu bayrak YALNIZCA DIR pinine
+# yazilan degeri etkiler; aci defteri (_simulated_pitch) komut edilen yonu
+# kullandigi icin aci isareti ve tum denetim mantigi ayni kalir.
+INVERT_PITCH_DIR = False
 
 # LGpio pin modları ve seviyeleri için sabitler
 LGPIO_HIGH = 1

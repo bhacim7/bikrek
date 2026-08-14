@@ -307,16 +307,17 @@ def _kamera_ac():
                 g = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 y = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 print(f"Gozcu kamera {index} acildi: {g}x{y}")
-                return cap
+                return cap, index
         except Exception as e:
             print(f"Gozcu kamera {index} acilamadi: {e}")
-    return None
+    return None, None
 
 
 def spotter_worker(command_queue, result_queue):
     """Gözcü süreci: yakala, analiz et, küçük sonuç gönder."""
     print("Gozcu worker basladi.")
     cap = None
+    acilan_indeks = None
     calisiyor = False
     yonetici = IzYoneticisi()
     son_onizleme = 0.0
@@ -326,7 +327,7 @@ def spotter_worker(command_queue, result_queue):
             cmd = command_queue.get_nowait()
             if cmd == "START":
                 if not calisiyor:
-                    cap = _kamera_ac()
+                    cap, acilan_indeks = _kamera_ac()
                     if cap is None:
                         try:
                             result_queue.put_nowait({'hata': 'gozcu kamera acilamadi'})
@@ -375,6 +376,10 @@ def spotter_worker(command_queue, result_queue):
             'izler': [iz.sozluk() for iz in izler],
             'gen': frame.shape[1],
             'yuk': frame.shape[0],
+            # Hangi kameranın açıldığı arayüzde görünsün: indeks ataması
+            # Windows'ta USB portuna göre değişiyor ve yanlış eşleşme
+            # "görüntü gelmiyor" gibi görünüyor.
+            'indeks': acilan_indeks,
         }
 
         # Önizleme yalnızca düşük hızda ve küçültülmüş gider; tam kareyi her
