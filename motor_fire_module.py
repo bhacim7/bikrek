@@ -48,15 +48,46 @@ _manual_degrees_to_move = 0.0 # Manuel hareket için her adımda hareket edilece
 # PULSES_PER_REV değerleri sürücünün SW1-SW4 DIP anahtarlarıyla seçilen ayarla
 # BİREBİR aynı olmalıdır. Kombinasyon tablosu sürücünün üstünde basılıdır.
 # GEAR_RATIO, motor turu : taret turu oranıdır (redüksiyon).
+#
+# YAW  : motora takili 10 dis -> sistemi ceviren 30 dis = 3.0 redüksiyon.
+# PITCH: 2026-08-14'e kadar DOGRUDAN bagliydi (1.0). Silah takilinca eksen
+#        agir geldi, duruslarda salindi ve sarkti. Cozum olarak araya
+#        PLF060-L1-3-S2-P2-8 planet redüktör (1:3) girdi.
+#
+#        TAKILAN REDÜKTÖR 1:5 (elde olan buydu; 1:3 icin yazilan degerler
+#        buna gore guncellendi).
+#
+#        Redüktörün asil kazanci torkta degil ATALETTE: yansiyan yük ataleti
+#        oran'in KARESI kadar, yani 1:5'te 25 KAT kuculur; salinim/cinlama
+#        esas bundan beslenir. Cikis torku da 5 x 0.97 = 4.85 kat artar.
+#        Sahada dogrulandi: motor enerjiliyken silahi elle itmek artik cok zor.
+#
+#        DIP ayari 6400 -> 3200. Sebep hiz tavani: 6400 ile adim/derece
+#        88.889 olurdu ve rampa profilinin dogrulandigi donanim tavani
+#        (MIN_DELAY = 3333 darbe/sn) pitch'i 37.5 derece/sn'ye dusururdu.
+#        3200 ile adim/derece 44.444:
+#          - cozunurluk 0.0225 derece/adim (yeni avci kamerada ~1.6 piksel)
+#          - tepe hiz 3333/44.444 = 75 derece/sn (manuel ve otonom)
+#        75 derece/sn pitch icin fazlasiyla yeterli: hedefler 0.6-2.1
+#        derece/sn ile geliyor, devir teslimde pitch yolu en fazla ~20 derece
+#        (0.27 sn) ve ENGAGE_SLEW_TIMEOUT 2.5 sn.
+#
+#        NOT: SERVO_MAX_DEG_PER_SEC hala 100. Saf pitch hareketinde
+#        `_servo_gecikme_siniri` bunu donanim tavanina KIRPAR (75 derece/sn);
+#        kirpma bilinclidir, yapisal rezonansi daha az uyarmak da ise yarar.
+#        Yaw 100 derece/sn'de kalmaya devam eder.
+#
+#        DIKKAT: planet redüktör cikisi girisle AYNI yonde doner (yaw'daki
+#        duz dis ciftinin aksine). Bu yüzden INVERT_PITCH_DIR degismedi.
 PULSES_PER_REV_YAW = 3200
-PULSES_PER_REV_PITCH = 6400
+PULSES_PER_REV_PITCH = 3200
 GEAR_RATIO_YAW = 3.0
-GEAR_RATIO_PITCH = 1.0
+GEAR_RATIO_PITCH = 5.0
 
 # Adım/derece bu iki değerden türetilir; DIP ayarını değiştirirsen yalnızca
 # yukarıdaki sayıyı güncellemen yeterli.
 STEPS_PER_DEGREE_YAW = PULSES_PER_REV_YAW * GEAR_RATIO_YAW / 360.0      # 26.667
-STEPS_PER_DEGREE_PITCH = PULSES_PER_REV_PITCH * GEAR_RATIO_PITCH / 360.0  # 17.778
+STEPS_PER_DEGREE_PITCH = PULSES_PER_REV_PITCH * GEAR_RATIO_PITCH / 360.0  # 44.444
 
 # --- İvme (rampa) profili ---
 # Değerler Pi5 üzerinde bu motorlarla çalıştığı doğrulanmış teleop test betiğinden
@@ -126,8 +157,9 @@ SERVO_MAX_DEG_PER_SEC = 100.0
 # başına sınıra kadar çıkabiliyor, çapraz hareket düz kalmaya devam ediyor.
 # Sahada hareketli hedef takibinin sınırı buydu: hedef 50°/s'yi geçince
 # taret yetişemiyor ve balon kareden çıkıyordu.
-SERVO_MIN_DELAY = 1.0 / (2 * SERVO_MAX_DEG_PER_SEC
-                         * min(STEPS_PER_DEGREE_YAW, STEPS_PER_DEGREE_PITCH))
+SERVO_MIN_DELAY = max(MIN_DELAY,
+                      1.0 / (2 * SERVO_MAX_DEG_PER_SEC
+                             * min(STEPS_PER_DEGREE_YAW, STEPS_PER_DEGREE_PITCH)))
 
 
 def _servo_gecikme_siniri(oran_yaw, oran_pitch):
@@ -149,7 +181,12 @@ def _servo_gecikme_siniri(oran_yaw, oran_pitch):
         en_yuksek_tik = tik if en_yuksek_tik is None else min(en_yuksek_tik, tik)
     if not en_yuksek_tik:
         return SERVO_MIN_DELAY
-    return 1.0 / (2 * en_yuksek_tik)
+    # DONANIM TAVANI. Bu taban olmadan, disli oranini veya DIP ayarini
+    # degistirmek sessizce MIN_DELAY'in (3333 darbe/sn) ustunde bir darbe
+    # hizi isteyebiliyordu; rampa profili orada dogrulanmadigi icin sonuc
+    # adim kacirma olurdu. Redüktör eklenirken bu tam olarak olabilirdi:
+    # 6400 ppr + 1:3 ile otonom pitch 5333 darbe/sn istiyordu.
+    return max(MIN_DELAY, 1.0 / (2 * en_yuksek_tik))
 
 PULSE_TIME = 0.1  # Ateşleme rölesinin çekili kalma süresi (saniye)
 
