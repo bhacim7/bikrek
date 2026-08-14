@@ -4,6 +4,73 @@ import queue
 
 import config
 
+# UVC denetim adı -> OpenCV özelliği. Bazıları her sürücüde yok; yoksa
+# `set` sessizce başarısız olur, o yüzden HER ZAMAN geri okuyup yazıyoruz.
+_UVC_OZELLIKLERI = [
+    ("autofocus", "CAP_PROP_AUTOFOCUS"),
+    ("focus", "CAP_PROP_FOCUS"),
+    ("auto_wb", "CAP_PROP_AUTO_WB"),
+    ("wb_temperature", "CAP_PROP_WB_TEMPERATURE"),
+    ("auto_exposure", "CAP_PROP_AUTO_EXPOSURE"),
+    ("exposure", "CAP_PROP_EXPOSURE"),
+    ("gain", "CAP_PROP_GAIN"),
+    ("brightness", "CAP_PROP_BRIGHTNESS"),
+    ("contrast", "CAP_PROP_CONTRAST"),
+    ("saturation", "CAP_PROP_SATURATION"),
+    ("sharpness", "CAP_PROP_SHARPNESS"),
+    ("gamma", "CAP_PROP_GAMMA"),
+]
+
+
+def _fourcc_metni(capture):
+    """Sürücüyle müzakere edilen görüntü formatını okunur hale getirir."""
+    try:
+        ham = int(capture.get(cv2.CAP_PROP_FOURCC))
+    except Exception:
+        return "?"
+    if not ham:
+        return "?"
+    metin = "".join(chr((ham >> (8 * i)) & 0xFF) for i in range(4))
+    return metin if metin.isprintable() else f"0x{ham:08X}"
+
+
+def _uvc_uygula(capture, kamera_adi):
+    """
+    Beyaz dengesi / pozlama / odak denetimlerini uygular ve GERİ OKUR.
+
+    Geri okuma şart: OpenCV `set` çağrısı çoğu sürücüde başarısız olsa bile
+    True döner. İstenen ile gerçekleşeni yan yana yazmadan "ayarı uyguladık"
+    demek dayanaksız olur — sahada "otomatik beyaz dengesini kapattık" diye
+    varsayıp saatlerce yanlış yerde hata aranabilir.
+    """
+    istekler = config.KAMERA_KONTROLLERI.get(kamera_adi, {})
+    satirlar = []
+    for ad, ozellik_adi in _UVC_OZELLIKLERI:
+        istenen = istekler.get(ad)
+        ozellik = getattr(cv2, ozellik_adi, None)
+        if ozellik is None:
+            continue
+        try:
+            once = capture.get(ozellik)
+        except Exception:
+            continue
+        if istenen is None:
+            satirlar.append(f"{ad}={once:g} (dokunulmadi)")
+            continue
+        try:
+            capture.set(ozellik, float(istenen))
+            sonra = capture.get(ozellik)
+        except Exception:
+            satirlar.append(f"{ad}: AYARLANAMADI (istenen {istenen})")
+            continue
+        tuttu = abs(sonra - float(istenen)) < 1e-6
+        satirlar.append(f"{ad}: {once:g} -> {sonra:g} "
+                        f"(istenen {istenen}{'' if tuttu else ', TUTMADI'})")
+    if satirlar:
+        print(f"{kamera_adi} UVC denetimleri:")
+        for s in satirlar:
+            print(f"    {s}")
+
 def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
     """
     Kareleri yakalayıp kuyruğa koyan süreç.
@@ -61,11 +128,13 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
                         # Gerçekleşen FOURCC de yazılıyor: MJPG kayıplı sıkıştırma
                         # olduğu için hangi formatın müzakere edildiğini bilmeden
                         # "görüntü neden bulanık" sorusuna cevap verilemiyor.
-                        _fcc = int(capture.get(cv2.CAP_PROP_FOURCC))
-                        fourcc = "".join(chr((_fcc >> (8 * i)) & 0xFF) for i in range(4)) if _fcc else "?"
                         print(f"{kamera_adi}: kamera {index}, {actual_width}x{actual_height} "
-                              f"@ {actual_fps:.0f} fps, format {fourcc} "
+                              f"@ {actual_fps:.0f} fps, format {_fourcc_metni(capture)} "
                               f"(istenen: {'MJPG' if ayar['mjpg'] else 'surucu varsayilani'})")
+                        # Beyaz dengesi / pozlama / odak. Çözünürlük ve FOURCC
+                        # oturduktan SONRA uygulanmalı; bazı sürücüler format
+                        # değişiminde bu denetimleri sıfırlıyor.
+                        _uvc_uygula(capture, kamera_adi)
                         if (actual_width, actual_height) != (ayar["width"], ayar["height"]):
                             print(f"UYARI ({kamera_adi}): istenen {ayar['width']}x{ayar['height']} "
                                   f"alinamadi, kamera {actual_width}x{actual_height} veriyor.")

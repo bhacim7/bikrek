@@ -124,6 +124,64 @@ HUNTER_HEIGHT = 720
 # Kare hızı 30'un belirgin altına düşerse buraya True'ya dön.
 HUNTER_USE_MJPG = False
 
+# --- UVC DENETİMLERİ (beyaz dengesi, pozlama, odak) ---
+#
+# Bu blok EKSİKTİ: yukarıdaki yorum "otomatik pozlama ve otomatik beyaz
+# dengesi KAPALI olmalı" diyordu ama kod bunların hiçbirine dokunmuyordu.
+# Sürücü varsayılanı çoğu UVC kamerada OTOMATİK olduğu için sahada:
+#   - beyaz dengesi kayıyor (gözcünün renk filtresi ve hayalet eleyici
+#     SABİT renk eşikleri varsayıyor),
+#   - otomatik pozlama kare kare süreyi değiştirip ölü zaman telafisini
+#     bozuyor (CAPTURE_LATENCY_OFFSET sabit varsayılıyor),
+#   - Logitech'in otomatik odağı avlanıyor.
+#
+# DEĞER YAZIM KURALI:
+#   None  -> o denetime HİÇ DOKUNMA (sürücü ne yapıyorsa o kalsın)
+#   sayı  -> ayarlamayı dene ve geri okuyup konsola yaz
+#
+# `exposure` DirectShow'da log2(saniye)'dir ve sürücüye göre değişir:
+#   -5 = 1/32 s = 31 ms | -6 = 1/64 s = 16 ms | -7 = 1/128 s = 7.8 ms
+# Hedefimiz ~10 ms, yani -6 veya -7. GÖRÜNTÜ KARARIRSA önce -5'e çıkın,
+# yetmezse `gain` ile telafi edin; ikisi de olmuyorsa `None` yapıp
+# otomatiğe bırakın (bulanıklık artar ama en azından görürsünüz).
+#
+# `auto_exposure` DirectShow'da 0.25 = MANUEL, 0.75 = OTOMATİK'tir. Bazı
+# sürücüler 1/3 kullanır; geri okuma satırından hangisinin tuttuğu görülür.
+#
+# BAŞLANGIÇ AYARI KASITLI OLARAK MUHAFAZAKÂR: yalnızca görüntüyü
+# karartma riski OLMAYAN denetimler açık (beyaz dengesi, odak). Pozlama
+# sahada ölçüldükten sonra açılacak.
+KAMERA_KONTROLLERI = {
+    "spotter": {
+        "autofocus": 0,          # Logitech'in otomatik odağı avlanmasın
+        "focus": None,           # sahada elle ayarlanıp buraya yazılabilir
+        "auto_wb": 0,            # renk eşikleri sabit renk varsayıyor
+        "wb_temperature": 4600,  # tipik iç mekân floresan
+        "auto_exposure": None,   # ölçümden sonra 0.25 yapılacak
+        "exposure": None,        # ölçümden sonra -6 / -7
+        "gain": None,
+        "brightness": None,
+        "contrast": None,
+        "saturation": None,
+        "sharpness": None,
+        "gamma": None,
+    },
+    "hunter": {
+        "autofocus": None,       # 12 mm sabit lens, odak halkadan
+        "focus": None,
+        "auto_wb": 0,
+        "wb_temperature": 4600,
+        "auto_exposure": None,
+        "exposure": None,
+        "gain": None,
+        "brightness": None,
+        "contrast": None,
+        "saturation": None,
+        "sharpness": None,
+        "gamma": None,
+    },
+}
+
 # camera_module tek bir sözlükten okur; yeni bir kamera eklemek için buraya
 # bir satır yetiyor.
 KAMERA_AYARLARI = {
