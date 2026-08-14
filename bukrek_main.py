@@ -2660,28 +2660,83 @@ class HavaSavunmaArayuz(QWidget):
             self.crosshair_y = event.y()
             self.camera_label.update()
 
+    def _etiket_to_kare(self, x, y):
+        """
+        Fare (etiket) koordinatını KAMERA HAM piksel koordinatına çevirir.
+
+        Arada üç ayrı ölçek var ve üçü de birbirinden farklı olabilir:
+
+            etiket (Qt mantıksal piksel, DPI ölçeklemesine bağlı)
+              -> pixmap (KeepAspectRatio ile sığdırılmış, QLabel ORTALAR)
+              -> gösterim karesi (config.DISPLAY_WIDTH)
+              -> kamera ham karesi (HUNTER_WIDTH)
+
+        Eski kod yalnızca `camera_label.width()` kullanıyordu. Pixmap
+        etiketten küçük olduğunda (DPI ölçeklemesi veya en-boy farkı) QLabel
+        onu ortalar; bu durumda hem ölçek hem de kenar boşluğu hesaba
+        katılmadığı için tıklama yanlış piksele düşüyordu.
+
+        Döner: (ham_x, ham_y) veya tıklama görüntünün dışındaysa None.
+        """
+        pm = self.camera_label.pixmap()
+        if pm is None or not self.frame_orig_w or not self.frame_orig_h:
+            return None
+        # Yüksek DPI'da pixmap CİHAZ pikseli tutar; mantıksal boyuta çevir.
+        dpr = pm.devicePixelRatio() or 1.0
+        pw = pm.width() / dpr
+        ph = pm.height() / dpr
+        if pw <= 0 or ph <= 0:
+            return None
+        # QLabel pixmap'i ortalar; sol/üst kenar boşluğu bu.
+        ofs_x = (self.camera_label.width() - pw) / 2.0
+        ofs_y = (self.camera_label.height() - ph) / 2.0
+        px = x - ofs_x
+        py = y - ofs_y
+        if not (0 <= px < pw and 0 <= py < ph):
+            return None
+        return px * self.frame_orig_w / pw, py * self.frame_orig_h / ph
+
     def mouse_press_event(self, event):
-        if self.crosshair_movable and event.button() == Qt.LeftButton:
-            target_x = event.x()
-            target_y = event.y()
-            print(f"Fare tıklaması: X={target_x}, Y={target_y}")
+        if not (self.crosshair_movable and event.button() == Qt.LeftButton):
+            return
 
-            center_x = self.camera_label.width() // 2
-            center_y = self.camera_label.height() // 2
+        nokta = self._etiket_to_kare(event.x(), event.y())
+        if nokta is None:
+            self._update_status_label(
+                "Uyarı: Tıklama görüntü alanının dışında (veya kare yok).",
+                oncelikli=True, sure=2.0)
+            return
+        ham_x, ham_y = nokta
 
-            error_yaw_pixel = target_x - center_x
-            error_pitch_pixel = target_y - center_y
+        # HEDEF AÇI, "şu anki açı + tıklama farkı" DEĞİL, tıklanan pikselin
+        # DÜNYA açısı olarak hesaplanıyor.
+        #
+        # Eski yol `current_yaw_angle + delta` idi ve iki ayrı zamanı
+        # karıştırıyordu: piksel, karenin ÇEKİLDİĞİ ana ait; `current_yaw_angle`
+        # ise ŞU ANA. Taret önceki komuttan hâlâ yol alıyorsa (ya da yapısal
+        # çınlama sönmemişse) aradaki fark tıklama farkından BÜYÜK olabiliyor
+        # ve küçük tıklamalar ters yöne komut üretiyordu — sahada
+        # "nişangahın hemen sağına tıklıyorum, taret sola gidiyor; uzağa
+        # tıklayınca doğru gidiyor" olarak görüldü. Uzak tıklamada fark
+        # gecikmeyi bastırdığı için sorun görünmüyordu.
+        #
+        # `_piksel_to_dunya` pikseli KARE ÇEKİLME anındaki taret açısıyla
+        # eşleştirir; piksel ve açı aynı ana ait olduğu için gecikme sadeleşir.
+        # PID de tam olarak bu dönüşümü kullanıyor.
+        zaman = self._capture_time or time.time()
+        hedef_yaw, hedef_pitch = self._piksel_to_dunya(ham_x, ham_y, zaman)
 
-            delta_yaw_degree = error_yaw_pixel * self.DEGREES_PER_PIXEL_YAW
-            delta_pitch_degree = error_pitch_pixel * self.DEGREES_PER_PIXEL_PITCH
-
-            current_yaw, current_pitch = self.current_yaw_angle, self.current_pitch_angle
-
-            target_yaw_angle = current_yaw + delta_yaw_degree
-            target_pitch_angle = current_pitch + delta_pitch_degree
-
-            print(f"Manuel Tıklama Hedef Açılar: Yaw {target_yaw_angle:.1f}°, Pitch {target_pitch_angle:.1f}°")
-            self.send_angle_command(target_yaw_angle, target_pitch_angle)
+        pm = self.camera_label.pixmap()
+        print(f"Fare tıklaması: etiket=({event.x()},{event.y()}) "
+              f"etiket_boyut={self.camera_label.width()}x{self.camera_label.height()} "
+              f"pixmap={pm.width()}x{pm.height()} (dpr={pm.devicePixelRatio():g}) "
+              f"ham=({ham_x:.0f},{ham_y:.0f})/{self.frame_orig_w}x{self.frame_orig_h}")
+        print(f"Manuel Tıklama Hedef Açılar: Yaw {hedef_yaw:.2f}°, "
+              f"Pitch {hedef_pitch:.2f}° (mevcut {self.current_yaw_angle:.2f}°, "
+              f"{self.current_pitch_angle:.2f}°)")
+        # force=True: tek seferlik operatör komutu 0.1 sn'lik hız sınırına
+        # takılıp sessizce düşmemeli.
+        self.send_angle_command(hedef_yaw, hedef_pitch, force=True)
 
 
 if __name__ == '__main__':
