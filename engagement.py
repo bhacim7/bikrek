@@ -78,9 +78,18 @@ class HedefCifti:
         return None
 
 
-def cift_eslestir(detections):
+def cift_eslestir(detections, tek_balonlara_izin=False):
     """
     Tespit listesinden hedef çiftleri kurar.
+
+    `tek_balonlara_izin`: maketi olmayan balonlar da hedef sayılsın mı?
+    Yarışmada her hedefin üstünde bir maket var, o yüzden OTONOM aşamalarda
+    bu KAPALI kalmalı — tek başına duran bir kırmızı leke hedef değildir ve
+    ateş kilidi zaten maket olmadan ateşe izin vermez.
+
+    Ama getirme/kurulum ve KALİBRASYON sırasında elimizde yalnızca bir balon
+    oluyor. Bu bayrak kapalıyken Aşama 1'de balon hiç kilitlenmiyordu ve
+    "Derece/Piksel Ölç" kilitli hedef bulamadığı için hiç çalışmıyordu.
 
     Geometrik kural, maketin kutu GENİŞLİĞİNE normalize edildiği için
     mesafeden bağımsızdır: balon maketin altında, yatayda hizalı ve
@@ -129,6 +138,13 @@ def cift_eslestir(detections):
         else:
             # Maket var, balonu görünmüyor. Yedek nişan yolu için tutulur.
             ciftler.append(HedefCifti(maket, None, 0.0))
+
+    if tek_balonlara_izin:
+        # Eşleşmemiş balonlar: maket alanı None kalır, dolayısıyla
+        # `ates_serbest_mi` bunlara ateşe ASLA izin vermez (maket şartı).
+        for i, balon in enumerate(balonlar):
+            if i not in kullanilan:
+                ciftler.append(HedefCifti(None, balon, 0.0))
 
     return ciftler
 

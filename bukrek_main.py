@@ -83,6 +83,8 @@ class HavaSavunmaArayuz(QWidget):
         # piksel, 5 metrede 90 piksel; sabit bir eşik ikisinde çok farklı
         # anlam taşırdı. Bu alan yalnızca geriye dönük varsayılan.
         self.aiming_tolerance = config.AIM_TOLERANCE_MIN_PIXELS
+        # Öncelikli durum mesajının ekranda kalacağı son an.
+        self._oncelikli_mesaj_bitis = 0.0
 
         # --- Gözcü / angajman durumu ---
         self.gozcu_izler = []          # gözcü sürecinden gelen son iz listesi
@@ -541,13 +543,34 @@ class HavaSavunmaArayuz(QWidget):
         """)
         button.clicked.connect(button.clearFocus)
 
-    def _update_status_label(self, message):
-        current_time = time.time()
-        if message != self.last_status_message or (
-                current_time - self.last_status_time > self.status_message_cooldown_interval):
+    def _update_status_label(self, message, oncelikli=False, sure=5.0):
+        """
+        Durum çubuğunu günceller.
+
+        `oncelikli=True` verilen mesaj `sure` saniye boyunca EKRANDA KALIR ve
+        sıradan güncellemeler onu ezemez.
+
+        Buna ihtiyaç var çünkü `update_frame` her karede (saniyede ~25 kez)
+        göreve ait bir durum metni yazıyor. Kullanıcı bir butona bastığında
+        çıkan hata mesajı bir sonraki karede siliniyordu — sahada "Derece/
+        Piksel Ölç'e basıyorum, hiçbir şey olmuyor" olarak görüldü; oysa
+        buton "kilitli bir hedef gerekli" diyordu ve mesaj 40 ms yaşıyordu.
+        """
+        simdi = time.time()
+        if not oncelikli and simdi < getattr(self, '_oncelikli_mesaj_bitis', 0.0):
+            return
+        if oncelikli:
+            self._oncelikli_mesaj_bitis = simdi + sure
             self.status_label.setText(message)
             self.last_status_message = message
-            self.last_status_time = current_time
+            self.last_status_time = simdi
+            print(f"DURUM: {message}")
+            return
+        if message != self.last_status_message or (
+                simdi - self.last_status_time > self.status_message_cooldown_interval):
+            self.status_label.setText(message)
+            self.last_status_message = message
+            self.last_status_time = simdi
 
     def connect_rpi_threaded(self):
         if not self.rpi_thread.is_connected:
@@ -751,9 +774,9 @@ class HavaSavunmaArayuz(QWidget):
             'yaricap': yaricap,
         }
 
-    def _ciftleri_sirala(self, detections, merkez_x, merkez_y):
+    def _ciftleri_sirala(self, detections, merkez_x, merkez_y, tek_balon=False):
         """Tespitlerden çiftleri kurup kare merkezine yakınlığa göre sıralar."""
-        ciftler = engagement.cift_eslestir(detections)
+        ciftler = engagement.cift_eslestir(detections, tek_balonlara_izin=tek_balon)
 
         def uzaklik(c):
             kaynak = c.balon if c.balon is not None else c.maket
@@ -1370,13 +1393,13 @@ class HavaSavunmaArayuz(QWidget):
     def start_calibration(self):
         """Derece/piksel ölçümünü başlatır."""
         if not self.rpi_thread.is_connected:
-            self._update_status_label("Hata: Kalibrasyon için RPi bağlantısı gerekli.")
+            self._update_status_label("Hata: Kalibrasyon için RPi bağlantısı gerekli.", oncelikli=True)
             return
         if self.active_task != 'task1':
-            self._update_status_label("Hata: Kalibrasyon için önce Aşama 1'i başlatın.")
+            self._update_status_label("Hata: Kalibrasyon için önce Aşama 1'i başlatın.", oncelikli=True)
             return
         if self.current_tracked_target_class is None:
-            self._update_status_label("Hata: Kalibrasyon için kilitli bir hedef gerekli.")
+            self._update_status_label("Hata: Kalibrasyon için kilitli bir hedef gerekli.", oncelikli=True)
             return
 
         self._calibrating = True
@@ -1388,7 +1411,8 @@ class HavaSavunmaArayuz(QWidget):
         self._cal_ref_px = None
         self._cal_ref_angle = None
         self._cal_step_idx = 0  # Hangi test açısındayız (kademeli büyütme)
-        self._update_status_label("Kalibrasyon: Hedefi SABİT tutun, ölçüm başlıyor...")
+        self._update_status_label("Kalibrasyon: Hedefi SABİT tutun, ölçüm başlıyor...",
+                                  oncelikli=True, sure=3.0)
         print("KALİBRASYON: başladı. Hedefi olabildiğince sabit tutun.")
 
     def _cal_ekseni_varmis_mi(self, eksen):
@@ -1890,8 +1914,14 @@ class HavaSavunmaArayuz(QWidget):
                     # maketin kutu genişliğine normalize edildiği için
                     # mesafeden bağımsız çalışır; aynı zamanda hayalet
                     # eleyicidir (tek başına duran balon hedef sayılmaz).
+                    # Otonom aşamalarda hedef ZORUNLU olarak maket+balon
+                    # çiftidir. Aşama 1 ve manuel modda tek başına duran balon
+                    # da kilitlenebilir: kalibrasyon aracının sabit bir piksel
+                    # referansına ihtiyacı var ve elde çoğu zaman yalnızca
+                    # balon oluyor.
                     ciftler = self._ciftleri_sirala(
-                        guvene_gore_ayikla(detections), center_x_frame, center_y_frame)
+                        guvene_gore_ayikla(detections), center_x_frame, center_y_frame,
+                        tek_balon=(self.active_task not in self.OTONOM_MODLAR))
 
                     if self.active_task in ('task2', 'task3'):
                         # Otonom aşamalarda hedefi durum makinesi seçer.

@@ -260,3 +260,32 @@ print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)
+
+
+# --- 8. TEK BASINA BALON (kalibrasyon senaryosu) ---
+print()
+print("=" * 70)
+print("8. TEK BASINA BALON — kalibrasyon icin kilitlenebilmeli, ates edilememeli")
+print("=" * 70)
+tek = [det('balon', 500, 400, 120, 120)]
+kontrol("otonom modda cift olusmaz (guvenlik)",
+        len(engagement.cift_eslestir(tek)) == 0)
+_c = engagement.cift_eslestir(tek, tek_balonlara_izin=True)
+kontrol("manuel/kalibrasyon modunda kilitlenebilir",
+        len(_c) == 1 and _c[0].balon is not None and _c[0].maket is None)
+_m = engagement.AngajmanMakinesi(); _m.basla('task2')
+_m.durum = engagement.ATES; _m.dogrulanan_sinif = 'dusman-Drone'
+_izin, _ger = engagement.ates_serbest_mi(_c[0], _m, True, True, 0.0, 0.0, 0.0)
+kontrol("tek balona ATES asla serbest degil", not _izin, _ger)
+_kar = [det('dusman-Drone', 600, 300, 96, 60), det('balon', 633, 415, 30, 30),
+        det('balon', 200, 700, 40, 40)]
+kontrol("manuel: cift + yalniz balon = 2 hedef",
+        len(engagement.cift_eslestir(_kar, tek_balonlara_izin=True)) == 2)
+kontrol("otonom: yalniz balon elenir = 1 hedef",
+        len(engagement.cift_eslestir(_kar)) == 1)
+
+print()
+print("=" * 70)
+print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
+print("=" * 70)
+sys.exit(1 if hata else 0)
