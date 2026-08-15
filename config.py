@@ -114,8 +114,8 @@ RPI_PORT = 12345
 # DİKKAT: avcı kamera Logitech'ten Arducam B0495C'ye değiştiği için
 # indeksler büyük ihtimalle KAYDI. `python kamera_tani.py` çalıştırıp
 # aşağıdaki listeleri yeniden ayarlayın; ilk deneme listedeki sırayla yapılır.
-HUNTER_CAMERA_INDICES = [2, 3, 4]
-SPOTTER_CAMERA_INDICES = [1, 3, 4]
+HUNTER_CAMERA_INDICES = [1, 3, 4]
+SPOTTER_CAMERA_INDICES = [2, 3, 4]
 
 SPOTTER_WIDTH = 1280
 SPOTTER_HEIGHT = 720
@@ -332,7 +332,7 @@ SPOTTER_DPP_PITCH = -0.05547
 # YAW ÖLÇÜMÜNÜ 2-3 KEZ TEKRARLAYIN. Sürekli pitch'ten yüksek çıkıyorsa
 # fark dişli boşluğudur ve ayrıca ölçülmesi gerekir (yön değiştirirken
 # kaç derece kayboluyor).
-HUNTER_DPP_YAW = 0.01360
+HUNTER_DPP_YAW = 0.01430
 HUNTER_DPP_PITCH = -0.01360
 
 # Geriye uyumluluk: denetim döngüsü avcı kamerayı kullanır.

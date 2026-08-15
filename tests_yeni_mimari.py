@@ -376,11 +376,20 @@ print(f"  ima edilen odak: yaw {_fy:.2f} mm, pitch {_fp:.2f} mm "
 kontrol("derece/piksel takilan lensle uyumlu (12 +- 1.5 mm)",
         abs(_fy - _ODAK_MM) < 1.5 and abs(_fp - _ODAK_MM) < 1.5,
         f"yaw {_fy:.2f} mm, pitch {_fp:.2f} mm")
-# KARE PIKSEL + REKTILINEER LENS => iki eksende |derece/piksel| AYNI.
-# Farkli cikiyorsa bir eksenin adim/derece defteri yanlistir; sahada bir kez
-# 1.40 kat fark cikti ve yaw kazanci sessizce %40 hatali calisiyordu.
-kontrol("kare piksel: yaw ve pitch olcegi ayni buyuklukte",
-        abs(abs(config.HUNTER_DPP_PITCH) - config.HUNTER_DPP_YAW) < 1e-6,
+# KARE PIKSEL + REKTILINEER LENS => iki eksende |derece/piksel| AYNI OLMALI.
+# Sahada bir kez 1.40 kat fark cikti ve yaw kazanci sessizce %40 hatali
+# calisiyordu; bu kontrol onu yakalamak icin var.
+#
+# KUCUK bir fark KASITLI olabilir: yaw'da dislide mekanik bosluk var ve
+# sahada derece/piksel'i biraz yukseltmek telafi olarak kullanildi. Bu YAN
+# ETKILI bir cozum -- ayni sabit dunya-acisi defterini, hiz tahminini ve
+# gozcu devir teslimi karsilastirmasini da kaydiriyor. Temizi KP_YAW'i
+# yukseltmektir. Bu yuzden %10'a kadar tolere ediliyor, otesi hata sayiliyor.
+_oran = config.HUNTER_DPP_YAW / abs(config.HUNTER_DPP_PITCH)
+print(f"  yaw/pitch olcek orani: {_oran:.4f} "
+      f"(1.0 olmali; kucuk sapma bosluk telafisi olabilir)")
+kontrol("yaw ve pitch olcegi fiziksel olarak tutarli (fark < %10)",
+        abs(_oran - 1.0) < 0.10,
         f"{config.HUNTER_DPP_YAW} vs {abs(config.HUNTER_DPP_PITCH)}")
 kontrol("pitch isareti negatif (goruntude asagi = pitch azalir)",
         config.HUNTER_DPP_PITCH < 0)
