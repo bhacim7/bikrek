@@ -67,21 +67,27 @@ print("2. NISAN NOKTASI ve YEDEK YOL")
 print("=" * 70)
 c = engagement.cift_eslestir(uzak)[0]
 cx, cy, r, gercek = c.nisan_noktasi()
-# Nisan noktasi artik balonun MERKEZI degil, kutunun UST tarafi: kamera
-# namlunun 5.5 cm ustunde ve eksenler paralel oldugu icin merkeze nisan
-# alinca mermi merkezin 5.5 cm altina gidiyor.
+# Nisan noktasi AIM_POINT_HEIGHT_RATIO ile belirleniyor; su anda 0.5 =
+# balonun TAM MERKEZI. Oran buyutulurse kutunun ust tarafina kayar (paralaks
+# telafisi; gerekce config.py icinde).
 _ust, _yuk = uzak[1]['bbox'][1], uzak[1]['bbox'][3]
 _beklenen_y = _ust + (1.0 - config.AIM_POINT_HEIGHT_RATIO) * _yuk
 kontrol("balon varken balona nisan (yatayda merkez)",
         gercek and abs(cx - 648) < 2, f"cx={cx:.0f}")
-kontrol("nisan noktasi kutunun UST tarafinda",
+kontrol("nisan noktasi ayarlanan orana uyuyor",
         abs(cy - _beklenen_y) < 1.0,
         f"y={cy:.1f}, beklenen {_beklenen_y:.1f} (oran {config.AIM_POINT_HEIGHT_RATIO})")
 kontrol("nisan noktasi kutunun ICINDE kaliyor",
         _ust <= cy <= _ust + _yuk, f"{_ust} <= {cy:.1f} <= {_ust+_yuk}")
-_kayma_cm = (config.AIM_POINT_HEIGHT_RATIO - 0.5) * 2 * 7.0
-kontrol("paralaksin buyuk kismi telafi edildi (>= 3 cm)",
-        _kayma_cm >= 3.0, f"{_kayma_cm:.1f} cm / gereken 5.5 cm")
+# Oran 0.5 iken nisan TAM MERKEZ olmali; buyudukce yukari kaymali.
+_merkez_y = _ust + _yuk / 2.0
+if abs(config.AIM_POINT_HEIGHT_RATIO - 0.5) < 1e-9:
+    kontrol("oran 0.5 -> nisan noktasi TAM MERKEZ",
+            abs(cy - _merkez_y) < 1e-6, f"y={cy:.1f}, merkez {_merkez_y:.1f}")
+else:
+    _kayma_cm = (config.AIM_POINT_HEIGHT_RATIO - 0.5) * 2 * 7.0
+    kontrol("oran > 0.5 -> nisan noktasi merkezin USTUNDE",
+            cy < _merkez_y, f"{_kayma_cm:.1f} cm yukari (paralaks 5.5 cm)")
 c2 = engagement.HedefCifti(uzak[0], None, 0.0)
 cx2, cy2, r2, gercek2 = c2.nisan_noktasi()
 kontrol("balon yokken maketten turetiliyor", (not gercek2) and cy2 > uzak[0]['bbox'][1],

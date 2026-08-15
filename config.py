@@ -630,17 +630,19 @@ PAIR_FALLBACK_AIM_OFFSET = 0.75
 #     5.5 / 7.0 = 0.786 yaricap  =  kutu yuksekliginin 0.393'u
 # Yani tam telafi 0.893 oranina karsilik gelir (usten %10.7).
 #
-# 0.75 SECILDI (tam telafi degil, kasitli):
-#   - mermi balonun merkezinin 2.0 cm altina gider, 7 cm yaricapin cok
-#     icinde; ust kenara olan pay ise daha genis kalir,
-#   - kutunun UST KENARINA yaklastikca YOLO kutu gurultusu daha cok
-#     etkiler; 0.75 merkeze daha yakin oldugu icin daha kararli.
-# 0.5 yaparsan eski davranis (merkez) geri gelir.
+# SU ANDA 0.5 = TAM MERKEZ. Yani paralaks telafisi KAPALI ve nisan
+# noktasi tespitin tam ortasi -- saha karari boyle.
 #
-# BALISTIK DUSUS BILEREK EKLENMEDI: 15 metrede sapma ihmal ediliyor.
-# Gerekirse mesafe balonun piksel capindan bedava cikarilabilir
-# (14 cm bilinen boy) ve duzeltme atan(g*d/2v^2) ile eklenebilir.
-AIM_POINT_HEIGHT_RATIO = 0.75
+# Yukaridaki analiz burada BILGI olarak duruyor: telafi istenirse tek yapilacak
+# sey bu sayiyi buyutmek. 0.893 tam telafi, 0.75 kismi telafidir (mermi
+# merkezin 2.0 cm altina gider). Kutunun ust kenarina yaklastikca YOLO'nun
+# kutu gurultusu nisan noktasini daha cok etkiler; bu yuzden tam telafi
+# otomatik olarak "en iyi" degildir.
+#
+# BALISTIK DUSUS de eklenmedi: 15 metrede sapma ihmal ediliyor. Gerekirse
+# mesafe balonun piksel capindan bedava cikarilabilir (14 cm bilinen boy) ve
+# duzeltme atan(g*d/2v^2) ile eklenebilir.
+AIM_POINT_HEIGHT_RATIO = 0.5
 PAIR_ALLOW_FALLBACK_AIM = True
 
 
