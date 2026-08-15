@@ -78,6 +78,18 @@ class HedefCifti:
         return None
 
 
+def _en_yakin_maket(balon, maketler):
+    """Bu balona merkez mesafesi en kucuk olan maket."""
+    bx, by = _merkez(balon['bbox'])
+    en_iyi, en_kisa = None, float('inf')
+    for m in maketler:
+        mx, my = _merkez(m['bbox'])
+        d = ((bx - mx) ** 2 + (by - my) ** 2) ** 0.5
+        if d < en_kisa:
+            en_iyi, en_kisa = m, d
+    return en_iyi
+
+
 def cift_eslestir(detections, tek_balonlara_izin=False):
     """
     Tespit listesinden hedef çiftleri kurar.
@@ -124,6 +136,14 @@ def cift_eslestir(detections, tek_balonlara_izin=False):
             if not (alt <= dy <= ust):
                 continue
             if bw > mw * config.PAIR_MAX_BALLOON_RATIO:
+                continue
+            # CAPRAZ ESLESME KORUMASI: balon, kendisine EN YAKIN maketten
+            # baskasiyla eslesemez. Bu olmadan dusmanin maketi dostun
+            # balonuyla cift kurabiliyor, ciftin sinifi maketten geldigi
+            # icin 'dusman-' okunuyor ve ates kilidinin dokuz kosulu birden
+            # geciyordu -> DOSTUN BALONUNA ATES.
+            if (config.PAIR_REQUIRE_NEAREST_MAKET
+                    and _en_yakin_maket(balon, maketler) is not maket):
                 continue
             # Skor: yatayda ne kadar hizalı ve dikeyde ne kadar makul.
             yatay = 1.0 - dx / config.PAIR_MAX_HORIZONTAL_OFFSET
@@ -230,6 +250,11 @@ class AngajmanMakinesi:
         self.aktif_iz_id = None
         self.asama = None
 
+        # KILIT koprusu: maket bir kare gorunmedigi icin kilidi birakmamak
+        # uzere, dogrulanmis hedefin balonunun son bilinen DUNYA acisi.
+        self.kilit_aci = None
+        self.kopru_kare = 0
+
         self._sinif_gecmisi = []       # doğrulama için ardışık sınıflar
         self._nisan_ardisik = 0
         self.dogrulanan_sinif = None
@@ -245,6 +270,8 @@ class AngajmanMakinesi:
                 self._sinif_gecmisi = []
                 self._nisan_ardisik = 0
                 self.dogrulanan_sinif = None
+                self.kilit_aci = None
+                self.kopru_kare = 0
 
     def gecen(self):
         return time.time() - self.durum_zamani
@@ -276,12 +303,16 @@ class AngajmanMakinesi:
         angaje etmiyoruz, yoksa az önce reddedilmiş bir dostu tekrar tekrar
         doğrulamaya alıp sonsuz döngüye gireriz.
         """
-        if not ciftler or not acilar or acilar[0] is None:
+        if not ciftler or not acilar:
             return False
-        cift = ciftler[0]
-        if cift.maket is None or cift.guven < config.VERIFY_MIN_CONFIDENCE:
+        # Maketsiz kayıtlar (yalnız balon) angaje edilemez: kimlik yok.
+        secim = next(((c, a) for c, a in zip(ciftler, acilar)
+                      if c.maket is not None and a is not None), None)
+        if secim is None:
             return False
-        yaw, pitch = acilar[0]
+        cift, (yaw, pitch) = secim
+        if cift.guven < config.VERIFY_MIN_CONFIDENCE:
+            return False
         if self.kara_liste.icinde_mi(yaw, pitch):
             return False
         return True
@@ -387,9 +418,11 @@ class AngajmanMakinesi:
             self._dogrulama_zaman_asimi()
             return None
 
-        # Merkeze en yakın çifti al: taret zaten adaya dönmüş durumda.
-        cift = ciftler[0]
-        if cift.maket is None or cift.guven < config.VERIFY_MIN_CONFIDENCE:
+        # Merkeze en yakın MAKETLİ çifti al: taret zaten adaya dönmüş
+        # durumda. Maketsiz (yalnız balon) kayıtlar doğrulanamaz — kimlik
+        # bilgisini yalnızca maket taşıyor.
+        cift = next((c for c in ciftler if c.maket is not None), None)
+        if cift is None or cift.guven < config.VERIFY_MIN_CONFIDENCE:
             self._dogrulama_zaman_asimi()
             return None
 
@@ -413,6 +446,55 @@ class AngajmanMakinesi:
             self._gec(KILIT)
             return sinif
         return None
+
+    def kilit_hedefi_sec(self, ciftler, acilar):
+        """
+        KİLİT/ATEŞ'te bu karede nişan alınacak çifti seçer.
+
+        Döner: (cift, kopruden_mi). `cift` None ise bu karede hedef yok.
+
+        Üç kademe:
+          1. Doğrulanan sınıfla eşleşen MAKETLİ çift  -> normal takip
+          2. Maketsiz ama son kilit açısına çok yakın balon -> KÖPRÜ
+          3. Kilit açısında BAŞKA SINIFTAN maket belirdi -> kilidi bırak
+
+        3. madde emniyet ağıdır: köprü sırasında yandaki hedefin balonuna
+        kaymışsak, maket geri geldiğinde sınıfı tutmaz ve kilit düşer.
+        Ateş zaten `ates_serbest_mi` ile ayrıca korunuyor; bu katman
+        taretin yanlış hedefte oyalanmasını da engelliyor.
+        """
+        acilar = list(acilar) + [None] * max(0, len(ciftler) - len(acilar))
+
+        # 1) Doğrulanan sınıfla eşleşen maketli çift
+        for c, a in zip(ciftler, acilar):
+            if c.maket is not None and c.sinif == self.dogrulanan_sinif:
+                if a is not None:
+                    self.kilit_aci = a
+                self.kopru_kare = 0
+                return c, False
+
+        # 3) Kilit açısında BAŞKA sınıftan maket belirdiyse kilidi bırak
+        if self.kilit_aci is not None:
+            for c, a in zip(ciftler, acilar):
+                if c.maket is None or a is None:
+                    continue
+                if _aci_uzakligi(a, self.kilit_aci) <= config.LOCK_BRIDGE_MAX_DEG:
+                    self._gec(TARAMA)
+                    return None, False
+
+        # 2) Köprü: maketsiz ama son kilit açısına çok yakın balon
+        if self.kilit_aci is not None and self.kopru_kare < config.LOCK_BRIDGE_MAX_FRAMES:
+            for c, a in zip(ciftler, acilar):
+                if c.maket is not None or c.balon is None or a is None:
+                    continue
+                if _aci_uzakligi(a, self.kilit_aci) <= config.LOCK_BRIDGE_MAX_DEG:
+                    self.kopru_kare += 1
+                    return c, True
+
+        # Köprü bütçesi doldu: kilidi bırak
+        if self.kopru_kare >= config.LOCK_BRIDGE_MAX_FRAMES:
+            self._gec(TARAMA)
+        return None, False
 
     def kilit_adimi(self, nisan_hatasi_px, nisan_yaricap_px, balon_gorundu):
         """
@@ -470,6 +552,14 @@ def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
         return False, f'guven dusuk: {cift.guven:.2f}'
     if makine.dogrulanan_sinif != cift.sinif:
         return False, 'sinif dogrulanandan farkli'
+    # İKİ AYRI KONTROL, BİLEREK.
+    # `balon_gorundu` ÇAĞIRANDAN gelen bir bayrak; çağıran onu yanlış
+    # hesaplarsa bu koşul sessizce geçilir. Elimizdeki çifti de doğrudan
+    # kontrol ediyoruz: balonu eşleşmemiş bir çifte ateş, "maketin altında
+    # balon var" varsayımının çöktüğü anlamına gelir ve o an nişan alınan
+    # nokta maketten TÜRETİLMİŞ bir tahmindir — yani görülmemiş bir yere ateş.
+    if cift.balon is None:
+        return False, 'cifte balon eslesmemis (nisan noktasi tahmini)'
     if not balon_gorundu:
         return False, 'balon bu karede tespit edilmedi'
     if not nisan_tamam:
@@ -477,6 +567,11 @@ def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
     if _atesiz_bolgede(yaw, no_fire_start, no_fire_end):
         return False, 'atesiz bolge'
     return True, 'serbest'
+
+
+def _aci_uzakligi(a, b):
+    """İki (yaw, pitch) açısı arasındaki mesafe (derece)."""
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
 def _atesiz_bolgede(yaw, baslangic, bitis):

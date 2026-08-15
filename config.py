@@ -473,7 +473,13 @@ MAX_TARGET_RATE_DEG_S = 30.0
 
 # Hedef KAYBOLDUĞUNDA tahmin için kullanılan ayrı (ve dar) sınır.
 # Feedforward ölçülen hızı kullanır, tahmin ise körlemesine ekstrapolasyondur.
-PREDICTION_MAX_RATE_DEG_S = 8.0
+# 8.0 IDI VE HICBIR KORUMA SAGLAMIYORDU: FAZ 1'de hedef GERCEKTEN sabitken
+# sistemin hesapladigi sahte hedef hizi 8.1 derece/sn olculmustu. Yani sinir
+# tam olarak gurultu seviyesindeydi ve hayaletin 0.36 saniyede 2.9 derece
+# (212 piksel) gezmesine izin veriyordu.
+# Gercek yarisma hedefleri 0.6-2.1 derece/sn. 2.5 en hizlisinin %20 ustunde,
+# yani gercek hareketi tam kapsiyor; gurultuye birakilan pay ise ucte bir.
+PREDICTION_MAX_RATE_DEG_S = 2.5
 
 # --- Ölü bant (duruşta titremeyi engeller) ---
 # PİKSEL cinsinden tanımlı, çünkü gürültü kaynağı YOLO kutu merkezidir.
@@ -560,12 +566,26 @@ SPOTTER_TRACK_MAX_MISS = 8
 
 # Balon, maketin altında ve yatayda hizalı olmalı. Ölçüler maketin kutu
 # genişliğine göre normalize edilir, böylece mesafeden bağımsız çalışır.
-PAIR_MAX_HORIZONTAL_OFFSET = 1.0   # |dx| <= bu x maket_genisligi
+# |dx| <= bu x maket_genisligi.
+# 1.0 IDI VE TEHLIKELIYDI: bir maket, KENDI genisligi kadar yandaki bir
+# balonla eslesebiliyordu. 15 metrede maket 126 piksel, yani 45 santim
+# yanal tolerans. Sonuc: DUSMANIN maketi + DOSTUN balonu bir cift kurabilir,
+# ciftin sinifi maketten geldigi icin 'dusman-' okunur ve ates kilidinin
+# dokuz kosulu birden gecer -> DOSTUN BALONUNA ATES. Diskalifiye.
+# Sahada olculen gercek deger: dx/mw = 0.02-0.08. 0.4 hala 5 kat pay birakir
+# (15 metrede 18 santim yanal sapma; ipte sallanan balon icin fazlasiyla).
+PAIR_MAX_HORIZONTAL_OFFSET = 0.4
 PAIR_VERTICAL_RANGE = (0.0, 2.5)   # balon merkezi maketin altında, bu aralıkta
                                    # (x maket_genisligi)
 
 # Balon maketten büyük olamaz (14 cm balon, 40-50 cm maket).
 PAIR_MAX_BALLOON_RATIO = 0.8       # balon_genisligi / maket_genisligi
+
+# Bir balon, ancak KENDISINE EN YAKIN maket o maketse eslesebilir.
+# Esiklerden bagimsiz yapisal koruma: capraz eslesmeyi imkansiz kilar.
+# Kapatmak icin bir sebep yok; secenek olmasi yalnizca birim testinde
+# kuralin etkisini yalitabilmek icin.
+PAIR_REQUIRE_NEAREST_MAKET = True
 
 # Balon tespiti zayıfsa nişan noktası maketten türetilir. 15 metrede balon
 # avcıda 30 piksel — YOLO için küçük-nesne sınırı; maket 96 piksel, rahat.
@@ -622,6 +642,25 @@ BLACKLIST_FRIEND_TTL_SEC = 600.0  # dost maketler için pratikte kalıcı
 # adaya geçmeyi sağlar; süre dolunca aday yeniden denenir, yani gerçek bir
 # hedefi kalıcı olarak kaybetme riski yok.
 BLACKLIST_VERIFY_TTL_SEC = 5.0
+
+# --- KILIT KOPRUSU: maket bir kare gorunmezse kilidi birakma ---
+# Sahada olculdu (Asama2Hedef.mp4): kilit fazinin ~yarisinda YOLO maketi
+# kaciriyor. Otonom modda maket olmadan cift kurulmadigi icin durum makinesi
+# hedef donduremiyor, eski 'takip' dali devraliyor ve TAHMIN devreye giriyor.
+# Nisan noktasi balonun merkezinden hayalete atliyor; olculen pitch
+# sicramalari +-80..124 piksel. Kilit fazinin yalnizca %3.2'si nisan
+# toleransinin icinde gecti.
+#
+# Cozum: maket kaybolunca, DOGRULANMIS hedefin balonunu tek basina takip
+# etmeye devam et. Guvenlik kaybi yok -- `ates_serbest_mi` ates karesinde
+# maketin GERCEKTEN tespit edilmis olmasini zaten sart kosuyor.
+#
+# Kopru genisligi hesabi: en uzun korluk 5 kare / 14 fps = 0.36 sn, hedef
+# hizi en fazla 2.1 derece/sn -> balon 0.75 derece kayar. 0.8 derece kapi
+# bunu kapsar ama yandaki hedefe atlamaya izin vermez (hedefler uc ayri
+# yoldan geldigi icin aralarinda cok daha fazla aci var).
+LOCK_BRIDGE_MAX_DEG = 0.8
+LOCK_BRIDGE_MAX_FRAMES = 5
 
 # Balistik: 15 metrede mermi düşüşünü telafi eden sabit pitch ofseti
 # (derece, pozitif = yukarı nişan al). SAHADA ÖLÇÜLMELİ; ölçülene kadar 0.

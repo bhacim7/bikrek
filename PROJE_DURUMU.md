@@ -929,3 +929,74 @@ sınıflandırma. **Sunumda açıklanmalı.**
 
 Testlere 12. bölüm eklendi (avcı önceliği, kara liste etkileşimi, dost
 sıralaması, aşamaya göre ceza); 4. bölüm yeni davranışa göre güncellendi.
+
+## 8. Aşama 2 saha koşumu ve dört düzeltme (2026-08-15)
+
+`Aşama2Hedef.mp4` kare kare çözümlendi; nişan hatası kırmızı balon blobu
+izlenerek ölçüldü.
+
+### Ölçüm
+
+| faz | yaw RMS | pitch RMS | ort. hata |
+|---|---|---|---|
+| gözcü açısına yalpalama | 1.5 px | 33.6 px | 0.50° |
+| kilit ilk 3 sn | 82.8 px | 39.7 px | 1.47° |
+| kilit sonraki 3 sn | 45.4 px | 4.0 px | 0.67° |
+| **ateş öncesi son 1.3 sn** | **10.7 px** | **0.9 px** | **0.22°** |
+
+**Kilit fazının yalnızca %3.2'si nişan toleransının (14 px) içinde geçti.**
+Devir teslim 1.8 sn, doğrulama 0.5 sn, ama kilitten ateşe **12.7 saniye**.
+
+Kritik gözlem: çift sağlamken pitch RMS 0.9 piksele iniyor — yani PID sağlam,
+sorun **hedef sürekliliğinde**. PID kazançlarına dokunulmadı.
+
+### Kök neden
+
+Durum satırlarında 19 örneğin 9'unda `0 çift` veya `Hedef kaybedildi` var.
+Otonom modda maket olmadan çift kurulmuyor; YOLO maketi aralıklı kaçırıyor
+(ve güven filtresi kalanı eliyordu). Çift kırılınca eski "takip" dalı
+devralıp TAHMİN yürütüyor. Nişan noktası balonun merkezinden hayalete
+atlıyor — ölçülen pitch sıçramaları ±80–124 piksel.
+
+Yaw'ın temiz, pitch'in vahşi olmasının sebebi: nişan noktasının üç kaynağı
+(balon merkezi / maketten türetilen yedek nokta / tahmin) **aynı x'te ama
+farklı y'de**. Her kaynak değişimi saf bir pitch sıçraması üretiyor.
+
+### Uygulanan düzeltmeler
+
+| # | düzeltme |
+|---|---|
+| **R1** | `PAIR_MAX_HORIZONTAL_OFFSET` 1.0 → **0.4** ve **karşılıklı en yakınlık** kuralı. 1.0 iken düşmanın maketi DOSTUN balonuyla çift kurabiliyordu; çiftin sınıfı maketten geldiği için ateş kilidinin dokuz koşulu birden geçiyordu → dostun balonuna ateş. Ölçülen gerçek `dx/mw` 0.02–0.08 |
+| **R2** | KİLİT'te "doğrulanan sınıfla eşleşen çift yoksa merkeze en yakınına düş" kaldırıldı. O çift dostun çifti olabiliyor, taret onu ortalamaya başlıyordu |
+| **A** | **KİLİT köprüsü**: maket bir kare görünmezse doğrulanmış hedefin balonu tek başına takip edilir. Üç kapı: dünya açısında ≤ `LOCK_BRIDGE_MAX_DEG` (0.8°), en fazla `LOCK_BRIDGE_MAX_FRAMES` (5) kare, ve kilit açısında BAŞKA sınıftan maket belirirse kilit bırakılır |
+| **B** | Göreli güven filtresi otonom yoldan kaldırıldı. Maket ve balon farklı sınıflar, farklı güven seviyeleri; sahada maket 0.56 / balon 0.81 ölçüldü, eşik 0.66 oldu ve maket elendi. Ayrıca yakın bir DOST uzak bir DÜŞMANI silebiliyordu |
+| **C** | `PREDICTION_MAX_RATE_DEG_S` 8.0 → **2.5**. 8.0, FAZ 1'de sabit hedefte ölçülen sahte hız (8.1 °/s) ile aynıydı — hiçbir koruma sağlamıyordu |
+| — | `ates_serbest_mi` artık `cift.balon is None` kontrolünü de kendisi yapıyor; "balon görüldü" bilgisini yalnızca çağıranın bayrağına bırakmıyor |
+
+### Yeni mod: HEDEF TAKİP (ateşsiz)
+
+Arayüze **"Hedef Takip (ateşsiz)"** butonu eklendi (`active_task = 'takip'`).
+
+- Angajman makinesi **hiç başlatılmaz** → gözcü devir teslimi yok,
+  dost/düşman doğrulaması yok, **otonom ateş yolu tamamen kapalı**
+- `SERVO_MODLAR = OTONOM_MODLAR + ('takip',)` → PID çalışır, taret hedefi
+  nişangahta tutar
+- Hedef seçimi çift üzerinden (`tek_balon=True`): maket+balon varsa balona,
+  yalnız maket varsa yedek noktaya, yalnız balon varsa balona
+- Kayıpta **tahmin yürütmez** — kilidi bırakıp son açıyı tutar; mod bir
+  ölçüm aracı olduğu için tespit sürekliliğini olduğu gibi göstermeli
+- Durum çubuğuna canlı nişan hatası **piksel ve derece** cinsinden,
+  tolerans içinde olup olmadığıyla birlikte yazılır
+
+### Kalan ve ölçülmesi gereken
+
+Ateş öncesi en iyi pencerede **pitch RMS 0.9 px, yaw RMS 10.7 px** — yaw
+pitch'ten 12 kat kötü. Pitch'te 1:5 planet redüktör (boşluk 1–2 açı dakikası),
+yaw'da 10:30 düz dişli çifti var. Kalibrasyondaki saçılma da aynı yönde
+(yaw %16, pitch %2). **Kalan yaw kalıntısı büyük olasılıkla dişli boşluğu ve
+yazılımla çözülmez.** 0.145° = 15 metrede 3.8 cm; balon yarıçapı 7 cm, yani
+vuruş olur ama tolerans sınırında gidip gelir.
+
+Yukarıdaki düzeltmelerden sonra yeniden ölçülmeli; yaw hâlâ pitch'in 10 katıysa
+yaw dişli boşluğu ayrıca ölçülüp ya redüktöre geçilmeli ya da tolerans gerçeğe
+göre ayarlanmalı. Şimdi toleransı gevşetmek sorunu ölçülemez hale getirir.

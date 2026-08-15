@@ -520,6 +520,85 @@ kontrol("asama2'de dost cezasi KISA (ortamda dost yok, bu bir YOLO hatasi)",
         _ttl2 <= config.BLACKLIST_VERIFY_TTL_SEC, f"{_ttl2} sn")
 kontrol("her iki asamada da kara listeye giriliyor", _var2 and _var3)
 
+# --- 13. CAPRAZ ESLESME ve KILIT KOPRUSU ---
+print()
+print("=" * 70)
+print("13. CAPRAZ ESLESME KORUMASI ve KILIT KOPRUSU")
+print("=" * 70)
+
+# (a) Dusmanin maketi + DOSTUN balonu: ESLESMEMELI.
+# Dusmanin kendi balonu o karede tespit edilmemis; dostun balonu yatayda yakin.
+_capraz = [det('dusman-F16', 600, 300, 126, 80),
+           det('dost-Helikopter', 760, 300, 100, 70),
+           det('balon', 790, 430, 40, 40)]          # DOSTUN balonu
+_c13 = engagement.cift_eslestir(_capraz)
+_dusman = next(c for c in _c13 if engagement.dusman_mi(c.sinif))
+_dost = next(c for c in _c13 if engagement.dost_mu(c.sinif))
+kontrol("dusman maketi DOSTUN balonunu kapamiyor", _dusman.balon is None)
+kontrol("balon dogru sahibiyle (dost) eslesti", _dost.balon is not None)
+# Ates kilidi acisindan sonuc: dusman ciftinin balonu yok -> ates serbest degil
+_m13 = engagement.AngajmanMakinesi(); _m13.basla('task3')
+_m13.durum = engagement.ATES; _m13.dogrulanan_sinif = 'dusman-F16'
+_izn, _ger = engagement.ates_serbest_mi(_dusman, _m13, True, True, 0.0, 0.0, 0.0)
+kontrol("dostun balonuna ates ENGELLENDI", not _izn, _ger)
+
+# (b) Ayni sahnede dusmanin KENDI balonu varsa dogru eslesmeli
+_normal = _capraz + [det('balon', 640, 430, 40, 40)]
+_c13b = engagement.cift_eslestir(_normal)
+_d2 = next(c for c in _c13b if engagement.dusman_mi(c.sinif))
+kontrol("kendi balonu varken dusman dogru esleiyor", _d2.balon is not None)
+kontrol("balon gercekten dusmanin altindaki",
+        abs((_d2.balon['bbox'][0] + 20) - 660) < 5, str(_d2.balon['bbox']))
+
+# (c) KILIT koprusu: maket bir kare gorunmezse balon tek basina takip edilir
+_m14 = engagement.AngajmanMakinesi(); _m14.basla('task2')
+_m14.durum = engagement.KILIT
+_m14.dogrulanan_sinif = 'dusman-F16'
+_tam = engagement.cift_eslestir([det('dusman-F16', 600, 300, 126, 80),
+                                 det('balon', 640, 430, 40, 40)])
+_sec, _kopru = _m14.kilit_hedefi_sec(_tam, [(5.0, 1.0)])
+kontrol("maket varken normal takip", _sec is not None and not _kopru)
+kontrol("kilit acisi kaydedildi", _m14.kilit_aci == (5.0, 1.0))
+
+_yalniz = engagement.cift_eslestir([det('balon', 640, 430, 40, 40)],
+                                   tek_balonlara_izin=True)
+_sec, _kopru = _m14.kilit_hedefi_sec(_yalniz, [(5.1, 1.0)])
+kontrol("maket kaybolunca balon KOPRU ile takip ediliyor",
+        _sec is not None and _kopru, f"kopru={_kopru}")
+kontrol("durum hala KILIT", _m14.durum == engagement.KILIT, _m14.durum)
+
+# (d) Kopru YANDAKI hedefe atlamamali
+_m15 = engagement.AngajmanMakinesi(); _m15.basla('task2')
+_m15.durum = engagement.KILIT; _m15.dogrulanan_sinif = 'dusman-F16'
+_m15.kilit_aci = (5.0, 1.0)
+_sec, _kopru = _m15.kilit_hedefi_sec(_yalniz, [(5.0 + 3 * config.LOCK_BRIDGE_MAX_DEG, 1.0)])
+kontrol("uzaktaki balona KOPRU KURULMUYOR", _sec is None, f"{_sec}")
+
+# (e) Kopru butcesi dolunca kilit birakilir
+_m16 = engagement.AngajmanMakinesi(); _m16.basla('task2')
+_m16.durum = engagement.KILIT; _m16.dogrulanan_sinif = 'dusman-F16'
+_m16.kilit_aci = (5.0, 1.0)
+for _ in range(config.LOCK_BRIDGE_MAX_FRAMES + 1):
+    _m16.kilit_hedefi_sec(_yalniz, [(5.0, 1.0)])
+kontrol("kopru butcesi dolunca TARAMA'ya donuluyor",
+        _m16.durum == engagement.TARAMA, _m16.durum)
+
+# (f) EMNIYET AGI: kilit acisinda BASKA SINIFTAN maket belirirse kilit dusmeli
+_m17 = engagement.AngajmanMakinesi(); _m17.basla('task3')
+_m17.durum = engagement.KILIT; _m17.dogrulanan_sinif = 'dusman-F16'
+_m17.kilit_aci = (5.0, 1.0)
+_dost_cift = engagement.cift_eslestir([det('dost-Helikopter', 600, 300, 126, 80),
+                                       det('balon', 640, 430, 40, 40)])
+_sec, _ = _m17.kilit_hedefi_sec(_dost_cift, [(5.0, 1.0)])
+kontrol("kilit acisinda DOST belirince kilit birakildi",
+        _sec is None and _m17.durum == engagement.TARAMA, _m17.durum)
+
+# (g) R2: dogrulanan sinif tutmayan ciftte RASTGELE hedefe dusulmuyor
+_m18 = engagement.AngajmanMakinesi(); _m18.basla('task3')
+_m18.durum = engagement.KILIT; _m18.dogrulanan_sinif = 'dusman-Drone'
+_sec, _ = _m18.kilit_hedefi_sec(_dost_cift, [(40.0, 9.0)])   # cok uzakta
+kontrol("sinif tutmayan cifte SESSIZCE dusulmuyor", _sec is None, f"{_sec}")
+
 print()
 print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
