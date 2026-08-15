@@ -67,8 +67,21 @@ print("2. NISAN NOKTASI ve YEDEK YOL")
 print("=" * 70)
 c = engagement.cift_eslestir(uzak)[0]
 cx, cy, r, gercek = c.nisan_noktasi()
-kontrol("balon varken balona nisan", gercek and abs(cx - 648) < 2 and abs(cy - 430) < 2,
-        f"({cx:.0f},{cy:.0f}) r={r:.0f}")
+# Nisan noktasi artik balonun MERKEZI degil, kutunun UST tarafi: kamera
+# namlunun 5.5 cm ustunde ve eksenler paralel oldugu icin merkeze nisan
+# alinca mermi merkezin 5.5 cm altina gidiyor.
+_ust, _yuk = uzak[1]['bbox'][1], uzak[1]['bbox'][3]
+_beklenen_y = _ust + (1.0 - config.AIM_POINT_HEIGHT_RATIO) * _yuk
+kontrol("balon varken balona nisan (yatayda merkez)",
+        gercek and abs(cx - 648) < 2, f"cx={cx:.0f}")
+kontrol("nisan noktasi kutunun UST tarafinda",
+        abs(cy - _beklenen_y) < 1.0,
+        f"y={cy:.1f}, beklenen {_beklenen_y:.1f} (oran {config.AIM_POINT_HEIGHT_RATIO})")
+kontrol("nisan noktasi kutunun ICINDE kaliyor",
+        _ust <= cy <= _ust + _yuk, f"{_ust} <= {cy:.1f} <= {_ust+_yuk}")
+_kayma_cm = (config.AIM_POINT_HEIGHT_RATIO - 0.5) * 2 * 7.0
+kontrol("paralaksin buyuk kismi telafi edildi (>= 3 cm)",
+        _kayma_cm >= 3.0, f"{_kayma_cm:.1f} cm / gereken 5.5 cm")
 c2 = engagement.HedefCifti(uzak[0], None, 0.0)
 cx2, cy2, r2, gercek2 = c2.nisan_noktasi()
 kontrol("balon yokken maketten turetiliyor", (not gercek2) and cy2 > uzak[0]['bbox'][1],
@@ -598,9 +611,28 @@ _m17.durum = engagement.KILIT; _m17.dogrulanan_sinif = 'dusman-F16'
 _m17.kilit_aci = (5.0, 1.0)
 _dost_cift = engagement.cift_eslestir([det('dost-Helikopter', 600, 300, 126, 80),
                                        det('balon', 640, 430, 40, 40)])
-_sec, _ = _m17.kilit_hedefi_sec(_dost_cift, [(5.0, 1.0)])
-kontrol("kilit acisinda DOST belirince kilit birakildi",
+# TEK KARE kilidi DUSURMEMELI: sahada 0.1-0.2 saniye suren sahte etiketler
+# goruldu (guven 0.6'ya kadar). Zamansal onay olmadan bir hayalet iyi bir
+# kilidi TARAMA'ya gonderiyordu.
+_m17.kilit_hedefi_sec(_dost_cift, [(5.0, 1.0)])
+kontrol("TEK karelik yabanci maket kilidi DUSURMUYOR",
+        _m17.durum == engagement.KILIT, _m17.durum)
+# Ama israrla goruluyorsa kilit birakilmali
+for _ in range(config.LOCK_ABORT_CONFIRM_FRAMES - 1):
+    _sec, _ = _m17.kilit_hedefi_sec(_dost_cift, [(5.0, 1.0)])
+kontrol("kilit acisinda DOST ISRARLA gorulunce kilit birakildi",
         _sec is None and _m17.durum == engagement.TARAMA, _m17.durum)
+# Arada dogru sinif gorulurse sayac SIFIRLANMALI
+_m19 = engagement.AngajmanMakinesi(); _m19.basla('task3')
+_m19.durum = engagement.KILIT; _m19.dogrulanan_sinif = 'dusman-F16'
+_m19.kilit_aci = (5.0, 1.0)
+_dusman_cift19 = engagement.cift_eslestir(
+    [det('dusman-F16', 600, 300, 126, 80), det('balon', 640, 430, 40, 40)])
+for _ in range(config.LOCK_ABORT_CONFIRM_FRAMES + 2):
+    _m19.kilit_hedefi_sec(_dost_cift, [(5.0, 1.0)])       # yabanci
+    _m19.kilit_hedefi_sec(_dusman_cift19, [(5.0, 1.0)])   # dogru sinif
+kontrol("arada dogru sinif gorulurse iptal sayaci sifirlaniyor",
+        _m19.durum == engagement.KILIT, _m19.durum)
 
 # (g) R2: dogrulanan sinif tutmayan ciftte RASTGELE hedefe dusulmuyor
 _m18 = engagement.AngajmanMakinesi(); _m18.basla('task3')

@@ -47,6 +47,25 @@ import spotter_module as sp
 
 CIKTI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gozcu_tani")
 
+def gorsel_yaz(yol, gorsel):
+    """
+    Görüntüyü diske yazar — `cv2.imwrite` yerine.
+
+    `cv2.imwrite` Windows'ta ASCII OLMAYAN yollarda SESSİZCE başarısız olur:
+    istisna atmaz, sadece False döner. Proje yolu `C:/Users/baris hacim/...`
+    olduğu için sahada hiçbir PNG oluşmadı ve araç "çalışıyor" göründü.
+    `imencode` + normal dosya yazımı bu sorundan etkilenmiyor.
+    """
+    uzanti = os.path.splitext(yol)[1] or ".png"
+    ok, tampon = cv2.imencode(uzanti, gorsel)
+    if not ok:
+        print("UYARI: kodlanamadi -> %s" % yol)
+        return False
+    with open(yol, "wb") as f:
+        f.write(tampon.tobytes())
+    return True
+
+
 
 def kamera_ac(indeksler):
     for i in indeksler:
@@ -182,7 +201,7 @@ def main():
                        ("kirmizi_maske.png", kirmizi),
                        ("mavi_maske.png", mavi),
                        ("isaretli.png", isaretli)):
-        cv2.imwrite(os.path.join(CIKTI, ad), gorsel)
+        gorsel_yaz(os.path.join(CIKTI, ad), gorsel)
 
     print()
     print("=" * 78)

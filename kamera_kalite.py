@@ -39,6 +39,25 @@ import numpy as np
 import config
 
 CIKTI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kamera_kalite")
+
+def gorsel_yaz(yol, gorsel):
+    """
+    Görüntüyü diske yazar — `cv2.imwrite` yerine.
+
+    `cv2.imwrite` Windows'ta ASCII OLMAYAN yollarda SESSİZCE başarısız olur:
+    istisna atmaz, sadece False döner. Proje yolu `C:/Users/baris hacim/...`
+    olduğu için sahada hiçbir PNG oluşmadı ve araç "çalışıyor" göründü.
+    `imencode` + normal dosya yazımı bu sorundan etkilenmiyor.
+    """
+    uzanti = os.path.splitext(yol)[1] or ".png"
+    ok, tampon = cv2.imencode(uzanti, gorsel)
+    if not ok:
+        print("UYARI: kodlanamadi -> %s" % yol)
+        return False
+    with open(yol, "wb") as f:
+        f.write(tampon.tobytes())
+    return True
+
 KARE_SAYISI = 20        # zamansal gürültü için
 ISINMA_SN = 2.0         # otomatik pozlama/kazanç otursun
 
@@ -175,7 +194,7 @@ def main():
 
         pg, rg, netlik, ort = olc(kareler)
         dosya = os.path.join(CIKTI, etiket.replace(" ", "_") + f"_{g}x{y}_{f_gercek}.png")
-        cv2.imwrite(dosya, ort)
+        gorsel_yaz(dosya, ort)
         sonuclar.append((etiket, g, y, f_gercek, olculen_fps, pg, rg, netlik))
         print(f"[bitti]   {etiket}  -> gerceklesen {g}x{y} {f_gercek} "
               f"{olculen_fps:.1f} fps")

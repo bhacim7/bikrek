@@ -518,7 +518,25 @@ MAX_MISSING_FRAMES = 5
 # tutulabilir; parlama olursa yükseltin.
 SPOTTER_RED_RANGES = [((0, 120, 70), (10, 255, 255)),
                       ((170, 120, 70), (179, 255, 255))]
-SPOTTER_BLUE_RANGES = [((100, 140, 60), (130, 255, 255))]
+# SAHADA OLCULEREK AYARLANDI (gozcu_tani.py, siyah perde ortami).
+# Eski deger ((100,140,60),(130,255,255)) idi ve DOST HIC TANINMIYORDU:
+# mavi maketin olculen doygunlugu S medyan 32, %90'lik dilim 60 -- yani
+# esigin (140) cok altinda. Maket penceresinde 0 mavi piksel cikiyor,
+# mavi_oran 0.00 oluyor ve DOST 'dusman' olarak isaretleniyordu.
+#
+# Esik taramasi (dost penceresi 125 kirmizi, dusman penceresi 64 kirmizi):
+#   S>=40           -> dusman penceresi de mavi okunuyor (siyah perde),
+#                      dusman DOST sanilir. TEHLIKELI YON BU.
+#   S>=60, V>=40    -> dost 0.81 / dusman 0.045   dogru
+#   S>=80, V>=45    -> dost 0.79 / dusman 0.00    EN GENIS MARJ (secildi)
+#   S>=120          -> dost 'kararsiz'a duser
+#   S>=140 (eski)   -> dost 0.37 kararsiz, temizlikten sonra 0 -> dusman
+# Hue araligi 90-135, tarama bu aralikla dogrulandi.
+#
+# DIKKAT: `inference_module._MAVI` ile BIRLIKTE degismeli. Orada gevsek
+# kalirsa sorun olmaz ama KATI kalirsa YOLO'nun dost-* tespitleri renk
+# tutarlilik kontrolunden elenir ve dost hic taninmaz.
+SPOTTER_BLUE_RANGES = [((90, 80, 45), (135, 255, 255))]
 
 # Bir blobun aday sayılması için gereken en küçük alan (piksel).
 # 15 metrede 14 cm'lik balon gözcüde 10 piksel çap = ~79 piksel alan verir.
@@ -528,6 +546,13 @@ SPOTTER_MIN_BLOB_AREA = 30
 # Bir blobun en/boy oranı bu aralığın dışındaysa balon sayılmaz. Balon
 # yuvarlaktır; uzun ince bir kırmızı leke maket parçası veya yansımadır.
 SPOTTER_BALLOON_ASPECT = (0.5, 2.0)
+
+# Blobun kendi kutusunu ne kadar DOLDURDUGU. Daire icin pi/4 = 0.785.
+# Sahada olculdu: gercek balon 0.70, kirmizi F16 maketi 0.37. En-boy
+# orani tek basina yetmiyordu -- maket kutusu da kabaca kare olabildigi
+# icin 'balon' sayiliyor ve gozcu olmayan bir balona iz aciyordu.
+# 0.50 ikisini ayirir; kismen ortulen bir balon icin de pay birakir.
+SPOTTER_BALLOON_MIN_FILL = 0.50
 
 # --- Dost/düşman ayrımı: "maviyi üstte ara" ---
 # Aşama 3'te "en büyük kırmızı yoğunluk = düşman" kuralı ÇALIŞMAZ; mesafeye
@@ -591,6 +616,31 @@ PAIR_REQUIRE_NEAREST_MAKET = True
 # avcıda 30 piksel — YOLO için küçük-nesne sınırı; maket 96 piksel, rahat.
 # Nişan noktası = maket_merkezi + (0, bu_kat x maket_genisligi)
 PAIR_FALLBACK_AIM_OFFSET = 0.75
+
+# --- NISAN NOKTASI: balon kutusunun NERESINE nisan alinacak ---
+# Kutunun ALTINDAN olculen yukseklik orani. 0.5 = merkez, 1.0 = ust kenar.
+#
+# NEDEN merkez degil: avci kamera namlunun 5.5 cm USTUNDE ve eksenler
+# PARALEL. Paralel oldugu icin mermi HER MESAFEDE kamera ekseninin 5.5 cm
+# altindan gecer -- yani nisangahi balonun merkezine oturtursak mermi
+# merkezin 5.5 cm altina gider. Balonun yaricapi 7 cm; ici ama payi 1.5 cm.
+#
+# Duzeltmenin guzel yani MESAFEDEN BAGIMSIZ olmasi: gereken ofset ile
+# balonun yaricapi ayni mesafedeki iki fiziksel uzunluk, oranlari sabit:
+#     5.5 / 7.0 = 0.786 yaricap  =  kutu yuksekliginin 0.393'u
+# Yani tam telafi 0.893 oranina karsilik gelir (usten %10.7).
+#
+# 0.75 SECILDI (tam telafi degil, kasitli):
+#   - mermi balonun merkezinin 2.0 cm altina gider, 7 cm yaricapin cok
+#     icinde; ust kenara olan pay ise daha genis kalir,
+#   - kutunun UST KENARINA yaklastikca YOLO kutu gurultusu daha cok
+#     etkiler; 0.75 merkeze daha yakin oldugu icin daha kararli.
+# 0.5 yaparsan eski davranis (merkez) geri gelir.
+#
+# BALISTIK DUSUS BILEREK EKLENMEDI: 15 metrede sapma ihmal ediliyor.
+# Gerekirse mesafe balonun piksel capindan bedava cikarilabilir
+# (14 cm bilinen boy) ve duzeltme atan(g*d/2v^2) ile eklenebilir.
+AIM_POINT_HEIGHT_RATIO = 0.75
 PAIR_ALLOW_FALLBACK_AIM = True
 
 
@@ -662,6 +712,12 @@ BLACKLIST_VERIFY_TTL_SEC = 5.0
 LOCK_BRIDGE_MAX_DEG = 0.8
 LOCK_BRIDGE_MAX_FRAMES = 5
 
+# Kilit acisinda BASKA SINIFTAN maket belirdiginde kilidi birakmadan once
+# kac kare ust uste gorulmeli. Zamansal onay OLMADAN tek karelik bir
+# hayalet (sahada 0.1-0.2 sn suren, 0.6 guvenli etiketler goruldu) iyi
+# bir kilidi dusurup TARAMA'ya gonderebiliyordu.
+LOCK_ABORT_CONFIRM_FRAMES = 3
+
 # Balistik: 15 metrede mermi düşüşünü telafi eden sabit pitch ofseti
 # (derece, pozitif = yukarı nişan al). SAHADA ÖLÇÜLMELİ; ölçülene kadar 0.
 BALLISTIC_PITCH_OFFSET = 0.0
@@ -684,6 +740,27 @@ DETECTION_COLOR_MIN_RATIO = 0.05
 
 # Kutu karenin bu oranından büyükse tespit saçmadır.
 DETECTION_MAX_AREA_RATIO = 0.25
+
+# --- SINIF BAZLI ACISAL BOYUT KAPISI ---
+# Hedeflerin GERCEK boyutu biliniyor, mesafe araligi da belli. O halde
+# bir tespitin piksel boyutu fiziksel olarak mumkun bir aralikta olmali.
+# Alan orani kapisi (yukarida) cok gevsek: 1920x1105'te 728x728'e kadar
+# her kutu geciyor -- 50 cm'lik bir maket bu boyuta ancak 2.7 metrede
+# ulasir, yani pratikte hicbir hayaleti kesmiyor.
+#
+# Kapi DEGREES_PER_PIXEL uzerinden tanimli, yani cozunurluk veya lens
+# degisince kendiliginden olcekleniyor.
+DETECTION_SIZE_CHECK = True
+GERCEK_BOYUTLAR_M = {'balon': 0.14, 'maket': 0.50}
+# En yakin yaklasma mesafesi. SAHADA OLCULMELI: hedefler 15 metreden
+# gelip yanlardan cikiyor; gercek en yakin mesafe buysa kapi cok daha
+# etkili olur (7 metrede maketin ust siniri 400 px'e iner).
+TARGET_MIN_RANGE_M = 4.0
+TARGET_MAX_RANGE_M = 20.0
+# Alt sinir KASITLI OLARAK GEVSEK: amac dev hayaletleri kesmek, kucuk
+# tespitleri elemek degil. Maket yan donunce gorunen boyu kuculebilir.
+DETECTION_SIZE_MIN_MARGIN = 0.40
+DETECTION_SIZE_MAX_MARGIN = 1.40
 
 # Bir adayın mevcut hedefin yerine geçebilmesi için gereken güven farkı.
 ACQUIRE_CONFIDENCE_MARGIN = 0.15

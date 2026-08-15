@@ -70,12 +70,35 @@ class HedefCifti:
         if self.balon is not None:
             cx, cy = _merkez(self.balon['bbox'])
             yaricap = max(self.balon['bbox'][2], self.balon['bbox'][3]) / 2.0
-            return cx, cy, yaricap, True
+            return cx, _nisan_yuksekligi(cy, yaricap), yaricap, True
         if self.maket is not None and config.PAIR_ALLOW_FALLBACK_AIM:
             mx, my = _merkez(self.maket['bbox'])
             mw = float(self.maket['bbox'][2])
-            return mx, my + mw * config.PAIR_FALLBACK_AIM_OFFSET, mw * 0.15, False
+            yaricap = mw * 0.15
+            merkez_y = my + mw * config.PAIR_FALLBACK_AIM_OFFSET
+            return mx, _nisan_yuksekligi(merkez_y, yaricap), yaricap, False
         return None
+
+
+def _nisan_yuksekligi(merkez_y, yaricap):
+    """
+    Balonun MERKEZİ yerine kutunun ÜST tarafına kaydırılmış nişan noktası.
+
+    Avcı kamera namlunun 5.5 cm ÜSTÜNDE ve eksenler PARALEL. Paralel oldukları
+    için mermi HER MESAFEDE kamera ekseninin 5.5 cm altından geçer — yani
+    nişangahı balonun merkezine oturtursak mermi merkezin 5.5 cm altına gider
+    (balon yarıçapı 7 cm, payı yalnızca 1.5 cm).
+
+    Düzeltme MESAFEDEN BAĞIMSIZ: gereken ofset ile balonun yarıçapı aynı
+    mesafedeki iki fiziksel uzunluk, oranları sabittir. Bu yüzden düzeltme
+    yarıçapın bir katsayısı olarak yazılabiliyor ve mesafe bilgisine hiç
+    ihtiyaç duyulmuyor.
+
+    `AIM_POINT_HEIGHT_RATIO` kutunun ALTINDAN ölçülen yükseklik oranıdır:
+    0.5 = merkez, 1.0 = üst kenar. Görüntüde yukarı = küçük y.
+    """
+    oran = config.AIM_POINT_HEIGHT_RATIO
+    return merkez_y - (oran - 0.5) * 2.0 * yaricap
 
 
 def _en_yakin_maket(balon, maketler):
@@ -254,6 +277,8 @@ class AngajmanMakinesi:
         # uzere, dogrulanmis hedefin balonunun son bilinen DUNYA acisi.
         self.kilit_aci = None
         self.kopru_kare = 0
+        # Kilit acisinda BASKA siniftan maket kac karedir goruluyor.
+        self.yabanci_maket_ardisik = 0
 
         self._sinif_gecmisi = []       # doğrulama için ardışık sınıflar
         self._nisan_ardisik = 0
@@ -272,6 +297,7 @@ class AngajmanMakinesi:
                 self.dogrulanan_sinif = None
                 self.kilit_aci = None
                 self.kopru_kare = 0
+                self.yabanci_maket_ardisik = 0
 
     def gecen(self):
         return time.time() - self.durum_zamani
@@ -471,16 +497,29 @@ class AngajmanMakinesi:
                 if a is not None:
                     self.kilit_aci = a
                 self.kopru_kare = 0
+                self.yabanci_maket_ardisik = 0
                 return c, False
 
         # 3) Kilit açısında BAŞKA sınıftan maket belirdiyse kilidi bırak
+        yabanci_var = False
         if self.kilit_aci is not None:
             for c, a in zip(ciftler, acilar):
                 if c.maket is None or a is None:
                     continue
                 if _aci_uzakligi(a, self.kilit_aci) <= config.LOCK_BRIDGE_MAX_DEG:
-                    self._gec(TARAMA)
-                    return None, False
+                    yabanci_var = True
+                    break
+        if yabanci_var:
+            # ZAMANSAL ONAY: sahada 0.1-0.2 saniye suren (1-3 kare) sahte
+            # etiketler goruldu, guvenleri 0.6'ya kadar cikiyor. Onay olmadan
+            # tek karelik bir hayalet iyi bir kilidi dusurup TARAMA'ya
+            # gonderebiliyordu.
+            self.yabanci_maket_ardisik += 1
+            if self.yabanci_maket_ardisik >= config.LOCK_ABORT_CONFIRM_FRAMES:
+                self._gec(TARAMA)
+                return None, False
+        else:
+            self.yabanci_maket_ardisik = 0
 
         # 2) Köprü: maketsiz ama son kilit açısına çok yakın balon
         if self.kilit_aci is not None and self.kopru_kare < config.LOCK_BRIDGE_MAX_FRAMES:

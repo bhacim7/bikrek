@@ -1,4 +1,5 @@
 import cv2
+import math
 import time
 import queue
 import numpy as np
@@ -23,7 +24,12 @@ DISPLAY_WIDTH = config.DISPLAY_WIDTH
 # geçmişti. S>140 ile duvarın katkısı %0.16'ya düşüyor; gerçek bir mavi balon
 # bu doygunluğu rahatça aşar.
 _KIRMIZI = [((0, 120, 70), (10, 255, 255)), ((170, 120, 70), (179, 255, 255))]
-_MAVI = [((100, 140, 60), (130, 255, 255))]
+# GOZCU ILE AYNI DEGERDE OLMALI (config.SPOTTER_BLUE_RANGES).
+# Eski ((100,140,60),(130,255,255)) sahada olculdu ve cok katiydi: mavi
+# maketin doygunlugu S medyan 32 cikiyor. Burada kati kalirsa YOLO'nun
+# dost-* tespitleri renk tutarlilik kontrolunden ELENIR ve dost hic
+# taninmaz. Gozcudeki esikle BIRLIKTE gevsetildi.
+_MAVI = [((90, 80, 45), (135, 255, 255))]
 
 
 def _sinif_rengi(class_name):
@@ -88,6 +94,47 @@ def _boyut_makul_mu(frame, bbox):
     return (float(w) * float(h)) / (gen * yuk) <= config.DETECTION_MAX_AREA_RATIO
 
 
+def _acisal_boyut_siniri(class_name):
+    """
+    Bu sınıf için fiziksel olarak mümkün piksel boyut aralığı.
+
+    Hedeflerin gerçek boyutu ve mesafe aralığı biliniyor, yani bir tespitin
+    piksel boyutu keyfi olamaz. Alan oranı kapısı bu iş için çok gevşek:
+    1920x1105'te 728x728'e kadar her kutu geçiyor ve 50 cm'lik bir maket bu
+    boyuta ancak 2.7 metrede ulaşır — yani pratikte hiçbir hayaleti kesmiyor.
+
+    Kapı `DEGREES_PER_PIXEL` üzerinden tanımlı olduğu için çözünürlük veya
+    lens değişince kendiliğinden ölçekleniyor.
+    """
+    ad = (class_name or '').lower()
+    if ad == config.BALLOON_CLASS.lower():
+        boy = config.GERCEK_BOYUTLAR_M.get('balon')
+    elif (ad.startswith(config.FRIEND_PREFIX.lower())
+          or ad.startswith(config.ENEMY_PREFIX.lower())):
+        boy = config.GERCEK_BOYUTLAR_M.get('maket')
+    else:
+        return None
+    dpp = abs(config.DEGREES_PER_PIXEL_YAW)
+    if not boy or dpp <= 0:
+        return None
+    uzak = 2 * math.degrees(math.atan(boy / 2 / config.TARGET_MAX_RANGE_M)) / dpp
+    yakin = 2 * math.degrees(math.atan(boy / 2 / config.TARGET_MIN_RANGE_M)) / dpp
+    return (uzak * config.DETECTION_SIZE_MIN_MARGIN,
+            yakin * config.DETECTION_SIZE_MAX_MARGIN)
+
+
+def _acisal_boyut_makul_mu(bbox, class_name):
+    """Tespitin en büyük kenarı fiziksel olarak mümkün aralıkta mı?"""
+    if not config.DETECTION_SIZE_CHECK:
+        return True
+    sinir = _acisal_boyut_siniri(class_name)
+    if sinir is None:
+        return True
+    _, _, w, h = bbox
+    enb = max(float(w), float(h))
+    return sinir[0] <= enb <= sinir[1]
+
+
 def renk_filtresi(frame, detections):
     """Saçma boyutlu ve sınıfının rengini içermeyen tespitleri eler."""
     if not config.DETECTION_COLOR_CHECK or frame is None:
@@ -95,6 +142,8 @@ def renk_filtresi(frame, detections):
     kalan = []
     for det in detections:
         if not _boyut_makul_mu(frame, det['bbox']):
+            continue
+        if not _acisal_boyut_makul_mu(det['bbox'], det['class_name']):
             continue
         renk = _sinif_rengi(det['class_name'])
         if renk is None or _renk_tutarli_mi(frame, det['bbox'], renk):

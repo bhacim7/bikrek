@@ -79,6 +79,13 @@ def balon_adaylari(kirmizi_maske):
         oran = w / float(h)
         if not (en_kucuk <= oran <= en_buyuk):
             continue
+        # DOLGUNLUK: blob kendi kutusunu ne kadar dolduruyor? Daire icin
+        # pi/4 = 0.785. Sahada olculdu: gercek balon 0.70, kirmizi F16
+        # maketi 0.37. En-boy orani tek basina yetmiyordu -- maketin
+        # kutusu da kabaca kare cikabildigi icin 'balon' sayilip iz
+        # aciliyordu (gozcu_tani.py aday #0).
+        if alan / float(w * h) < config.SPOTTER_BALLOON_MIN_FILL:
+            continue
         adaylar.append({
             'cx': float(merkezler[i][0]),
             'cy': float(merkezler[i][1]),
