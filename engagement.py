@@ -58,26 +58,79 @@ class HedefCifti:
     def guven(self):
         return self.maket['score'] if self.maket else 0.0
 
-    def nisan_noktasi(self):
+    def olculen_ofset(self):
+        """
+        Balonun maket kutusuna göre ÖLÇÜLEN bağıl konumu.
+
+        Döner: (dx/mw, dy/mw, yaricap/mw) veya None.
+
+        Maket genişliğine normalize edildiği için mesafeden bağımsız —
+        `PAIR_FALLBACK_AIM_OFFSET` sabitinin ölçümle öğrenilmiş hali.
+        """
+        if self.maket is None or self.balon is None:
+            return None
+        mx, my = _merkez(self.maket['bbox'])
+        mw = float(self.maket['bbox'][2])
+        if mw <= 0:
+            return None
+        bx, by = _merkez(self.balon['bbox'])
+        yaricap = max(self.balon['bbox'][2], self.balon['bbox'][3]) / 2.0
+        return ((bx - mx) / mw, (by - my) / mw, yaricap / mw)
+
+    def nisan_noktasi(self, ogrenilen_ofset=None, maket_merkezine=False):
         """
         Nişan alınacak piksel konumu ve o noktanın "yarıçapı".
 
+        Döner: (cx, cy, yaricap, balon_gercekten_gorundu) veya None.
+
         Balon varsa oraya nişan alınır. Balon 15 metrede avcıda yalnızca
         30 piksel — YOLO için küçük-nesne sınırı; tespit zayıflayabilir.
-        O durumda nişan noktası maketten geometrik olarak türetilir
-        (maket 96 piksel, çok daha güvenilir).
+
+        BALON GÖRÜNMEDİĞİNDE nişan noktası maketten türetilir, AMA nasıl
+        türetildiği kritik. Sahada ölçüldü (asama2-3-hedefTakip.mp4): sabit
+        `PAIR_FALLBACK_AIM_OFFSET` (0.75) formülüyle üretilen nokta, gerçek
+        balon merkezinin 25-34 piksel YUKARISINA düşüyordu. İki kaynak aynı
+        x'te ama farklı y'de olduğu için her kaynak değişimi SAF BİR PITCH
+        SIÇRAMASI üretiyordu — ölçülen ardışık hatalar: yaw -5 px'te sabit
+        dururken pitch -52 ile +22 arasında zıplıyordu. Kilit salınımının
+        kök nedeni buydu.
+
+        `ogrenilen_ofset`: balon en son görüldüğünde ÖLÇÜLEN bağıl konum
+        (`olculen_ofset` çıktısı). Verilirse sabit formül yerine bu kullanılır
+        ve kaynak değişimindeki sıçrama sıfıra iner — türetilen nokta tam
+        olarak balonun en son bulunduğu yeri gösterir.
+
+        `maket_merkezine`: balon yokken maketin TAM MERKEZİNE nişan al.
+        Hedef Takip modu için: o mod bir ölçüm aracı, görülmeyen bir balonun
+        yerini tahmin etmemeli — kullanıcı kutunun ortasını bekliyor.
         """
         if self.balon is not None:
             cx, cy = _merkez(self.balon['bbox'])
             yaricap = max(self.balon['bbox'][2], self.balon['bbox'][3]) / 2.0
             return cx, _nisan_yuksekligi(cy, yaricap), yaricap, True
-        if self.maket is not None and config.PAIR_ALLOW_FALLBACK_AIM:
-            mx, my = _merkez(self.maket['bbox'])
-            mw = float(self.maket['bbox'][2])
-            yaricap = mw * 0.15
-            merkez_y = my + mw * config.PAIR_FALLBACK_AIM_OFFSET
-            return mx, _nisan_yuksekligi(merkez_y, yaricap), yaricap, False
-        return None
+
+        if self.maket is None:
+            return None
+
+        mx, my = _merkez(self.maket['bbox'])
+        mw = float(self.maket['bbox'][2])
+
+        if maket_merkezine:
+            yaricap = max(4.0, min(mw, float(self.maket['bbox'][3])) / 2.0)
+            return mx, my, yaricap, False
+
+        if not config.PAIR_ALLOW_FALLBACK_AIM:
+            return None
+
+        if ogrenilen_ofset is not None:
+            dx, dy, dr = ogrenilen_ofset
+            yaricap = max(4.0, dr * mw)
+            return (mx + dx * mw, _nisan_yuksekligi(my + dy * mw, yaricap),
+                    yaricap, False)
+
+        yaricap = mw * 0.15
+        merkez_y = my + mw * config.PAIR_FALLBACK_AIM_OFFSET
+        return mx, _nisan_yuksekligi(merkez_y, yaricap), yaricap, False
 
 
 def _nisan_yuksekligi(merkez_y, yaricap):
@@ -285,6 +338,14 @@ class AngajmanMakinesi:
         self.dogrulanan_sinif = None
         self.imha_sayisi = 0
 
+        # IMHA DOGRULAMA penceresi
+        self.ates_sayisi = 0           # bu hedefe yapılan ardışık atış
+        self.son_ates_zamani = 0.0
+        self._ates_balon_gorulme = 0   # pencerede balon kaç karede görüldü
+
+        # Balon en son görüldüğünde ölçülen bağıl konumu (nişan sürekliliği).
+        self.nisan_ofseti = None
+
     # ---- durum geçişleri ----
 
     def _gec(self, yeni):
@@ -298,6 +359,12 @@ class AngajmanMakinesi:
                 self.kilit_aci = None
                 self.kopru_kare = 0
                 self.yabanci_maket_ardisik = 0
+                # Yeni hedefe geçiliyor: atış bütçesi ve öğrenilen nişan
+                # ofseti sıfırlanmalı. Ofset maket genişliğine normalize
+                # olsa da başka bir hedefin geometrisini taşımamalı.
+                self.ates_sayisi = 0
+                self._ates_balon_gorulme = 0
+                self.nisan_ofseti = None
 
     def gecen(self):
         return time.time() - self.durum_zamani
@@ -559,6 +626,50 @@ class AngajmanMakinesi:
             return True
         return False
 
+    def nisan_ofsetini_ogren(self, cift):
+        """Balon görülüyorken bağıl konumunu sakla (nişan sürekliliği)."""
+        olcum = cift.olculen_ofset() if cift is not None else None
+        if olcum is not None:
+            self.nisan_ofseti = olcum
+
+    def ates_kaydet(self):
+        """
+        Ateş komutu gönderildi: imha doğrulama penceresini aç.
+
+        ESKİDEN burada doğrudan `imha_edildi()` çağrılıyordu, yani ateş
+        etmek imha saymaya yetiyordu. Ölçülen sonuç: balon patlamasa bile
+        hedef 12 saniye kara listeye giriyor ve sistem onu görmezden
+        geliyordu (bkz. `config.FIRE_CONFIRM_SEC` yorumu).
+        """
+        self.ates_sayisi += 1
+        self.son_ates_zamani = time.time()
+        self._ates_balon_gorulme = 0
+
+    def ates_dogrulama_adimi(self, balon_gorundu):
+        """
+        Ateş sonrası imha doğrulama penceresini bir adım ilerletir.
+
+        HER KAREDE çağrılır. Döner:
+          'bekle'     — pencere sürüyor, karar yok
+          'onaylandi' — balon kayboldu, imha doğrulandı
+          'tekrar'    — balon hâlâ orada, yeniden ateş edilmeli
+          'pes'       — balon duruyor ama atış bütçesi doldu
+
+        Balonun tek kare kaçırılması "imha" sanılmasın diye pencere boyunca
+        görülme SAYILIYOR; karar pencerenin sonunda veriliyor.
+        """
+        if self.ates_sayisi <= 0:
+            return 'bekle'
+        if balon_gorundu:
+            self._ates_balon_gorulme += 1
+        if time.time() - self.son_ates_zamani < config.FIRE_CONFIRM_SEC:
+            return 'bekle'
+        if self._ates_balon_gorulme <= config.FIRE_CONFIRM_MAX_SEEN:
+            return 'onaylandi'
+        if self.ates_sayisi >= config.FIRE_MAX_ATTEMPTS:
+            return 'pes'
+        return 'tekrar'
+
     def kara_listeye_al(self, ttl, sebep=''):
         if self.hedef_yaw is not None:
             self.kara_liste.ekle(self.hedef_yaw, self.hedef_pitch, ttl, sebep)
@@ -566,6 +677,12 @@ class AngajmanMakinesi:
     def imha_edildi(self):
         self.imha_sayisi += 1
         self.kara_listeye_al(config.BLACKLIST_TTL_SEC, 'imha')
+        self.aktif_iz_id = None
+        self._gec(TARAMA)
+
+    def imha_edilemedi(self):
+        """Atış bütçesi doldu, balon hâlâ duruyor: hedefi geçici olarak bırak."""
+        self.kara_listeye_al(config.BLACKLIST_VERIFY_TTL_SEC, 'imha edilemedi')
         self.aktif_iz_id = None
         self._gec(TARAMA)
 

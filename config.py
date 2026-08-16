@@ -679,6 +679,34 @@ AIM_TOLERANCE_MIN_PIXELS = 9.0
 # Ateşten önce nişan kaç kare korunmalı.
 AIM_HOLD_FRAMES = 3
 
+# --- IMHA DOGRULAMA ---
+# Sahada olculdu (asama2-3-hedefTakip.mp4): Asama 3'te ates 4.07 saniyede
+# verildi, hemen ardindan `imha_edildi()` cagrildi ve hedef 12 saniye kara
+# listeye girdi. Sonraki 6+ saniye boyunca durum satiri kesintisiz
+# "TARAMA - gozcude uygun aday yok (1-3 iz) | 1-2 cift | imha 1" yazdi:
+# gozcu izi goruyor, avci cifti goruyor, sistem angaje OLMUYOR.
+#
+# Sebep: sistemde imha DOGRULAMASI yoktu, "ates ettim" = "imha ettim"
+# varsayiliyordu. Sarjor takili degilken veya iska gectiginde sistem bunu
+# asla ogrenemiyor ve hedefi 12 saniye boyunca gormezden geliyordu.
+#
+# Yeni davranis: ates sonrasi bir DOGRULAMA PENCERESI aciliyor. Pencere
+# boyunca balon HIC gorulmezse imha onaylanir; hala goruluyorsa ayni hedefe
+# tekrar ates edilir (butce dahilinde). Tek karelik kacirma "imha" sanilmasin
+# diye pencerede balonun kac karede goruldugu sayiliyor.
+FIRE_CONFIRM_SEC = 0.7        # pencere suresi: balon kaybolmasi icin beklenen
+FIRE_CONFIRM_MAX_SEEN = 1     # pencerede bu kadar karede gorulurse "hala orada"
+FIRE_MAX_ATTEMPTS = 3         # ayni hedefe ardisik en fazla kac ates
+
+# --- HEDEF TAKIP: hedef surekliligi ---
+# Takip modunda secilen hedef, bir sonraki karede bu piksel yaricapi icinde
+# aranir; bulunamazsa (gercekten kayboldu) yeni hedef secilir.
+# Sahada olculdu: merkeze yaklasan bir hayalet yuzunden nisan hatasi tek
+# karede 400 piksel sicradi. 150 px, hedefin bir karede alabilecegi gercek
+# yolun cok uzerinde (30 fps'te 15 m'de 150 px ~ 2 derece) ama hayaletin
+# uzagina dusuyor.
+TRACK_REACQUIRE_PIXELS = 150.0
+
 # Kara liste: doğrulamada DOST çıkan veya imha edilen hedefler buraya girer.
 # Gövde çerçevesinde MUTLAK açı olarak tutulur (piksel uzayında tutmak
 # anlamsız, taret döndükçe referans kayar).
@@ -753,11 +781,22 @@ DETECTION_MAX_AREA_RATIO = 0.25
 # Kapi DEGREES_PER_PIXEL uzerinden tanimli, yani cozunurluk veya lens
 # degisince kendiliginden olcekleniyor.
 DETECTION_SIZE_CHECK = True
-GERCEK_BOYUTLAR_M = {'balon': 0.14, 'maket': 0.50}
-# En yakin yaklasma mesafesi. SAHADA OLCULMELI: hedefler 15 metreden
-# gelip yanlardan cikiyor; gercek en yakin mesafe buysa kapi cok daha
-# etkili olur (7 metrede maketin ust siniri 400 px'e iner).
-TARGET_MIN_RANGE_M = 4.0
+# BALON 0.14 -> 0.19: sahada olculdu (asama2-3-hedefTakip.mp4). Maket kutusu
+# 208 px, balon kutusu 78 px olculdu; maket 50 cm kabul edilince mesafe
+# 9.63 m ve ayni mesafede 78 px'lik balonun gercek capi 18.7 cm cikiyor.
+# 0.14 sisirilmemis balonun capiydi. Bu duzeltme TARGET_MIN_RANGE_M ile
+# BIRLIKTE zorunlu: 7.5 m'de 0.14 varsayimi balon ust sinirini 105 px'e
+# indiriyor, oysa balon 7.5 m'de 100 px olarak gorunuyor -- %5 pay kalirdi
+# ve gercek balonlar elenmeye baslardi. 0.19 ile ust sinir 142 px olur.
+GERCEK_BOYUTLAR_M = {'balon': 0.19, 'maket': 0.50}
+# 4.0 -> 7.5: sahada hicbir hedef 7.5 metreden yakin degil (kullanici
+# beyani; atislar 7.5-15 m arasi). 4.0 iken maketin ust siniri 700 px'ti ve
+# olculen sahte 'dusman-fuze' kutusu 693 px ile 7 PIKSEL FARKLA geciyordu.
+#   50 cm @ 4.0 m -> 500 px, x1.40 = 700 px   (eski)
+#   50 cm @ 7.5 m -> 267 px, x1.40 = 373 px   (yeni)
+# Kayitta olculen sahte kutular 693 / 487 / 464 / 445 px -- hepsi elenir.
+# Olculen GERCEK maket kutusu 162-172 px, yani 373 sinirinin cok altinda.
+TARGET_MIN_RANGE_M = 7.5
 TARGET_MAX_RANGE_M = 20.0
 # Alt sinir KASITLI OLARAK GEVSEK: amac dev hayaletleri kesmek, kucuk
 # tespitleri elemek degil. Maket yan donunce gorunen boyu kuculebilir.

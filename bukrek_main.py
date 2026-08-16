@@ -110,6 +110,11 @@ class HavaSavunmaArayuz(QWidget):
         self.aktif_cift = None         # o karedeki maket+balon çifti
         self.balon_gercek_goruldu = False
         self._son_angajman_komutu = 0.0
+        # Kilitli hedefin GERÇEK tespit kutuları (çizim için).
+        self._kilitli_bboxlar = set()
+        self._nisan_alinan_bbox = None
+        # Hedef Takip modunda takip edilen noktanın son konumu (süreklilik).
+        self._takip_hedef_kimlik = None
 
         # Kameranın ham kare boyutu. İlk sonuç geldiğinde inference sürecinden
         # gerçek değerlerle güncellenir; buradakiler yalnızca başlangıç değeridir.
@@ -775,28 +780,49 @@ class HavaSavunmaArayuz(QWidget):
             self.spotter_label.width(), self.spotter_label.height(),
             Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
-    def _nisan_tespiti(self, cift):
+    def _nisan_tespiti(self, cift, maket_merkezine=False):
         """
         Hedef çiftinden PID'in kullanacağı sanal bir tespit üretir.
 
         Balon varsa oraya nişan alınır. Balon 15 metrede avcıda yalnızca 30
         piksel — YOLO için küçük-nesne sınırı. Tespit zayıfladığında nişan
-        noktası maketten geometrik olarak türetilir (maket 96 piksel).
-        Bu geçiş `balon_gercek_goruldu` ile işaretlenir; ATEŞ kilidi gerçek
-        balon görülmeden ateşe izin vermez.
+        noktası maketten türetilir; bu geçiş `balon_gercek_goruldu` ile
+        işaretlenir ve ATEŞ kilidi gerçek balon görülmeden ateşe izin vermez.
+
+        TÜRETME ARTIK ÖLÇÜME DAYANIYOR. Balon her görüldüğünde maket
+        kutusuna göre bağıl konumu öğreniliyor (`nisan_ofsetini_ogren`) ve
+        balon kaybolduğunda sabit `PAIR_FALLBACK_AIM_OFFSET` formülü yerine
+        o ölçüm kullanılıyor. Sabit formül sahada balon merkezinin 25-34
+        piksel yukarısına düşüyordu ve her kaynak değişimi saf bir pitch
+        sıçraması üretiyordu — kilit salınımının kök nedeni buydu.
+
+        `kaynak_bbox`: nişan noktasını üreten GERÇEK tespitlerin kutuları.
+        Çizim bunları kullanıyor; sanal kutu hiçbir tespitin bbox'ı olmadığı
+        için "kilitli hedef kırmızı" kuralı eskiden hiç tutmuyordu.
         """
-        nokta = cift.nisan_noktasi()
+        self.angajman.nisan_ofsetini_ogren(cift)
+        nokta = cift.nisan_noktasi(
+            ogrenilen_ofset=self.angajman.nisan_ofseti,
+            maket_merkezine=maket_merkezine)
         if nokta is None:
             return None
         cx, cy, yaricap, gercek = nokta
         self.balon_gercek_goruldu = gercek
         yaricap = max(4.0, yaricap)
+        kaynak = []
+        if cift.balon is not None:
+            kaynak.append(tuple(int(v) for v in cift.balon['bbox']))
+        if cift.maket is not None:
+            kaynak.append(tuple(int(v) for v in cift.maket['bbox']))
         return {
             'bbox': (int(cx - yaricap), int(cy - yaricap),
                      int(2 * yaricap), int(2 * yaricap)),
             'class_name': cift.sinif or config.BALLOON_CLASS,
             'score': cift.guven,
             'yaricap': yaricap,
+            'kaynak_bbox': kaynak,
+            'nisan_bbox': (tuple(int(v) for v in cift.balon['bbox'])
+                           if cift.balon is not None else None),
         }
 
     @staticmethod
@@ -814,6 +840,47 @@ class HavaSavunmaArayuz(QWidget):
         en_iyi = max(d['score'] for d in liste)
         esik = en_iyi - config.ACQUIRE_CONFIDENCE_MARGIN
         return [d for d in liste if d['score'] >= esik]
+
+    def _takip_hedefi_sec(self, ciftler):
+        """
+        Hedef Takip modunda takip edilecek çifti seçer — SÜREKLİLİKLE.
+
+        Eskiden burada doğrudan `ciftler[0]` (kare merkezine en yakın çift)
+        kullanılıyordu ve seçim her karede sıfırdan yapılıyordu. Sahada
+        ölçüldü (asama2-3-hedefTakip.mp4, kare 825): merkeze yaklaşan bir
+        hayalet tespit yüzünden nişan hatası TEK KAREDE 400 piksel sıçradı,
+        sonraki karede 0'a döndü. PID'e giren bu sıçrama taret sarsıntısına
+        dönüşüyordu.
+
+        Artık bir hedef seçildikten sonra, ONA EN YAKIN çift tercih ediliyor;
+        hedef yalnızca gerçekten kaybolduğunda (yakınında hiçbir çift
+        kalmadığında) yenisi seçiliyor.
+        """
+        if not ciftler:
+            return None
+
+        def nokta(cift):
+            n = cift.nisan_noktasi(maket_merkezine=True)
+            return None if n is None else (n[0], n[1])
+
+        onceki = getattr(self, '_takip_hedef_kimlik', None)
+        if onceki is not None:
+            en_iyi, en_kisa = None, float('inf')
+            for c in ciftler:
+                p = nokta(c)
+                if p is None:
+                    continue
+                d = ((p[0] - onceki[0]) ** 2 + (p[1] - onceki[1]) ** 2) ** 0.5
+                if d < en_kisa:
+                    en_iyi, en_kisa = c, d
+            # Eşik kare genişliğinin oranı: çözünürlükten bağımsız kalsın.
+            if en_iyi is not None and en_kisa <= config.TRACK_REACQUIRE_PIXELS:
+                self._takip_hedef_kimlik = nokta(en_iyi)
+                return en_iyi
+
+        secim = next((c for c in ciftler if nokta(c) is not None), None)
+        self._takip_hedef_kimlik = nokta(secim) if secim is not None else None
+        return secim
 
     def _ciftleri_sirala(self, detections, merkez_x, merkez_y, tek_balon=False):
         """Tespitlerden çiftleri kurup kare merkezine yakınlığa göre sıralar."""
@@ -1009,29 +1076,63 @@ class HavaSavunmaArayuz(QWidget):
 
     def _otonom_ates_denemesi(self):
         """
-        ATEŞ durumundaysa kilitleri kontrol edip ateşler.
+        ATEŞ durumundaysa kilitleri kontrol edip ateşler, sonra İMHAYI DOĞRULAR.
 
         Eski kodda Aşama 3, TAHMİN EDİLMİŞ (görülmemiş) hedefe ateş
         edebiliyordu; `balon_gercek_goruldu` ve maket kontrolü bunu kapatır.
+
+        İMHA DOĞRULAMASI: ateş komutu artık hedefi doğrudan imha saymıyor.
+        Sahada ölçüldü — ateşten sonra hedef 12 saniye kara listeye giriyor
+        ve balon patlamamış olsa bile sistem onu görmezden geliyordu. Artık
+        ateşin ardından bir doğrulama penceresi açılıyor: balon kaybolduysa
+        imha onaylanır, hâlâ duruyorsa aynı hedefe yeniden ateş edilir.
         """
         if self.angajman.durum != ATES:
             return
+
+        # --- Ateş edilmiş, doğrulama penceresi açık mı? ---
+        if self.angajman.ates_sayisi > 0:
+            sonuc = self.angajman.ates_dogrulama_adimi(self.balon_gercek_goruldu)
+            if sonuc == 'bekle':
+                self._update_status_label(
+                    f"Durum: ATEŞ — imha doğrulanıyor "
+                    f"({self.angajman.ates_sayisi}. atış)")
+                return
+            if sonuc == 'onaylandi':
+                self._update_status_label(
+                    f"Durum: İMHA DOĞRULANDI — balon kayboldu "
+                    f"({self.angajman.ates_sayisi} atış)")
+                self.angajman.imha_edildi()
+                self.aktif_cift = None
+                return
+            if sonuc == 'pes':
+                self._update_status_label(
+                    f"Durum: Balon duruyor ama atış bütçesi doldu "
+                    f"({config.FIRE_MAX_ATTEMPTS}) — sıradaki hedefe.")
+                self.angajman.imha_edilemedi()
+                self.aktif_cift = None
+                return
+            # 'tekrar': balon hâlâ orada, aşağıdaki ateş yoluna düşülür.
+
         izin, gerekce = engagement.ates_serbest_mi(
             self.aktif_cift, self.angajman, self.balon_gercek_goruldu,
             self.is_aimed_at_target, self.current_yaw_angle,
             self.no_fire_yaw_start, self.no_fire_yaw_end)
         if not izin:
             self._update_status_label(f"Ateş engellendi: {gerekce}")
-            if self.angajman.gecen() > 1.5:
+            # Ateş edilmişse KİLİT'e düşmek doğrulama penceresini kaybettirir;
+            # pencere kapanana kadar ATEŞ'te kalınır.
+            if self.angajman.gecen() > 1.5 and self.angajman.ates_sayisi == 0:
                 self.angajman._gec(KILIT)
             return
+
         self.send_command_to_rpi({"action": "fire"})
         self.last_fire_time = time.time()
+        self.angajman.ates_kaydet()
         self._update_status_label(
             f"Durum: ATEŞ — {self.aktif_cift.sinif} "
-            f"({self.angajman.imha_sayisi + 1}. hedef)")
-        self.angajman.imha_edildi()
-        self.aktif_cift = None
+            f"({self.angajman.imha_sayisi + 1}. hedef, "
+            f"{self.angajman.ates_sayisi}. atış)")
 
     def _update_current_angles(self, yaw, pitch):
         self.current_yaw_angle = yaw
@@ -1050,14 +1151,25 @@ class HavaSavunmaArayuz(QWidget):
     def _process_rpi_response(self, response_data):
         if response_data.get("status") == "ok":
             if response_data.get("action") == "fire":
-                self._update_status_label("Durum: Ateşleme Başarılı!")
                 print("Ateşleme Başarılı!")
-                if self.active_task in ['task1', 'task2', 'task3']:
+                # OTONOM MODLARDA `target_destroyed` BURADA SET EDİLMEZ.
+                # Pi'nin "ateş komutu çalıştı" yanıtı, balonun patladığı
+                # anlamına gelmiyor — o kararı imha doğrulama penceresi
+                # veriyor (`ates_dogrulama_adimi`). Burada bayrağı kaldırmak
+                # iki şeyi birden bozuyordu: servolama koşulu
+                # `not self.target_destroyed` olduğu için taret doğrulama
+                # penceresi boyunca hedefi bırakıyor, ve `reset_pid_state()`
+                # tam da ikinci atış gerekebilecek anda kilidi sıfırlıyordu.
+                if self.active_task in self.OTONOM_MODLAR:
+                    self._update_status_label("Durum: Ateşleme başarılı, imha doğrulanıyor...")
+                elif self.active_task == 'task1':
                     self.target_destroyed = True
                     self.waiting_for_new_engagement_command = True
                     self._update_status_label("Durum: Hedef yok edildi. Yeni angajman bekleniyor...")
                     self.target_info_label.setText("Hedef Bilgisi: Yok Edildi.")
                     self.reset_pid_state()
+                else:
+                    self._update_status_label("Durum: Ateşleme Başarılı!")
             elif response_data.get("action") == "reset_angles":
                 self._update_status_label("Durum: Taret açıları Raspberry Pi'de (0,0) olarak sıfırlandı.")
                 self.update_info_panel("Taret açıları sıfırlandı: Yaw 0.0°, Pitch 0.0°")
@@ -1149,6 +1261,9 @@ class HavaSavunmaArayuz(QWidget):
     def cancel_task(self):
         self.angajman.durdur()
         self.aktif_cift = None
+        self._kilitli_bboxlar = set()
+        self._nisan_alinan_bbox = None
+        self._takip_hedef_kimlik = None
         self.active_task = None
         self.inference_cmd_q.put({"action": "SET_TASK", "task": None})
 
@@ -2023,14 +2138,21 @@ class HavaSavunmaArayuz(QWidget):
                 ciftler = self._ciftleri_sirala(
                     detections, center_x_frame, center_y_frame, tek_balon=True)
                 acilar = self._cift_acilari(ciftler)
-                if ciftler:
-                    self.aktif_cift = ciftler[0]
-                    sanal_hedef = self._nisan_tespiti(ciftler[0])
+                secili = self._takip_hedefi_sec(ciftler)
+                if secili is not None:
+                    self.aktif_cift = secili
+                    # `maket_merkezine=True`: balon yoksa MAKETİN TAM ORTASINA
+                    # nişan alınır, "balonun olması gereken yer" tahmin
+                    # EDİLMEZ. Bu mod bir ölçüm aracı; sahada balonsuz bir
+                    # makette nişangah kutunun altına düşüyordu ve kullanıcı
+                    # haklı olarak kutunun ortasını bekliyordu.
+                    sanal_hedef = self._nisan_tespiti(secili, maket_merkezine=True)
                     self.target_info_label.setText(
-                        f"Hedef: {ciftler[0].sinif or 'balon'} takip ediliyor "
+                        f"Hedef: {secili.sinif or 'balon'} takip ediliyor "
                         f"({len(ciftler)} aday)")
                 else:
                     self.aktif_cift = None
+                    self._takip_hedef_kimlik = None
                     self.target_info_label.setText("Hedef Bilgisi: Hedef yok.")
 
             if self.is_target_active:
@@ -2270,6 +2392,18 @@ class HavaSavunmaArayuz(QWidget):
                             self.target_info_label.setText("Hedef Bilgisi: Yok Edildi. Yeni angajman bekleniyor.")
                         self.target_lost_time = 0.0
 
+            # Kilitli hedefin GERÇEK kutularını belirle (çizim bunları kullanır).
+            self._kilitli_bboxlar = set()
+            self._nisan_alinan_bbox = None
+            if sanal_hedef is not None:
+                self._kilitli_bboxlar = set(sanal_hedef.get('kaynak_bbox') or ())
+                self._nisan_alinan_bbox = sanal_hedef.get('nisan_bbox')
+            elif current_target_bbox_for_pid is not None:
+                # Manuel / Aşama 1: hedef zaten gerçek bir tespitin kutusu,
+                # sanal nişan noktası üretilmiyor.
+                self._nisan_alinan_bbox = tuple(
+                    int(v) for v in current_target_bbox_for_pid)
+
             # Tespit kutularını çiz: kilitli hedef kırmızı, aynı sınıftan diğerleri
             # sarı, gerisi yeşil. Kutular ham çözünürlükte geldiği için gösterim
             # karesine ölçeklenir.
@@ -2280,13 +2414,26 @@ class HavaSavunmaArayuz(QWidget):
                 w_det = int(w_det * draw_scale_x)
                 h_det = int(h_det * draw_scale_y)
 
-                if self.current_tracked_target_class and det['class_name'] == self.current_tracked_target_class:
-                    if current_target_bbox_for_pid and det['bbox'] == current_target_bbox_for_pid:
-                        yolo_draw_color = (0, 0, 255)  # Kilitli hedef kırmızı
-                    else:
-                        yolo_draw_color = (0, 255, 255)  # Diğer aynı sınıftan hedefler sarı
+                # KİLİTLİ HEDEF KUTUSU: eskiden koşul
+                # `det['bbox'] == current_target_bbox_for_pid` idi ve otonom
+                # modda ASLA tutmuyordu — çünkü o bbox `_nisan_tespiti`'nin
+                # ürettiği SANAL kutu (nişan noktası etrafında 2r x 2r), sınıf
+                # adı da maketin adı. Sonuç: maket "aynı sınıftan diğeri"
+                # sayılıp sarı, balon farklı sınıf olduğu için yeşil çiziliyor,
+                # hiçbir kutu kırmızı olmuyordu. Artık nişan noktasını ÜRETEN
+                # gerçek tespitlerin kutuları işaretleniyor:
+                #   kırmızı  = nişan alınan kutu (balon)
+                #   turuncu  = kilitli çiftin kimlik kutusu (maket)
+                det_bbox = tuple(int(v) for v in det['bbox'])
+                if det_bbox == self._nisan_alinan_bbox:
+                    yolo_draw_color = (0, 0, 255)      # nişan alınan: kırmızı
+                elif det_bbox in self._kilitli_bboxlar:
+                    yolo_draw_color = (0, 165, 255)    # kilitli çiftin maketi: turuncu
+                elif (self.current_tracked_target_class
+                      and det['class_name'] == self.current_tracked_target_class):
+                    yolo_draw_color = (0, 255, 255)    # aynı sınıftan diğerleri: sarı
                 else:
-                    yolo_draw_color = (0, 255, 0)  # Diğer hedefler yeşil
+                    yolo_draw_color = (0, 255, 0)      # gerisi: yeşil
 
                 cv2.rectangle(display_frame, (x, y), (x + w_det, y + h_det), yolo_draw_color, 2)
                 cv2.putText(display_frame, f"YOLO: {det['class_name']} ({det['score']:.2f})", (x, y - 25),

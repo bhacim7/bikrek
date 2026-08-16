@@ -648,6 +648,99 @@ kontrol("sinif tutmayan cifte SESSIZCE dusulmuyor", _sec is None, f"{_sec}")
 
 print()
 print("=" * 70)
+print("14. NISAN SUREKLILIGI, IMHA DOGRULAMA, BOYUT KAPISI")
+print("=" * 70)
+
+# (a) Kaynak degisiminde pitch sicramasi -- salinimin kok nedeni.
+# Saha geometrisi (asama2-3-hedefTakip.mp4): maket 162x208, balon 78x74.
+_mk = det('dusman-F16', 800, 300, 162, 208)
+_bl = det('balon', 842, 533, 78, 74)
+_c_tam = engagement.cift_eslestir([_mk, _bl])[0]
+_ofs = _c_tam.olculen_ofset()
+_n_tam = _c_tam.nisan_noktasi()
+kontrol("balon varken olculen ofset uretiliyor",
+        _ofs is not None and abs(_ofs[0]) < 0.01,
+        f"dx/mw={_ofs[0]:.3f} dy/mw={_ofs[1]:.3f}")
+
+_c_yok = engagement.cift_eslestir([_mk])[0]
+_n_sabit = _c_yok.nisan_noktasi()                        # eski sabit formul
+_n_ogrn = _c_yok.nisan_noktasi(ogrenilen_ofset=_ofs)     # ogrenilmis
+_sicrama_sabit = abs(_n_sabit[1] - _n_tam[1])
+_sicrama_ogrn = abs(_n_ogrn[1] - _n_tam[1])
+kontrol("sabit formul GERCEKTEN sicrama uretiyor (regresyon tanigi)",
+        _sicrama_sabit > 20.0, f"{_sicrama_sabit:.1f} px")
+kontrol("ogrenilen ofset sicramayi SIFIRLIYOR",
+        _sicrama_ogrn < 0.5, f"{_sicrama_ogrn:.2f} px (sabit formul {_sicrama_sabit:.1f})")
+kontrol("ogrenilen yolda balon 'gercek gorundu' SAYILMIYOR",
+        _n_ogrn[3] is False, f"{_n_ogrn[3]}")
+
+# (b) Hedef Takip: balon yoksa maketin TAM ORTASI (tahmin yok)
+_n_mrk = _c_yok.nisan_noktasi(maket_merkezine=True)
+kontrol("takip modu maketin tam ortasina nisan aliyor",
+        abs(_n_mrk[0] - (800 + 81)) < 0.5 and abs(_n_mrk[1] - (300 + 104)) < 0.5,
+        f"({_n_mrk[0]:.0f}, {_n_mrk[1]:.0f}) beklenen (881, 404)")
+
+# (c) Imha dogrulama penceresi
+def _ates_edip_bekle(balon_var, kare=5):
+    m = engagement.AngajmanMakinesi(); m.basla('task2')
+    m._gec(engagement.ATES); m.ates_kaydet()
+    ilk = m.ates_dogrulama_adimi(balon_var)
+    m.son_ates_zamani = time.time() - config.FIRE_CONFIRM_SEC - 0.01
+    son = 'bekle'
+    for _ in range(kare):
+        son = m.ates_dogrulama_adimi(balon_var)
+    return ilk, son, m
+
+_ilk, _son, _ = _ates_edip_bekle(False)
+kontrol("ates ANINDA imha sayilmiyor (pencere aciliyor)", _ilk == 'bekle', _ilk)
+kontrol("balon kaybolunca imha ONAYLANIYOR", _son == 'onaylandi', _son)
+
+_ilk, _son, _ = _ates_edip_bekle(True)
+kontrol("balon duruyorsa TEKRAR ates isteniyor", _son == 'tekrar', _son)
+
+# Butce dolunca pes edilmeli (sonsuz ates dongusu olmasin)
+_m20 = engagement.AngajmanMakinesi(); _m20.basla('task2')
+_m20._gec(engagement.ATES)
+for _ in range(config.FIRE_MAX_ATTEMPTS):
+    _m20.ates_kaydet()
+    _m20.son_ates_zamani = time.time() - config.FIRE_CONFIRM_SEC - 0.01
+    for _ in range(3):
+        _sonuc20 = _m20.ates_dogrulama_adimi(True)
+kontrol("atis butcesi dolunca 'pes' ediliyor", _sonuc20 == 'pes',
+        f"{_sonuc20} ({_m20.ates_sayisi} atis)")
+
+# Tek karelik kacirma "imha" sanilmamali
+_m21 = engagement.AngajmanMakinesi(); _m21.basla('task2')
+_m21._gec(engagement.ATES); _m21.ates_kaydet()
+for _g in (True, False, True, True, False, True):
+    _m21.ates_dogrulama_adimi(_g)
+_m21.son_ates_zamani = time.time() - config.FIRE_CONFIRM_SEC - 0.01
+kontrol("pencerede balon gorulduyse tek kare kacirma imha SAYILMIYOR",
+        _m21.ates_dogrulama_adimi(True) == 'tekrar', "tekrar bekleniyordu")
+
+# TARAMA'ya donunce atis butcesi ve ofset sifirlanmali
+_m22 = engagement.AngajmanMakinesi(); _m22.basla('task2')
+_m22._gec(engagement.ATES); _m22.ates_kaydet()
+_m22.nisan_ofseti = (0.0, 1.0, 0.2)
+_m22._gec(engagement.TARAMA)
+kontrol("yeni hedefe gecince atis butcesi sifirlaniyor",
+        _m22.ates_sayisi == 0 and _m22.nisan_ofseti is None,
+        f"ates={_m22.ates_sayisi} ofset={_m22.nisan_ofseti}")
+
+# (d) Sinif bazli boyut kapisi: olculen gercek/sahte kutular
+import inference_module as _im
+for _ad, _sinif, _px, _bekle in (
+        ("gercek maket", 'dusman-F16', 172, True),
+        ("gercek balon", 'balon', 78, True),
+        ("gercek balon 7.5 m", 'balon', 100, True),
+        ("sahte fuze (olculdu)", 'dusman-fuze', 693, False),
+        ("sahte kutu 2", 'dusman-F16', 487, False),
+        ("sahte kutu 3", 'dusman-F16', 445, False)):
+    kontrol(f"boyut kapisi: {_ad} {_px} px -> {'gecmeli' if _bekle else 'elenmeli'}",
+            _im._acisal_boyut_makul_mu((0, 0, _px, _px), _sinif) is _bekle)
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)

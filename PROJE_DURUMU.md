@@ -1486,3 +1486,138 @@ Arac su satiri **sabit metin** olarak yazdiriyor (`gozcu_tani.py:198`):
 Gercek ayar `S>=80, V>=45`. Metin 9. bolumdeki esik degisikliginde
 guncellenmemis; ciktinin ust kismindaki `SPOTTER_BLUE_RANGES` dogru
 basiliyor. Duzeltilmeli, yoksa esik taramasi yanlis satirdan okunur.
+
+## 14. 12. bolumdeki bes bulgunun uygulanmasi (2026-08-16)
+
+Her madde icin: NE degisti, NEDEN, ve sahada NE BEKLENMELI.
+
+### D1 -- Boyut kapisi daraltildi
+
+`TARGET_MIN_RANGE_M` 4.0 -> **7.5**, `GERCEK_BOYUTLAR_M['balon']` 0.14 -> **0.19**.
+
+Ikisi BIRLIKTE zorunlu. Yalnizca mesafe degistirilseydi balon ust siniri
+105 px'e inerdi; balon 7.5 metrede 100 px olarak gorunuyor, yani %5 pay
+kalir ve gercek balonlar elenmeye baslardi. Olculen gercek cap 18.7 cm.
+
+| sinif | eski kapi | yeni kapi |
+|---|---|---|
+| maket | 40 .. 700 px | 40 .. **374** px |
+| balon | 11 .. 196 px | 15 .. **142** px |
+
+**Beklenen davranis:** kayitta olculen sahte kutularin (693 / 487 / 464 /
+445 px) hicbiri artik cizilmez. Gercek maket 162-172 px, gercek balon
+78-100 px -- ikisi de rahat gecer. Ekranda arka planda beliren dev
+`dusman-fuze` kutulari **kaybolmali**. Kutu sayisi 3+ olan kare orani
+(olculen %3.9) belirgin dusmeli.
+
+**Dikkat:** 7.5 metreden yakin atis yapilacaksa bu deger geri buyutulmeli,
+yoksa yakin hedefler elenir. Balonu cetvelle olcmek de iyi olur: 0.19
+degeri maketin 50 cm oldugu varsayimindan turetildi.
+
+### D2 -- Imha dogrulamasi
+
+`_otonom_ates_denemesi` artik ates komutundan sonra `imha_edildi()`
+cagirmiyor. Yerine bir **dogrulama penceresi** aciliyor
+(`AngajmanMakinesi.ates_kaydet` / `ates_dogrulama_adimi`).
+
+Yeni sabitler: `FIRE_CONFIRM_SEC = 0.7`, `FIRE_CONFIRM_MAX_SEEN = 1`,
+`FIRE_MAX_ATTEMPTS = 3`.
+
+Pencere boyunca balonun kac karede goruldugu sayiliyor; karar pencerenin
+SONUNDA veriliyor, boylece tek karelik bir kacirma "imha" sanilmiyor.
+
+    balon kayboldu        -> 'onaylandi' -> imha_edildi()  (12 sn kara liste)
+    balon hala duruyor    -> 'tekrar'    -> ayni hedefe yeniden ates
+    butce doldu (3 atis)  -> 'pes'       -> imha_edilemedi() (5 sn kara liste)
+
+Ayrica `_process_rpi_response` artik OTONOM modlarda `target_destroyed`
+bayragini KALDIRMIYOR. Pi'nin "ates komutu calisti" yaniti balonun
+patladigi anlamina gelmiyor; ustelik o bayrak servolama kosulunda
+(`not self.target_destroyed`) yer aldigi icin taret dogrulama penceresi
+boyunca hedefi birakiyordu ve `reset_pid_state()` tam da ikinci atis
+gerekebilecek anda kilidi sifirliyordu.
+
+**Beklenen davranis:** balon patlamazsa ~0.7 saniye sonra **ikinci atis**
+gelir, gerekirse ucuncu. Sarjor takili degilken durum cubugunda
+"ATES - imha dogrulaniyor (1. atis)" -> "(2. atis)" -> "(3. atis)" ->
+"Balon duruyor ama atis butcesi doldu" gorulmeli. Balon patlarsa
+"IMHA DOGRULANDI - balon kayboldu" yazip sonraki hedefe gecmeli.
+Kayittaki "bir ates, sonra 12 saniye hicbir sey" davranisi bitmeli.
+
+### D3 -- Nisan noktasi surekliligi (salinimin kok nedeni)
+
+`HedefCifti.olculen_ofset()` eklendi: balon goruldugunde maket kutusuna
+gore bagil konumu (maket genisligine normalize) olculuyor.
+`nisan_noktasi(ogrenilen_ofset=...)` balon kayboldugunda sabit
+`PAIR_FALLBACK_AIM_OFFSET` formulu yerine bu olcumu kullaniyor.
+Makine ofseti `nisan_ofseti` alaninda tutuyor, TARAMA'ya gecince sifirliyor.
+
+Birim testinde olculen (saha geometrisiyle):
+
+    sabit formul  -> kaynak degisiminde 44.5 px sicrama
+    ogrenilen     -> 0.00 px
+
+**Beklenen davranis:** kilit oturma fazindaki 2-3 saniyelik salinim
+belirgin azalmali. Ozellikle **pitch** hatasinin -52..+22 arasi ziplamasi
+bitmeli; yaw zaten oturuyordu. Nisan hatasi std'sinin oturma fazinda
+12-15 px'ten tek haneye inmesi beklenir. Kilitten atese gecen sure
+kisalmali.
+
+Sabit formul yalnizca balon HIC gorulmemisken (ofset ogrenilmemisken)
+devrede kalir -- yani ilk kilitte, ilk balon tespitine kadar.
+
+### D4 -- Kilitli hedefin kutusu
+
+`_nisan_tespiti` artik nisan noktasini URETEN gercek tespitlerin kutularini
+da donduruyor (`kaynak_bbox`, `nisan_bbox`). Cizim kurali sanal kutuyla
+karsilastirma yapmiyor:
+
+    kirmizi  = nisan alinan kutu (balon)
+    turuncu  = kilitli ciftin kimlik kutusu (maket)
+    sari     = ayni siniftan diger hedefler
+    yesil    = gerisi
+
+**Beklenen davranis:** kilitlenince balonun kutusu **kirmizi**, maketin
+kutusu **turuncu** olmali. Onceden otonom modda hicbir kutu kirmizi
+olamiyordu (maket sari, balon yesil). Manuel ve Asama 1 yolu degismedi:
+orada hedef zaten gercek bir tespit oldugu icin kirmizi cizilmeye devam
+eder.
+
+### D5 -- Hedef Takip modu
+
+Iki degisiklik:
+
+1. `_nisan_tespiti(..., maket_merkezine=True)` -- balon yoksa **maketin tam
+   ortasina** nisan alinir. Onceden "balonun olmasi gereken yer" tahmin
+   ediliyordu ve nisangah kutunun altina dusuyordu. Bu mod bir olcum araci;
+   gorulmeyen bir seyin yerini tahmin etmemeli.
+2. `_takip_hedefi_sec()` -- hedef surekliligi. Secilen hedef bir sonraki
+   karede `TRACK_REACQUIRE_PIXELS` (150 px) yaricapi icinde aranir;
+   bulunamazsa yeni hedef secilir. Onceden her karede `ciftler[0]`
+   (merkeze en yakin) aliniyordu ve merkeze yaklasan bir hayalet hedefi
+   caliyordu -- kayitta tek karede **400 px** sicrama olculdu.
+
+**Beklenen davranis:** nisangah tespit kutusunun **tam ortasina** oturmali
+ve orada kalmali. Ani buyuk sicramalar bitmeli. Hedef gercekten kaybolana
+kadar (150 px'lik pencerede hicbir cift kalmayana kadar) baska bir tespite
+atlanmamali.
+
+### Test durumu
+
+`tests_yeni_mimari.py`'ye **14. bolum** eklendi (17 kontrol): nisan
+surekliligi, sabit formulun sicrama uretmesi (regresyon tanigi), takip
+modunun maket merkezine nisan almasi, imha dogrulama penceresinin dort
+sonucu, atis butcesi, TARAMA'da sifirlanma, ve olculen gercek/sahte kutu
+boyutlariyla kapi kontrolu. **Tum testler geciyor.**
+
+UI mantigi (takip surekliligi + kutu renk kurali) PyQt5 olmadan izole
+calistirilarak ayrica dogrulandi: hayalet hedefi calmiyor (sicrama 0 px),
+kayipta yeni hedef seciliyor, balon kirmizi / maket turuncu ciziliyor.
+
+### Bu turda DEGISTIRILMEYENLER
+
+- PID kazanclari: olculen kararli hal std'si 0.1-0.2 px, yani PID saglam.
+  Salinim tespit surekliligindendi.
+- Asama 3 gorev mantigi (butce / erken durma).
+- `AIM_POINT_HEIGHT_RATIO = 0.5` (tam merkez).
+- Gozcu renk ayarlari -- 13. bolumde arsivlendigi gibi duruyor.
