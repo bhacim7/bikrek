@@ -1696,3 +1696,101 @@ Not: `dost-F16` KIRMIZI kutuyla cizildi. Bu dogru davranis -- Asama 1'de
 kirmizi "su an PID/kalibrasyon hedefi" demek, "dusman" demek degil; nisangah
 merkezdeydi ve merkeze en yakin tespit oydu. Yine de renk kodunun anlami
 operator icin kafa karistirici olabilir.
+
+## 17. anavlizaşama2/3 cozumlemesi: balonsuz hedefte takilma (2026-08-16)
+
+Iki kayit kare kare cozumlendi (858 + 2287 kare, 405 + 847 metin degisimi).
+
+### En onemli bulgu: SAHNEDE BALON YOK
+
+Her iki kayitta da balonlar zaten patlatilmis durumda; yerde balon parcalari
+goruluyor. Olculen balon tespit orani:
+
+| kayit | kilitli maket goruldu | **balon goruldu** |
+|---|---|---|
+| asama3 (k400-858) | %89 | **%0** |
+| asama2 (k1900-2280) | %77 | **%13** |
+
+Durum satiri bunu dogruluyor: kesintisiz
+`Ates engellendi: cifte balon eslesmemis (nisan noktasi tahmini)`.
+Asama 3 kaydinda video boyunca **hic ates edilmemis**.
+
+### Sorun 1 -- Balonsuz hedeften CIKIS YOLU YOK (kritik)
+
+Kullanicinin "patlattiktan sonra digerlerine gitmiyor" ve "balonu olmamasina
+ragmen kilitlenmis gibi durdu" sikayetlerinin tek bir kok nedeni var.
+
+Dongu:
+
+    KILIT: nisan toleransi saglanir (balon o karede goruldu) -> ATES
+    ATES : ates_serbest_mi -> "cifte balon eslesmemis" -> engellenir
+           1.5 sn sonra -> KILIT
+    ...bastan
+
+Her gecis `_gec()` cagiriyor, o da **`durum_zamani`yi sifirliyor**. Yani
+`ENGAGE_LOCK_TIMEOUT` (8 sn) hicbir zaman dolmuyor -- sayac surekli basa
+donuyor.
+
+Simulasyonla dogrulandi (60 saniye, balon ARALIKLI goruluyor):
+
+| balon gorulme orani | sonuc |
+|---|---|
+| %0 | 8.1 sn'de TARAMA'ya doner (timeout calisir) |
+| %10 | 8.1 sn'de TARAMA'ya doner |
+| **%25** | **60 sn TAKILI KALDI** (20 kez ATES gecisi) |
+| **%50** | **60 sn TAKILI KALDI** (34 kez ATES gecisi) |
+
+Sahada olculen oran %13 (asama2) -- yani tam sinirda; balon ara sira
+gorulunce sistem sonsuza kadar o hedefte kaliyor.
+
+**Bu, Asama 3 gorev mantigiyla ILGILI DEGIL.** `imha_edildi()` zaten
+TARAMA'ya donup siradaki hedefe geciyor. "Bir tane patlatip bekliyor"
+davranisi bilincli bir kural degil, bu takilmanin sonucu.
+
+### Sorun 2 -- Salinimin gercek kaynagi
+
+Balon gorulmedigi icin nisan noktasi MAKETTEN turetiliyor
+(`maket_merkez_y + 0.75 x maket_genisligi`). Maket kutusunun kendisi ise
+kare kare oynuyor:
+
+| olcum | asama2 | asama3 |
+|---|---|---|
+| kutu merkez y, ardisik kare farki (ort.) | 7.6 px | 7.8 px |
+| en buyuk sicrama | **67 px** | **56 px** |
+| >20 px sicrayan kare orani | %14.8 | %15.1 |
+| kutu YUKSEKLIGI std | 10.0 px | 23.7 px |
+| maket kaybolma olayi | 23 kez | 26 kez |
+
+Turetme formulu kutu genisligini CARPAN olarak kullandigi icin (0.75 x mw)
+genislik gurultusu de buyutulerek nisan noktasina geciyor. Durum satirinda
+olculen pitch hatalari bununla tutarli: **+72, -53, -46, +57, -49, -45**;
+yaw ayni pencerede -8..+4 arasinda sabit.
+
+**D3 (nisan surekliligi) duzeltmesi bu kayitlarda DEVREYE GIREMEDI**:
+`nisan_ofseti` ancak balon VE maket ayni karede gorulunce ogreniliyor.
+Asama 3'te balon %0 goruldugu icin ofset hic ogrenilemedi, sabit formul
+devrede kaldi. Duzeltme yanlis degil, ama on kosulu bu sahnede saglanmiyor.
+
+### Sorun 3 -- Ates karari verilemiyor
+
+Asama 2 ikinci denemesinde balon %13 karede goruluyor. Ates icin
+`AIM_HOLD_FRAMES = 3` ARDISIK kare gerekiyor ve `kilit_adimi` balon
+gorulmeyen karede sayaci sifirliyor. %13 oranla 3 ardisik kare olasiligi
+~%0.2 -- pratikte imkansiz. Kullanicinin "bir turlu emin olamiyor"
+gozlemi tam olarak bu.
+
+### Onerilen duzeltmeler (UYGULANMADI, onay bekliyor)
+
+1. **Balonsuz hedeften cikis** (kritik): KILIT/ATES'te secilen ciftin balonu
+   yoksa bir sayac artsin, esigi asinca hedef kara listeye alinip TARAMA'ya
+   donulsun. `LOCK_NO_BALLOON_MAX_FRAMES ~ 60` (2 sn). Bu, 1. sorunu
+   dogrudan kapatir.
+2. **Salinimdan bagimsiz toplam sure siniri**: KILIT'e ILK girildigi an
+   damgalansin; ATES<->KILIT gecisleri onu sifirlamasin. Boylece hangi
+   sebeple olursa olsun bir hedefte en fazla N saniye kalinir.
+3. **Turetilen nisan noktasina yumusatma**: kutu gurultusu 7.6 px ortalama;
+   basit bir ustel yumusatma (a=0.3) bunu ~2.5 px'e indirir. Yalnizca
+   TURETILEN noktaya uygulanmali; balon gercekten goruldugunde ham deger
+   kullanilmali.
+
+Ates icin balon sarti KALMALI -- o bir guvenlik katmani, gevsetilmemeli.
