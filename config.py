@@ -604,7 +604,18 @@ SPOTTER_BLUE_RANGES = [((90, 80, 45), (135, 255, 255))]
 # Bir blobun aday sayılması için gereken en küçük alan (piksel).
 # 15 metrede 14 cm'lik balon gözcüde 10 piksel çap = ~79 piksel alan verir.
 # Eşik bunun altında olmalı ama gürültüyü de elemeli.
-SPOTTER_MIN_BLOB_AREA = 60
+# 60 -> 30 GERI ALINDI. 60 sahada GERCEK BALONU eledi: analizaşama3.mp4
+# kaydinda gozcu panelinde fuzenin altindaki balon "alan 34<60" etiketiyle
+# elenmis gorunuyor. 60 degeri tek bir karedeki maket olcumune bakilarak
+# onerilmisti; balonun gozcudeki gercek gorunumu (kucuk, kismen maskelenen)
+# hesaba katilmamisti.
+#
+# DENGE: gozcu esigi KATI olursa gercek hedef kacirilir (gorev basarisiz),
+# GEVSEK olursa bosuna gidilir (dogrulamada ~1.5 sn kayip). Gozcunun karari
+# zaten baglayici degil -- avci dogruluyor -- ve artik dogrulama balonu sart
+# kosuyor (VERIFY_MIN_BALLOON_FRAMES), yani bosuna gidisin bedeli kucuk.
+# Bu yuzden gevsek taraf tercih ediliyor.
+SPOTTER_MIN_BLOB_AREA = 30
 
 # Bir blobun en/boy oranı bu aralığın dışındaysa balon sayılmaz. Balon
 # yuvarlaktır; uzun ince bir kırmızı leke maket parçası veya yansımadır.
@@ -615,7 +626,12 @@ SPOTTER_BALLOON_ASPECT = (0.5, 2.0)
 # orani tek basina yetmiyordu -- maket kutusu da kabaca kare olabildigi
 # icin 'balon' sayiliyor ve gozcu olmayan bir balona iz aciyordu.
 # 0.50 ikisini ayirir; kismen ortulen bir balon icin de pay birakir.
-SPOTTER_BALLOON_MIN_FILL = 0.60
+# 0.60 -> 0.45 GERI ALINDI. Ayni kayitta gercek balon "dolg 0.50" ile
+# elenmisti. Olculen degerler: gercek balon 0.50-0.70, kirmizi F16 maketi
+# 0.36-0.51 (durusa gore degisiyor). Ikisi TAM AYRILAMIYOR; 0.45 gercek
+# balonu gecirir, maketlerin bir kismini hala eler, kalanini da dogrulamadaki
+# balon sarti temizler.
+SPOTTER_BALLOON_MIN_FILL = 0.45
 
 # --- SADECE ARAYUZ: gozcu onizlemesinde cizilecek bloblar ---
 # Yonlendirmeye HICBIR etkisi yok. Operatorun "gozcu neyi goruyor, neden
@@ -805,6 +821,34 @@ TRACK_REACQUIRE_PIXELS = 150.0
 BLACKLIST_RADIUS_DEG = 4.0
 BLACKLIST_TTL_SEC = 12.0          # imha edilenler için
 BLACKLIST_FRIEND_TTL_SEC = 600.0  # dost maketler için pratikte kalıcı
+
+# --- BALONSUZ HEDEF: DAR ve KISA kara liste ---
+#
+# Balonu olmayan bir hedef ATESLENEMEZ, o yuzden orada beklemenin anlami yok;
+# ama bu hedefi KALICI olarak elemek de yanlis olur (balon sonradan
+# gorulebilir). Amac yalnizca "siradakine gecebilmek".
+#
+# YARICAP NEDEN AYRI: kara liste aci bazli bir BOLGE kapatiyor. Varsayilan
+# 4.0 derece, hedefler birbirine yakinken KOMSUYU DA kapatir:
+#     7.5 metrede 1.0 m ayrim = 7.59 derece  -> guvenli
+#    16.0 metrede 1.0 m ayrim = 3.58 derece  -> 4.0 KOMSUYU KAPATIR
+#    20.0 metrede 1.0 m ayrim = 2.86 derece  -> 4.0 KOMSUYU KAPATIR
+# Sahada olculen sahnede hedefler 6.2-7.0 derece araliydi (16 m'de ~1.8 m),
+# yani 4.0 orada guvenliydi -- ama 1 metre araliga dusulurse degil.
+#
+# 1.5 derece 16 metrede yalnizca ~0.42 m yanal bolge kapatir: hedefin
+# kendisini yakalar, 1 metre yanindakini birakir.
+BLACKLIST_NO_BALLOON_RADIUS_DEG = 1.5
+BLACKLIST_NO_BALLOON_TTL_SEC = 4.0
+
+# Dogrulama penceresinde balon EN AZ bu kadar karede gorulmeli.
+#
+# 1 = "bir kez gorulmesi yeter". Amac balonu olmayan hedefi elemek, balonu
+# ara sira kacirilan hedefi degil; KILIT koprusu zaten anlik kayiplari
+# tasiyor. Sahada olculdu (analizaşama3.mp4): balonsuz dusman-F16'ya
+# kilitlenildi ve 42 saniye boyunca cikilamadi, cunku dogrulama yalnizca
+# SINIFA bakiyordu -- balonun varligini hic sormuyordu.
+VERIFY_MIN_BALLOON_FRAMES = 1
 
 # Doğrulaması zaman aşımına uğrayan aday için KISA ömürlü kara liste.
 # Sahada ölçüldü (AnalizVideo.mp4, 17-23 sn): taret gözcünün verdiği açıya

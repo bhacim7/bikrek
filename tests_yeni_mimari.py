@@ -898,6 +898,80 @@ if _a > 0:
 
 print()
 print("=" * 70)
+print("17. DOGRULAMADA BALON SARTI ve DAR KARA LISTE")
+print("=" * 70)
+
+# (a) SAHA SENARYOSU (analizaşama3.mp4): balonsuz dusman-F16'ya kilitlenildi
+# ve 42 saniye cikilamadi. Dogrulama artik balonu sart kosuyor.
+_balonsuz = engagement.cift_eslestir([det('dusman-F16', 800, 300, 130, 150)])
+_m27 = engagement.AngajmanMakinesi(); _m27.basla('task3')
+_m27.hedef_yaw, _m27.hedef_pitch = -0.17, 0.0     # sahada olculen aci
+_m27._gec(engagement.DOGRULAMA)
+_s27 = None
+for _k in range(config.VERIFY_CONFIRM_FRAMES + 2):
+    _s27 = _m27.dogrulama_adimi(_balonsuz)
+kontrol("balonsuz hedef KILIT'e ALINMIYOR",
+        _m27.durum == engagement.TARAMA, _m27.durum)
+kontrol("balonsuz hedef kara listeye giriyor",
+        _m27.kara_liste.icinde_mi(-0.17, 0.0))
+
+# KOMSU HEDEF ETKILENMEMELI -- "bir daha gitmeme" riskinin testi
+kontrol("olculen komsu hedef (+6.23 der) SERBEST kaliyor",
+        not _m27.kara_liste.icinde_mi(6.23, 0.0))
+kontrol("1 metre yanal ayrim (16 m -> 3.58 der) SERBEST kaliyor",
+        not _m27.kara_liste.icinde_mi(-0.17 + 3.58, 0.0),
+        f"dar yaricap {config.BLACKLIST_NO_BALLOON_RADIUS_DEG} derece")
+# Eski genis yaricapla komsu KAPANIRDI -- regresyon tanigi
+kontrol("genis yaricap (4.0) 3.58 dereceyi kapatirdi (sorunun kaniti)",
+        3.58 <= config.BLACKLIST_RADIUS_DEG)
+
+# (b) BALONLU hedef hala dogrulanmali
+_balonlu = engagement.cift_eslestir(
+    [det('dusman-F16', 800, 300, 130, 150), det('balon', 845, 470, 45, 45)])
+_m28 = engagement.AngajmanMakinesi(); _m28.basla('task3')
+_m28.hedef_yaw, _m28.hedef_pitch = 6.23, 0.0
+_m28._gec(engagement.DOGRULAMA)
+for _k in range(config.VERIFY_CONFIRM_FRAMES + 1):
+    _s28 = _m28.dogrulama_adimi(_balonlu)
+kontrol("balonlu hedef KILIT'e aliniyor", _m28.durum == engagement.KILIT, _m28.durum)
+
+# Balon ARA SIRA gorulse de yeter (anlik kayip cezalandirilmamali)
+_m29 = engagement.AngajmanMakinesi(); _m29.basla('task3')
+_m29.hedef_yaw, _m29.hedef_pitch = 0.0, 0.0
+_m29._gec(engagement.DOGRULAMA)
+for _k in range(config.VERIFY_CONFIRM_FRAMES + 1):
+    _m29.dogrulama_adimi(_balonlu if _k == 1 else _balonsuz)
+kontrol("balon 4 karede SADECE 1 kez gorulse de kilitleniyor",
+        _m29.durum == engagement.KILIT,
+        f"{_m29.durum} (esik {config.VERIFY_MIN_BALLOON_FRAMES} kare)")
+
+# (c) KILIT zaman asimi da kara listeye almali (emniyet agi)
+_m30 = engagement.AngajmanMakinesi(); _m30.basla('task3')
+_m30.hedef_yaw, _m30.hedef_pitch = 10.0, 0.0
+_m30.dogrulanan_sinif = 'dusman-F16'
+_m30._gec(engagement.KILIT)
+_m30.durum_zamani -= config.ENGAGE_LOCK_TIMEOUT + 0.1
+_m30.kilit_adimi(50.0, 20.0, False)
+kontrol("kilit zaman asiminda TARAMA'ya donuluyor",
+        _m30.durum == engagement.TARAMA, _m30.durum)
+kontrol("kilit zaman asiminda KARA LISTEYE de aliniyor",
+        _m30.kara_liste.icinde_mi(10.0, 0.0),
+        "eskiden alinmiyordu -> ayni hedefe aninda geri donuluyordu")
+kontrol("kilit zaman asimi komsuyu kapatmiyor",
+        not _m30.kara_liste.icinde_mi(10.0 + 3.58, 0.0))
+
+# (d) Gozcu esikleri: SAHADA OLCULEN balon gecmeli
+kontrol("gozcu: olculen balon (alan 34) artik gecer",
+        config.SPOTTER_MIN_BLOB_AREA <= 34,
+        f"esik {config.SPOTTER_MIN_BLOB_AREA}")
+kontrol("gozcu: olculen balon dolgunlugu (0.50) artik gecer",
+        config.SPOTTER_BALLOON_MIN_FILL <= 0.50,
+        f"esik {config.SPOTTER_BALLOON_MIN_FILL}")
+kontrol("gozcu kapisi 34 px / 0.53 dolgunluk balonu GECIRIYOR",
+        sp.balon_kapisi(34, 8, 8) is None)
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)

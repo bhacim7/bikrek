@@ -254,16 +254,27 @@ class KaraListe:
     """
 
     def __init__(self):
-        self._kayitlar = []   # (yaw, pitch, bitis_zamani, sebep)
+        self._kayitlar = []   # (yaw, pitch, bitis_zamani, sebep, yaricap)
 
-    def ekle(self, yaw, pitch, ttl, sebep=''):
-        self._kayitlar.append((yaw, pitch, time.time() + ttl, sebep))
+    def ekle(self, yaw, pitch, ttl, sebep='', yaricap=None):
+        """
+        Bir yönü geçici olarak angajman dışı bırakır.
+
+        `yaricap` KAYIT BAŞINA veriliyor, çünkü sebebe göre ne kadar geniş
+        bir bölge kapatılacağı değişiyor. Kara liste hedef değil AÇI
+        tuttuğundan, geniş bir yarıçap komşu hedefi de kapatabilir:
+            16 metrede 1.0 m yanal ayrım = 3.58 derece
+        yani varsayılan 4.0 ile bir hedefi elemek yanındakini de eler.
+        Balonsuz hedef için dar bir yarıçap kullanılıyor
+        (`BLACKLIST_NO_BALLOON_RADIUS_DEG`), imha/dost için geniş.
+        """
+        r = config.BLACKLIST_RADIUS_DEG if yaricap is None else yaricap
+        self._kayitlar.append((yaw, pitch, time.time() + ttl, sebep, r))
 
     def icinde_mi(self, yaw, pitch, simdi=None):
         simdi = time.time() if simdi is None else simdi
         self._kayitlar = [k for k in self._kayitlar if k[2] > simdi]
-        r = config.BLACKLIST_RADIUS_DEG
-        for ky, kp, _, _ in self._kayitlar:
+        for ky, kp, _, _, r in self._kayitlar:
             if ((yaw - ky) ** 2 + (pitch - kp) ** 2) ** 0.5 <= r:
                 return True
         return False
@@ -334,6 +345,7 @@ class AngajmanMakinesi:
         self.yabanci_maket_ardisik = 0
 
         self._sinif_gecmisi = []       # doğrulama için ardışık sınıflar
+        self._dogrulama_balon = 0      # doğrulamada balon kaç karede görüldü
         self._nisan_ardisik = 0
         self.dogrulanan_sinif = None
         self.imha_sayisi = 0
@@ -355,6 +367,7 @@ class AngajmanMakinesi:
             self.durum_zamani = time.time()
             if yeni in (TARAMA, YONELME):
                 self._sinif_gecmisi = []
+                self._dogrulama_balon = 0
                 self._nisan_ardisik = 0
                 self.dogrulanan_sinif = None
                 self.kilit_aci = None
@@ -521,6 +534,11 @@ class AngajmanMakinesi:
             self._dogrulama_zaman_asimi()
             return None
 
+        # BALON SAYACI: doğrulama penceresi boyunca balonun kaç karede
+        # görüldüğü. Aşağıda düşman kararı verilirken şart koşuluyor.
+        if cift.balon is not None:
+            self._dogrulama_balon += 1
+
         self._sinif_gecmisi.append(cift.sinif)
         if len(self._sinif_gecmisi) > config.VERIFY_CONFIRM_FRAMES:
             self._sinif_gecmisi.pop(0)
@@ -537,6 +555,23 @@ class AngajmanMakinesi:
             self._gec(TARAMA)
             return sinif
         if dusman_mi(sinif):
+            # BALON ŞARTI. Sınıf doğru olabilir ama balonu görülmeyen hedef
+            # ATEŞLENEMEZ — ona kilitlenmek taretin boşuna oyalanmasıdır.
+            #
+            # Sahada ölçüldü (analizaşama3.mp4): gözcü gerçek balonu eledi ve
+            # sistemi balonsuz bir `dusman-F16`ya yönlendirdi. Doğrulama
+            # yalnızca sınıfa baktığı için geçti, KİLİT'e girildi ve 42 saniye
+            # boyunca oradan çıkılamadı — aynı karede avcı, balonu görünen
+            # başka bir düşman hedefi de görüyordu.
+            #
+            # Kara liste DAR ve KISA: amaç elemek değil, sıradakine
+            # geçebilmek. Süre dolunca hedef yeniden denenir.
+            if self._dogrulama_balon < config.VERIFY_MIN_BALLOON_FRAMES:
+                self.kara_listeye_al(
+                    config.BLACKLIST_NO_BALLOON_TTL_SEC, 'balon yok',
+                    yaricap=config.BLACKLIST_NO_BALLOON_RADIUS_DEG)
+                self._gec(TARAMA)
+                return None
             self.dogrulanan_sinif = sinif
             self._gec(KILIT)
             return sinif
@@ -613,6 +648,15 @@ class AngajmanMakinesi:
         sabit piksel toleransı ikisinde farklı anlam taşırdı.
         """
         if self.gecen() > config.ENGAGE_LOCK_TIMEOUT:
+            # EMNIYET AGI: kilit suresi doldu ama ates edilemedi. Kara
+            # listeye ALINMADAN TARAMA'ya donmek kisir dongu uretiyordu --
+            # `avcida_hazir_hedef_var` ayni hedefi aninda geri seciyor ve
+            # sistem hicbir zaman siradaki adaya gecemiyordu (sahada 42
+            # saniye boyunca ayni balonsuz hedefte kalindi).
+            # Yaricap DAR: komsu hedefi kapatmasin.
+            self.kara_listeye_al(
+                config.BLACKLIST_NO_BALLOON_TTL_SEC, 'kilit zaman asimi',
+                yaricap=config.BLACKLIST_NO_BALLOON_RADIUS_DEG)
             self._gec(TARAMA)
             return False
 
@@ -701,9 +745,10 @@ class AngajmanMakinesi:
         self.ates_engel_ardisik += 1
         return self.ates_engel_ardisik >= config.FIRE_RETRY_GIVEUP_FRAMES
 
-    def kara_listeye_al(self, ttl, sebep=''):
+    def kara_listeye_al(self, ttl, sebep='', yaricap=None):
         if self.hedef_yaw is not None:
-            self.kara_liste.ekle(self.hedef_yaw, self.hedef_pitch, ttl, sebep)
+            self.kara_liste.ekle(self.hedef_yaw, self.hedef_pitch, ttl,
+                                 sebep, yaricap)
 
     def imha_edildi(self):
         self.imha_sayisi += 1

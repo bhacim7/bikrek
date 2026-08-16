@@ -1137,9 +1137,14 @@ class HavaSavunmaArayuz(QWidget):
                     f"({len(ciftler)} kayıt, imha {m.imha_sayisi})")
                 self.aktif_cift = None
                 return None
+            # Nişan durumu ve balon görünürlüğü de yazılıyor: otonom modda
+            # durum çubuğunun tek yazarı burası, operatörün "neden ateş
+            # etmiyor" sorusunu ekrandan yanıtlayabilmesi gerekiyor.
+            _bal = "balon VAR" if self.balon_gercek_goruldu else "BALON YOK"
+            _nis = "nişan TAMAM" if self.is_aimed_at_target else "nişan bekliyor"
             self._update_status_label(
                 f"Durum: {m.durum} — {m.dogrulanan_sinif or '?'}"
-                f"{' [köprü]' if kopruden else ''} "
+                f"{' [köprü]' if kopruden else ''} | {_bal} | {_nis} "
                 f"({len(ciftler)} kayıt, imha {m.imha_sayisi})")
             self.aktif_cift = secili
             return self._nisan_tespiti(secili)
@@ -2846,15 +2851,21 @@ class HavaSavunmaArayuz(QWidget):
         if self.angajman.durum == ATES:
             self._otonom_ates_denemesi()
 
-        # ATEŞ durumunda durum çubuğunun TEK yazarı `_otonom_ates_denemesi`.
-        # Bu satır eskiden koşulsuz çalışıyordu ve hemen yukarıdaki çağrının
-        # yazdığı mesajı aynı karede eziyordu — imha doğrulama penceresinin
-        # ("1. atış" / "2. atış" / "İMHA DOĞRULANDI") ekranda hiç görünmemesi
-        # demekti bu. Kayıtta da gözlenmişti: "KİLİT" ile "Hedefe nişan alındı"
-        # arasında sürekli gidip gelen satır budur.
-        if (self.is_aimed_at_target and self.active_task in self.OTONOM_MODLAR
-                and not self.target_destroyed
-                and self.angajman.durum != ATES):
+        # OTONOM MODLARDA DURUM ÇUBUĞUNUN TEK YAZARI `_angajman_adimi`.
+        #
+        # Bu satır eskiden otonom modda da çalışıyor ve durum makinesinin
+        # yazdığı mesajı AYNI KAREDE eziyordu. Sonuç: sistemin hangi durumda
+        # olduğu ekranda hiç görünmüyordu. Sahada ölçüldü (analizaşama3.mp4):
+        # 2.6 saniyeden 11.8 saniyeye kadar kesintisiz "Hedefe nişan alındı"
+        # yazdı; sistem o sırada KİLİT'te takılıydı ve TARAMA'ya dönüp aynı
+        # hedefi geri seçiyordu — ama bu ekrandan okunamadığı için sorunun
+        # nerede olduğu ancak videodan piksel ölçerek bulunabildi.
+        #
+        # Artık yalnızca MANUEL/Aşama 1 yolunda yazılıyor. Otonom modda nişan
+        # bilgisi `_angajman_adimi`'nin KİLİT mesajına ekleniyor.
+        if (self.is_aimed_at_target
+                and self.active_task not in self.OTONOM_MODLAR
+                and not self.target_destroyed):
             current_time = time.time()
             if current_time - self.last_fire_time >= self.fire_cooldown_interval:
                 try:
