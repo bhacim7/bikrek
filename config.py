@@ -534,6 +534,30 @@ PREDICTION_MAX_RATE_DEG_S = 2.5
 PID_DEADBAND_PIXELS = 7.0
 MIN_OUTPUT_PIXELS = 4.0
 
+# --- REZONANS SONUMLEME (PID cikis suzgeci) ---
+#
+# SAHADA OLCULDU (anavlizaşama2/3): kilit sirasindaki salinimin %91-96'si
+# taretin KENDI hareketi (balon ve maket kutulari +0.93 korelasyonla birlikte
+# kayiyor, yani YOLO gurultusu degil). FFT ile baskin frekans 2.24-3.15 Hz;
+# FAZ 3'te olculen YAPISAL REZONANS 2.7 Hz (0.37 sn) ile ayni bant.
+#
+# Sebep klasik: denetleyici saf oransal (KD = 0.001, pratikte etkisiz) ve
+# donguде ~185 ms olu zaman var (kamera + IPC + YOLO + soket + motor).
+# Olu zamanli bir sistemde saf P, kazanc yeterince yuksekse o frekansta
+# salinir -- sonumleyecek terim yok.
+#
+# COZUM: PID cikisina birinci derece alcak geciren suzgec. Kesim frekansi
+#     fc = -ln(1 - a) * fs / (2*pi)
+# a = 0.30, fs = 30 Hz  ->  fc = 1.70 Hz
+#     2.7 Hz'de kazanc 0.53 (%47 bastirma)
+#     3.15 Hz'de kazanc 0.47
+# DC (yavas yonelme) kazanci 1.0 kalir, yani hedefe oturma HIZI degismez;
+# yalnizca rezonans bandindaki bileseni kesilir.
+#
+# 0.0 yazilirsa suzgec KAPANIR (eski davranis). Sahada salinim hala buyukse
+# once bu deger kucultulmeli (0.20), yetmezse KP dusurulmeli.
+PID_OUTPUT_SMOOTHING = 0.30
+
 # Bir aday hedefe kilitlenmeden önce ard arda kaç karede aynı yerde görülmeli.
 # YOLO tek tük yanlış pozitif üretiyor ve hayaletler 1-2 kare sürüyor.
 LOCK_CONFIRM_FRAMES = 3
@@ -742,8 +766,29 @@ AIM_HOLD_FRAMES = 3
 # tekrar ates edilir (butce dahilinde). Tek karelik kacirma "imha" sanilmasin
 # diye pencerede balonun kac karede goruldugu sayiliyor.
 FIRE_CONFIRM_SEC = 0.7        # pencere suresi: balon kaybolmasi icin beklenen
-FIRE_CONFIRM_MAX_SEEN = 1     # pencerede bu kadar karede gorulurse "hala orada"
+FIRE_CONFIRM_MAX_SEEN = 4     # pencerede bu kadar karede gorulurse "hala orada"
 FIRE_MAX_ATTEMPTS = 3         # ayni hedefe ardisik en fazla kac ates
+
+# Ateste sonra sayima BASLAMADAN once beklenen sure.
+#
+# SAHADA OLCULDU (anavlizaşama3.mp4): ates 7.60 saniyede verildi, balon
+# 8.10'da kayboldu -- yani patlamis balon 0.5 SANIYE (15 kare) daha
+# gorunmeye devam etti. Mermi ucus suresi + patlama + YOLO'nun kutuyu
+# birakmasi toplami bu. Gecikme olmadan bu 15 kare "balon hala orada"
+# sayiliyor ve sistem patlamis hedefe tekrar ates etmeye calisiyordu.
+#
+# 0.4 sn gecikme + MAX_SEEN 4 ile o olcum rahat geciyor: sayim 8.00'da
+# basliyor, 8.10'a kadar 3 kare goruluyor, 3 <= 4 -> "imha onaylandi".
+FIRE_CONFIRM_DELAY_SEC = 0.4
+
+# 'tekrar ates' istendigi halde ates kilidi ARDISIK bu kadar karede izin
+# vermezse hedef birakilir.
+#
+# 18. bolumdeki KILITLENMENIN dogrudan carasi: eskiden 'tekrar' karari
+# verildikten sonra ates edilemezse ates_kaydet() cagrilmiyor, sayac
+# artmiyor, 'pes' asla tetiklenmiyor ve ates_sayisi > 0 oldugu icin KILIT'e
+# de donulmuyordu. Sistem ATES durumunda 20 saniye takili kaldi.
+FIRE_RETRY_GIVEUP_FRAMES = 45     # ~1.5 sn @30fps
 
 # --- HEDEF TAKIP: hedef surekliligi ---
 # Takip modunda secilen hedef, bir sonraki karede bu piksel yaricapi icinde

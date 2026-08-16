@@ -193,6 +193,9 @@ class HavaSavunmaArayuz(QWidget):
         self.pid_update_time = time.time()
         self.integral_yaw = 0.0
         self.last_error_yaw = 0.0
+        # Rezonans sonumleme suzgecinin hafizasi (bkz. PID_OUTPUT_SMOOTHING)
+        self._pid_cikis_yaw = 0.0
+        self._pid_cikis_pitch = 0.0
         self.integral_pitch = 0.0
         self.last_error_pitch = 0.0
 
@@ -1249,10 +1252,24 @@ class HavaSavunmaArayuz(QWidget):
             self.is_aimed_at_target, self.current_yaw_angle,
             self.no_fire_yaw_start, self.no_fire_yaw_end)
         if not izin:
+            if self.angajman.ates_sayisi > 0:
+                # Zaten ateş edilmiş ve pencere 'tekrar' demişti, ama ateş
+                # kilidi izin vermiyor. Bu kareleri SAY: eşiği aşarsa hedef
+                # bırakılır. Bu sayaç olmadan sistem burada sonsuza kadar
+                # takılıyordu (18. bölüm: 20 saniyelik kilitlenme).
+                if self.angajman.ates_engellendi():
+                    self._update_status_label(
+                        f"Durum: Ateş açılamıyor ({gerekce}) — hedef bırakılıyor.")
+                    self.angajman.imha_edilemedi()
+                    self.aktif_cift = None
+                    return
+                self._update_status_label(
+                    f"Ateş engellendi: {gerekce} "
+                    f"({self.angajman.ates_engel_ardisik}/"
+                    f"{config.FIRE_RETRY_GIVEUP_FRAMES})")
+                return
             self._update_status_label(f"Ateş engellendi: {gerekce}")
-            # Ateş edilmişse KİLİT'e düşmek doğrulama penceresini kaybettirir;
-            # pencere kapanana kadar ATEŞ'te kalınır.
-            if self.angajman.gecen() > 1.5 and self.angajman.ates_sayisi == 0:
+            if self.angajman.gecen() > 1.5:
                 self.angajman._gec(KILIT)
             return
 
@@ -1426,6 +1443,10 @@ class HavaSavunmaArayuz(QWidget):
     def reset_pid_state(self):
         self._ff_onceki_yaw = 0.0
         self._ff_onceki_pitch = 0.0
+        # Suzgec hafizasi da sifirlanmali: yeni hedefe gecerken eski
+        # hedefin cikisini sizdirmasin.
+        self._pid_cikis_yaw = 0.0
+        self._pid_cikis_pitch = 0.0
         self.integral_yaw = 0.0
         self.last_error_yaw = 0.0
         self.integral_pitch = 0.0
@@ -2977,6 +2998,24 @@ class HavaSavunmaArayuz(QWidget):
         if abs(error_pitch_degree) < self.pid_deadband_pitch:
             output_pitch = 0.0
             self.integral_pitch = 0.0
+
+        # --- REZONANS SÖNÜMLEME ---
+        # Sahada ölçüldü: kilit salınımının %91-96'sı taretin KENDİ hareketi
+        # ve baskın frekansı 2.24-3.15 Hz — FAZ 3'te ölçülen yapısal
+        # rezonansla (2.7 Hz) aynı bant. Denetleyici saf oransal olduğu ve
+        # döngüde ~185 ms ölü zaman bulunduğu için o frekansta salınıyor.
+        #
+        # Birinci derece alçak geçiren süzgeç: DC kazancı 1.0 kalır (hedefe
+        # oturma hızı değişmez), rezonans bandındaki bileşen bastırılır.
+        # Ölü bant SONRASINA konuldu ki süzgecin hafızası sıfır çıkışta da
+        # boşalsın; aksi halde deadband'a girildiğinde süzgeç eski değeri
+        # sızdırmaya devam ederdi.
+        _a = config.PID_OUTPUT_SMOOTHING
+        if _a > 0.0:
+            output_yaw = _a * output_yaw + (1.0 - _a) * self._pid_cikis_yaw
+            output_pitch = _a * output_pitch + (1.0 - _a) * self._pid_cikis_pitch
+            self._pid_cikis_yaw = output_yaw
+            self._pid_cikis_pitch = output_pitch
 
         if 0 < abs(output_yaw) < self.MIN_OUTPUT_DEGREE_THRESHOLD:
             output_yaw = 0.0

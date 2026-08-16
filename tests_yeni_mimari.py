@@ -681,14 +681,24 @@ kontrol("takip modu maketin tam ortasina nisan aliyor",
         f"({_n_mrk[0]:.0f}, {_n_mrk[1]:.0f}) beklenen (881, 404)")
 
 # (c) Imha dogrulama penceresi
-def _ates_edip_bekle(balon_var, kare=5):
+# Pencere artik GECIKMELI: once FIRE_CONFIRM_DELAY_SEC (patlama suresi)
+# bekleniyor, balon ancak ondan SONRA sayilmaya basliyor.
+_PENCERE = config.FIRE_CONFIRM_DELAY_SEC + config.FIRE_CONFIRM_SEC
+
+
+def _ates_edip_bekle(balon_var, kare=8):
     m = engagement.AngajmanMakinesi(); m.basla('task2')
     m._gec(engagement.ATES); m.ates_kaydet()
     ilk = m.ates_dogrulama_adimi(balon_var)
-    m.son_ates_zamani = time.time() - config.FIRE_CONFIRM_SEC - 0.01
-    son = 'bekle'
-    for _ in range(kare):
-        son = m.ates_dogrulama_adimi(balon_var)
+    # Sayim penceresinin ICINE gir (gecikme gecti, sure dolmadi) ki
+    # balon gorulme sayaci gercekten islesin.
+    t0 = m.son_ates_zamani
+    for i in range(kare):
+        m.son_ates_zamani = t0 - (config.FIRE_CONFIRM_DELAY_SEC + 0.01
+                                  + i * 0.01)
+        m.ates_dogrulama_adimi(balon_var)
+    m.son_ates_zamani = t0 - _PENCERE - 0.01
+    son = m.ates_dogrulama_adimi(balon_var)
     return ilk, son, m
 
 _ilk, _son, _ = _ates_edip_bekle(False)
@@ -703,20 +713,28 @@ _m20 = engagement.AngajmanMakinesi(); _m20.basla('task2')
 _m20._gec(engagement.ATES)
 for _ in range(config.FIRE_MAX_ATTEMPTS):
     _m20.ates_kaydet()
-    _m20.son_ates_zamani = time.time() - config.FIRE_CONFIRM_SEC - 0.01
-    for _ in range(3):
-        _sonuc20 = _m20.ates_dogrulama_adimi(True)
+    _t20 = _m20.son_ates_zamani
+    # Once sayim penceresinde balonu gordur, sonra pencereyi doldur
+    for _i in range(6):
+        _m20.son_ates_zamani = _t20 - (config.FIRE_CONFIRM_DELAY_SEC + 0.01 + _i * 0.01)
+        _m20.ates_dogrulama_adimi(True)
+    _m20.son_ates_zamani = _t20 - _PENCERE - 0.01
+    _sonuc20 = _m20.ates_dogrulama_adimi(True)
 kontrol("atis butcesi dolunca 'pes' ediliyor", _sonuc20 == 'pes',
         f"{_sonuc20} ({_m20.ates_sayisi} atis)")
 
 # Tek karelik kacirma "imha" sanilmamali
 _m21 = engagement.AngajmanMakinesi(); _m21.basla('task2')
 _m21._gec(engagement.ATES); _m21.ates_kaydet()
-for _g in (True, False, True, True, False, True):
+_t21 = _m21.son_ates_zamani
+# Sayim penceresinin icinde: balon cogunlukla goruluyor (MAX_SEEN'i asacak)
+for _i, _g in enumerate((True, False, True, True, False, True, True, True)):
+    _m21.son_ates_zamani = _t21 - (config.FIRE_CONFIRM_DELAY_SEC + 0.01 + _i * 0.01)
     _m21.ates_dogrulama_adimi(_g)
-_m21.son_ates_zamani = time.time() - config.FIRE_CONFIRM_SEC - 0.01
-kontrol("pencerede balon gorulduyse tek kare kacirma imha SAYILMIYOR",
-        _m21.ates_dogrulama_adimi(True) == 'tekrar', "tekrar bekleniyordu")
+_m21.son_ates_zamani = _t21 - _PENCERE - 0.01
+kontrol("pencerede balon ISRARLA gorulduyse imha SAYILMIYOR",
+        _m21.ates_dogrulama_adimi(True) == 'tekrar',
+        f"{_m21._ates_balon_gorulme} kare goruldu, esik {config.FIRE_CONFIRM_MAX_SEEN}")
 
 # TARAMA'ya donunce atis butcesi ve ofset sifirlanmali
 _m22 = engagement.AngajmanMakinesi(); _m22.basla('task2')
@@ -800,6 +818,83 @@ kontrol("iz sayisi = balon aday sayisi (maketler iz acmiyor)",
 kontrol("dost balonu 'dost', dusman balonu 'dusman' siniflandi",
         sorted(i.sinif for i in _izler) == ['dost', 'dusman'],
         ", ".join(sorted(i.sinif for i in _izler)))
+
+print()
+print("=" * 70)
+print("16. IMHA DOGRULAMA KILIDI ve REZONANS SUZGECI")
+print("=" * 70)
+
+# (a) SAHA SENARYOSU: ates 7.60 sn, balon 8.10'da kayboldu (0.5 sn sonra).
+# Gecikmeli sayim olmadan bu 15 kare "balon hala orada" sayiliyordu.
+_m23 = engagement.AngajmanMakinesi(); _m23.basla('task3')
+_m23._gec(engagement.ATES); _m23.ates_kaydet()
+_t23 = _m23.son_ates_zamani
+_sonuc23 = None
+for _k in range(80):
+    _gecen = _k / 30.0
+    _m23.son_ates_zamani = _t23 - _gecen
+    _sonuc23 = _m23.ates_dogrulama_adimi(_gecen < 0.50)   # balon 0.5 sn daha gorunur
+    if _sonuc23 != 'bekle':
+        break
+kontrol("patlamis balon 0.5 sn daha gorunse de IMHA ONAYLANIYOR",
+        _sonuc23 == 'onaylandi',
+        f"{_sonuc23}, pencerede sayilan {_m23._ates_balon_gorulme} kare")
+
+# Balon gercekten duruyorsa hala 'tekrar' demeli (koruma kaybolmamali)
+_m24 = engagement.AngajmanMakinesi(); _m24.basla('task3')
+_m24._gec(engagement.ATES); _m24.ates_kaydet()
+_t24 = _m24.son_ates_zamani
+for _k in range(80):
+    _m24.son_ates_zamani = _t24 - _k / 30.0
+    _s24 = _m24.ates_dogrulama_adimi(True)
+    if _s24 != 'bekle':
+        break
+kontrol("balon GERCEKTEN duruyorsa hala 'tekrar'", _s24 == 'tekrar', _s24)
+
+# (b) KILITLENME CIKISI -- 18. bolumdeki 20 saniyelik takilmanin caresi
+_m25 = engagement.AngajmanMakinesi(); _m25.basla('task3')
+_m25.dogrulanan_sinif = 'dusman-Fuze'; _m25._gec(engagement.ATES)
+_m25.ates_kaydet()
+_birak = None
+for _k in range(1, 300):
+    if _m25.ates_engellendi():
+        _birak = _k
+        break
+kontrol("ates ardisik engellenince hedef BIRAKILIYOR",
+        _birak == config.FIRE_RETRY_GIVEUP_FRAMES,
+        f"{_birak} kare (esik {config.FIRE_RETRY_GIVEUP_FRAMES})")
+_m25.imha_edilemedi()
+kontrol("birakildiktan sonra TARAMA'ya donuluyor",
+        _m25.durum == engagement.TARAMA, _m25.durum)
+
+# Basarili ates engel sayacini sifirlamali
+_m25.basla('task3'); _m25._gec(engagement.ATES)
+_m25.ates_engellendi(); _m25.ates_engellendi()
+_m25.ates_kaydet()
+kontrol("basarili ates engel sayacini sifirliyor",
+        _m25.ates_engel_ardisik == 0, f"{_m25.ates_engel_ardisik}")
+
+# TARAMA'ya gecince de sifirlanmali
+_m26 = engagement.AngajmanMakinesi(); _m26.basla('task2')
+_m26._gec(engagement.ATES); _m26.ates_kaydet(); _m26.ates_engellendi()
+_m26._gec(engagement.TARAMA)
+kontrol("TARAMA'ya gecince ates/engel sayaclari sifirlaniyor",
+        _m26.ates_sayisi == 0 and _m26.ates_engel_ardisik == 0,
+        f"ates={_m26.ates_sayisi} engel={_m26.ates_engel_ardisik}")
+
+# (c) REZONANS SUZGECI frekans tepkisi
+import math as _math
+_a = config.PID_OUTPUT_SMOOTHING
+kontrol("PID cikis suzgeci ETKIN (0 ise sonumleme yok)", _a > 0.0, f"{_a}")
+if _a > 0:
+    _fc = -_math.log(1 - _a) * 30.0 / (2 * _math.pi)
+    _kaz = lambda f: 1.0 / _math.sqrt(1 + (f / _fc) ** 2)
+    kontrol("kesim frekansi olculen salinim bandinin (2.2-3.2 Hz) ALTINDA",
+            _fc < 2.2, f"fc={_fc:.2f} Hz")
+    kontrol("yavas yonelme (0.5 Hz) neredeyse hic bastirilmiyor",
+            _kaz(0.5) > 0.90, f"kazanc {_kaz(0.5):.2f}")
+    kontrol("rezonans bandi (2.7 Hz) belirgin bastiriliyor",
+            _kaz(2.7) < 0.65, f"kazanc {_kaz(2.7):.2f}")
 
 print()
 print("=" * 70)

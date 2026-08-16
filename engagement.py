@@ -342,6 +342,7 @@ class AngajmanMakinesi:
         self.ates_sayisi = 0           # bu hedefe yapılan ardışık atış
         self.son_ates_zamani = 0.0
         self._ates_balon_gorulme = 0   # pencerede balon kaç karede görüldü
+        self.ates_engel_ardisik = 0    # "tekrar" istendi ama ateş edilemedi
 
         # Balon en son görüldüğünde ölçülen bağıl konumu (nişan sürekliliği).
         self.nisan_ofseti = None
@@ -364,6 +365,7 @@ class AngajmanMakinesi:
                 # olsa da başka bir hedefin geometrisini taşımamalı.
                 self.ates_sayisi = 0
                 self._ates_balon_gorulme = 0
+                self.ates_engel_ardisik = 0
                 self.nisan_ofseti = None
 
     def gecen(self):
@@ -644,6 +646,7 @@ class AngajmanMakinesi:
         self.ates_sayisi += 1
         self.son_ates_zamani = time.time()
         self._ates_balon_gorulme = 0
+        self.ates_engel_ardisik = 0
 
     def ates_dogrulama_adimi(self, balon_gorundu):
         """
@@ -655,20 +658,48 @@ class AngajmanMakinesi:
           'tekrar'    — balon hâlâ orada, yeniden ateş edilmeli
           'pes'       — balon duruyor ama atış bütçesi doldu
 
+        SAYIM GECİKMELİ BAŞLAR (`FIRE_CONFIRM_DELAY_SEC`). Sahada ölçüldü:
+        ateşten sonra patlamış balon 0.5 saniye daha görünmeye devam ediyor
+        (mermi uçuş süresi + patlama + YOLO'nun kutuyu bırakması). Gecikme
+        olmadan bu kareler "balon hâlâ orada" sayılıyor ve patlamış hedefe
+        tekrar ateş edilmeye çalışılıyordu.
+
         Balonun tek kare kaçırılması "imha" sanılmasın diye pencere boyunca
         görülme SAYILIYOR; karar pencerenin sonunda veriliyor.
         """
         if self.ates_sayisi <= 0:
             return 'bekle'
-        if balon_gorundu:
+        gecen = time.time() - self.son_ates_zamani
+        # Patlama penceresi: bu süre boyunca görülen balon SAYILMAZ.
+        if gecen >= config.FIRE_CONFIRM_DELAY_SEC and balon_gorundu:
             self._ates_balon_gorulme += 1
-        if time.time() - self.son_ates_zamani < config.FIRE_CONFIRM_SEC:
+        if gecen < config.FIRE_CONFIRM_DELAY_SEC + config.FIRE_CONFIRM_SEC:
             return 'bekle'
         if self._ates_balon_gorulme <= config.FIRE_CONFIRM_MAX_SEEN:
             return 'onaylandi'
         if self.ates_sayisi >= config.FIRE_MAX_ATTEMPTS:
             return 'pes'
         return 'tekrar'
+
+    def ates_engellendi(self):
+        """
+        'tekrar' istendi ama ateş kilidi izin vermedi.
+
+        Döner: True ise hedef bırakılmalı.
+
+        BU KİLİDİ KIRAN KONTROL. Sahada ölçüldü (18. bölüm): Aşama 3'te
+        7.6 saniyede ateş edildi, balon 8.10'da patladı, ama pencere
+        'tekrar' dediği için sistem yeniden ateş etmeye çalıştı; balon
+        artık görünmediğinden ateş kilidi her karede engelledi. `ates_kaydet`
+        çağrılmadığı için sayaç artmadı, `'pes'` asla tetiklenmedi ve
+        `ates_sayisi > 0` olduğu için KİLİT'e de dönülmedi — sistem ATEŞ
+        durumunda 20 saniye takılı kaldı.
+
+        Artık engellenen her kare sayılıyor; eşiği aşınca hedef bırakılıyor,
+        yani çıkış her durumda garanti.
+        """
+        self.ates_engel_ardisik += 1
+        return self.ates_engel_ardisik >= config.FIRE_RETRY_GIVEUP_FRAMES
 
     def kara_listeye_al(self, ttl, sebep=''):
         if self.hedef_yaw is not None:
