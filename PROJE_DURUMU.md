@@ -1000,3 +1000,271 @@ vuruş olur ama tolerans sınırında gidip gelir.
 Yukarıdaki düzeltmelerden sonra yeniden ölçülmeli; yaw hâlâ pitch'in 10 katıysa
 yaw dişli boşluğu ayrıca ölçülüp ya redüktöre geçilmeli ya da tolerans gerçeğe
 göre ayarlanmalı. Şimdi toleransı gevşetmek sorunu ölçülemez hale getirir.
+
+## 9. Gozcu mavi esigi, boyut kapisi ve nisan noktasi karari (2026-08-16)
+
+Bu bolum `a39a281`, `e1aa1e5`, `9db6af7`, `115e450` ve `1909891` commit'lerini
+kapsar.
+
+### Saha ayarlari (`a39a281`)
+
+Kamera indeksleri sahada yeniden atandi (`HUNTER_CAMERA_INDICES = [1, 3, 4]`,
+`SPOTTER_CAMERA_INDICES = [2, 3, 4]`) ve yaw eksenine olculmus bir olcek trimi
+girildi: `HUNTER_DPP_YAW = 0.01430`. Bu trim yaw'daki **mekanik disli
+boslugunu** telafi ediyor; pitch'te 1:5 planet redukto oldugu icin oradaki
+olcek dokunulmadan birakildi. Testlerdeki "yaw ve pitch olcegi ayni
+buyuklukte" kontrolu bu yuzden tam esitlik yerine **%10 tolerans** ile
+calisiyor -- kasitli trimi yanlis pozitif olarak isaretlemesin diye.
+
+### Gozcude mavi neden hic taninmiyordu (`e1aa1e5`)
+
+Saha gozlemi: gozcu kirmizilari cok iyi buluyor, mavileri hic bulmuyordu.
+`gozcu_tani.py` yazilip gercek kare uzerinde HSV taramasi yapildi.
+
+Olculen: mavi maketin **doygunlugu S medyan 32**, %90'lik dilim 60. Eski esik
+`S >= 140` bunun **2-4 kati**. Sonuc: maket penceresinde 0 mavi piksel,
+`mavi_oran = 0.00`, ve DOST maket `dusman` isaretleniyordu.
+
+24 esik kombinasyonu karsilastirildi (dost penceresi 125 kirmizi, dusman
+penceresi 64 kirmizi iceriyordu):
+
+| esik | dost mavi_oran | dusman mavi_oran | karar |
+|---|---|---|---|
+| S>=40 | yuksek | **yuksek** | siyah perde de mavi okunuyor -> DUSMAN DOST SANILIR, tehlikeli yon |
+| **S>=80, V>=45** | **0.79** | **0.00** | **en genis marj -- secildi** |
+| S>=140 (eski) | 0.37 kararsiz, temizlikten sonra 0 | 0.00 | dost hic taninmiyor |
+
+`SPOTTER_BLUE_RANGES = [((90, 80, 45), (135, 255, 255))]` yapildi.
+`inference_module._MAVI` de **ayni degere** cekildi: orada kati kalirsa
+YOLO'nun `dost-*` tespitleri renk tutarlilik kontrolunden elenir ve dost
+avcida da hic taninmaz.
+
+### Sinif bazli acisal boyut kapisi (`9db6af7`)
+
+Sahada 0.1-0.2 saniye suren, guveni 0.6'ya cikan, karenin buyuk bir kismini
+kaplayan sahte etiketler goruldu. Mevcut alan orani kapisi cok gevsekti:
+1920x1105'te 728x728'e kadar her kutu geciyordu ve 50 cm'lik bir maket bu
+boyuta ancak **2.7 metrede** ulasir -- yani pratikte hicbir hayaleti kesmiyordu.
+
+Hedeflerin gercek boyutu ve mesafe araligi belli oldugu icin bir tespitin
+piksel boyutu keyfi olamaz:
+
+    GERCEK_BOYUTLAR_M = {'balon': 0.14, 'maket': 0.50}
+    TARGET_MIN_RANGE_M = 4.0 ... TARGET_MAX_RANGE_M = 20.0
+    DETECTION_SIZE_MIN_MARGIN = 0.40 ... DETECTION_SIZE_MAX_MARGIN = 1.40
+
+Kapi `DEGREES_PER_PIXEL` uzerinden tanimli, yani cozunurluk veya lens
+degisince **kendiliginden olcekleniyor**. Alt sinir kasitli olarak gevsek
+birakildi (uzak/kismen ortulu hedefi elememek icin).
+
+### Gozcu balon suzgecine dolgunluk sarti
+
+En-boy orani tek basina yetmiyordu: kirmizi F16 maketinin kutusu da kabaca
+kare cikabildigi icin "balon" sayilip iz aciliyordu (`gozcu_tani.py` aday #0).
+Olculen dolgunluk (blob / kendi kutusu): **gercek balon 0.70, kirmizi maket
+0.37**. Daire icin teorik deger pi/4 = 0.785.
+`SPOTTER_BALLOON_MIN_FILL = 0.50` ikisini ayirir, kismen ortulen balona da pay
+birakir.
+
+### Kilit iptaline zamansal onay
+
+"Kilit acisinda baska siniftan maket belirirse kilidi birak" korumasinin onayi
+yoktu; tek karelik bir hayalet iyi bir kilidi dusurup TARAMA'ya
+gonderebiliyordu. `LOCK_ABORT_CONFIRM_FRAMES = 3` eklendi; arada dogru sinif
+gorulurse sayac sifirlaniyor.
+
+### Tanilama araclarinda PNG yazimi
+
+`cv2.imwrite` Windows'ta **ASCII olmayan yollarda sessizce basarisiz oluyor**:
+istisna atmiyor, sadece `False` donuyor. Proje yolunda `barış` oldugu icin
+`gozcu_tani.py` ve `kamera_kalite.py` hicbir goruntu yazamiyor ama arac
+"calisiyor" gorunuyordu. `cv2.imencode` + normal dosya yazimi ile duzeltildi.
+
+### Nisan noktasi: analiz yapildi, sonra MERKEZE geri alindi (`115e450`)
+
+Avci kamera namlunun **5.5 cm ustunde** ve eksenler **paralel**. Paralel
+olduklari icin mermi her mesafede kamera ekseninin 5.5 cm altindan gecer.
+Duzeltme **mesafeden bagimsiz** olurdu, cunku gereken ofset ile balonun
+yaricapi ayni mesafedeki iki fiziksel uzunluk ve oranlari sabit:
+
+    5.5 / 7.0 = 0.786 yaricap = kutu yuksekliginin 0.393'u  ->  oran 0.893
+
+Mekanizma `engagement._nisan_yuksekligi()` olarak yazildi ve once 0.75
+denendi. **Saha karari bunu geri cevirdi:** `AIM_POINT_HEIGHT_RATIO = 0.5`,
+yani nisan noktasi tespitin **tam ortasi**. 0.5'te fonksiyon matematiksel
+olarak ozdeslik donuyor -- kod yolu eskisiyle birebir ayni.
+
+Mekanizma yerinde birakildi. Telafi istenirse tek yapilacak sey sayiyi
+buyutmek; testler orana bagli yazildigi icin (`oran == 0.5` -> "TAM MERKEZ",
+`> 0.5` -> "merkezin USTUNDE") elle guncelleme gerekmez.
+
+**Balistik dusus bilerek eklenmedi**: 15 metrede sapma ihmal ediliyor.
+
+### Depo hijyeni (`1909891`)
+
+GitHub'da en son `463a109` gorunuyordu cunku **13 commit hic push
+edilmemisti** (commit != push; `git status -sb` "ahead 13" diyordu). Push
+edildi. Ayrica:
+
+- `convert_to_onnx.py` / `convert_to_engine.py` takip disindaydi -> repoya
+  alindi. Modelin giris boyutunun (**1056x608**) tek kaynagi
+  `convert_to_engine.py` ve `config.py`'deki kirpma/olcekleme kararlari buna
+  dayaniyor.
+- `gozcu_tani/`, `kamera_kalite/`, `yolo_kalite/` `.gitignore`'a eklendi
+  (tanilama ciktisi PNG'leri, saha kosumuna ozel).
+
+## 10. Davranis referansi: Asama 2 / Asama 3 / Hedef Takip
+
+Bu bolum "butona bastiktan sonra ne olur" sorusunun tek referansi. Kod
+degistiginde burasi da guncellenmeli.
+
+### Gozcu ekraninda ne cizilir (sik sorulan)
+
+`spotter_module.balon_adaylari()` adaylari **YALNIZCA KIRMIZI MASKEDEN**
+cikarir. Mavi maske hicbir zaman aday uretmez; yalnizca balonun ustundeki
+pencerede **siniflandirmada** kullanilir.
+
+Sonuc:
+
+- Tek basina duran mavi bir cisim (dost maket dahil) **hic cizilmez**.
+- Mavi maketin **altinda kirmizi balon varsa**, o balon aday olur ve daire
+  cizilir; dairenin **rengi** `dost` sinifi icin mavi/turkuazdir. Yani
+  ekranda gordugun mavi daire "mavi tespit edildi" degil, "kirmizi balon
+  bulundu, ustu mavi cikti -> DOST" demektir.
+- Kirmizi bir cismin aday olabilmesi icin uc kapiyi gecmesi gerekir:
+  alan >= 30 px, en-boy orani 0.5-2.0, **dolgunluk >= 0.50**.
+
+Daire renkleri: dusman kirmizi, dost mavi/turkuaz, kararsiz sari.
+Cizim `iz['yaw']/['pitch']` acilarindan piksele geri donusturulur, yani
+gordugun daire izin **filtrelenmis** konumudur, ham blob degil.
+
+### Ortak akis (Asama 2 ve 3 ayni durum makinesini kullanir)
+
+    BOSTA -> TARAMA -> YONELME -> DOGRULAMA -> KILIT -> ATES -> (imha) -> TARAMA
+
+Durum makinesi **her karede bir adim** ilerler. Butonlarin fark yarattigi yer
+yalnizca uc noktadir: aday siralamasi, dost cezasinin omru, ve gorev metni.
+
+**TARAMA -- once avci, sonra gozcu.** Ister acikca soyle: "baktigi yerde imha
+etmesi gereken balon-hedef ikilisi YOKSA gozcuden gelen aciyla doner."
+`avcida_hazir_hedef_var()` su uc sarti arar: `ciftler[0]` maketli, guven
+>= 0.55, ve acisi kara listede degil. Saglaniyorsa **aci komutu hic
+gonderilmez**, dogrudan DOGRULAMA'ya gecilir. Saglanmiyorsa gozcu adaylari
+siralanir (gorulme >= 2 ve kara liste disi olanlar), ilk aday secilir ve
+taret onun **tahmin edilen** acisina gider (`SPOTTER_LATENCY` 0.05 sn +
+yalpalama suresi; hedef bu surede yol alir ve avcinin yari gorus acisi yaw'da
++-13.75, pitch'te yalnizca +-7.7 derece).
+
+**YONELME.** Hata <= 1.0 derece olunca DOGRULAMA. 2.5 saniyede oturmazsa
+TARAMA'ya doner.
+
+**DOGRULAMA -- kimlik burada belirlenir.** Merkeze en yakin **maketli** cift
+alinir; maketsiz kayit dogrulanamaz cunku kimlik bilgisini yalnizca maket
+tasir. Guven >= 0.55 ve **4 ardisik karede ayni sinif** sarti aranir.
+`dost-*` cikarsa hedef kara listeye girer ve TARAMA'ya donulur -- gozcu
+yanilsa bile dostun vurulmasini imkansiz kilan katman budur. `dusman-*`
+cikarsa KILIT. 1.5 saniyede karar cikmazsa 5 saniyelik kisa ceza ile TARAMA
+(ceza olmadan ayni aday sonsuz donguye giriyordu; sahada taret 4 saniye bos
+duvara bakip kalmisti).
+
+**KILIT -- hedef secimi uc kademeli** (`kilit_hedefi_sec`):
+
+1. Dogrulanan sinifla **eslesen** maketli cift -> normal takip.
+2. Maketsiz ama son kilit acisina <= 0.8 derece yakin balon -> **KOPRU**
+   (en fazla 5 kare). YOLO maketi bir kare kacirdiginda kilit dusmesin diye.
+3. Kilit acisinda **baska siniftan** maket 3 ardisik kare gorulurse kilit
+   birakilir.
+
+Hicbiri tutmuyorsa **hedef yoktur** -- eskiden burada "merkeze en yakin cifte
+dus" vardi ve o cift dostun cifti olabiliyordu.
+
+Nisan hatasi `max(9 px, 0.35 x yaricap)` toleransinin icinde **3 ardisik kare**
+kalirsa ATES. 8 saniyede olmazsa TARAMA.
+
+**ATES -- dokuz kosul birden** (`ates_serbest_mi`): durum ATES, cift var,
+maket bu karede tespit edildi, sinif `dusman-`, guven >= 0.55, sinif
+dogrulananla ayni, **cifte balon eslesmis**, balon bu karede gercekten
+gorundu, nisan tolerans icinde, ve yaw atessiz bolgede degil. Biri bile
+tutmazsa durum cubuguna gerekce yazilir ve 1.5 saniye sonra KILIT'e donulur.
+Ates sonrasi hedef 12 saniye kara listeye girer.
+
+### Asama 2 -- "Hizli Imha"
+
+Ortamda **yalnizca dusman** var. Iki fark:
+
+- **Aday siralamasi:** gozcunun dost/dusman karari **yok sayilir**, sadece
+  `-kirmizi_alan` ile siralanir -> **en buyuk (= en yakin) hedef once**.
+- **Dost cezasi kisa (5 sn).** Ortamda dost olmadigi icin "dost" verdicti
+  tanimi geregi bir YOLO hatasidir; 600 saniyelik ceza gercek bir dusmani
+  turdan tamamen silerdi.
+
+**Sik sorulan: dogrudan balona mi kilitleniyor? HAYIR.** Asama 2'de de maket
+zorunludur. Kimlik maketten, nisan noktasi balondan gelir. Tek basina duran
+bir kirmizi leke listeye girer (kopru kullanabilsin diye) ama dogrulanamaz ve
+ates kilidi ona **asla** izin vermez.
+
+Senaryolar:
+
+| durum | beklenen davranis |
+|---|---|
+| Avci hedefi zaten goruyor | Gozcuye **hic gidilmez**, taret donmez, dogrudan DOGRULAMA |
+| Avci bos, gozcude 2 iz | Buyuk (yakin) olan once; tahmin edilen aciya yalpala |
+| Gozcu hic iz uretmiyor, avci goruyor | Yine angaje olur (avci onceligi) |
+| Ikisi de bos | TARAMA'da bekler, durum cubugu "gozcude uygun aday yok (N iz)" |
+| Maket var, balon yok | Cift kurulur, yedek nisan noktasi ile takip edilir; **ates edilmez** ("cifte balon eslesmemis") |
+| Balon var, maket yok | Listeye girer, PID takip edebilir; dogrulanamaz, **ates edilmez** |
+| YOLO maketi 1-4 kare kacirdi | **Kopru**: balon tek basina takip edilir, kilit dusmez |
+| YOLO maketi 6+ kare kacirdi | Kopru butcesi doldu -> TARAMA |
+| YOLO yanlislikla "dost" dedi | 4 ardisik kare tutarsa 5 sn ceza, sonra tekrar denenir |
+| Ates edildi | 12 sn kara liste, TARAMA, sonraki hedefe |
+
+### Asama 3 -- "Dost/Dusman"
+
+Ortamda **iki dost bir dusman** var. Iki fark:
+
+- **Aday siralamasi:** gozcunun `dusman` dedigi izler once, `kararsiz`
+  ikinci, `dost` dedigi **en sona**. Dostlar listeden **silinmez** -- risk
+  asimetrik: gozcu bir dusmani yanlislikla dost sayarsa o hedef bir daha hic
+  denenmez ve gorev basarisiz olur. Sona siralamanin maliyeti yalnizca
+  zamandir, cunku dostun vurulmasi `ates_serbest_mi` tarafindan zaten
+  imkansiz kilinmis durumda.
+- **Dost cezasi 600 sn** -- ortamda gercekten iki dost var, onlari pratikte
+  kalici elemek dogru.
+
+Senaryolar (yukaridaki ortak tablonun **uzerine**):
+
+| durum | beklenen davranis |
+|---|---|
+| Gozcu dusmani dogru siraladi | En hizli yol: dusman once denenir |
+| Gozcu dusmani "dost" sandi | Once iki gercek dost denenir, ikisi de DOGRULAMA'da elenir ve 600 sn ceza alir, sonra sira dusmana gelir -- **gorev yine tamamlanir**, sadece gec |
+| Gozcu dostu "dusman" sandi | Taret ona doner, avci YOLO'su `dost-*` okur, 600 sn ceza, sirakine gecer |
+| Dost ve dusman yan yana (1 m) | `PAIR_MAX_HORIZONTAL_OFFSET = 0.4` + **karsilikli en yakinlik** kurali capraz eslesmeyi keser; dusmanin maketi dostun balonuyla cift kuramaz |
+| Kilitliyken dusman balonu patladi | Kilit acisinda dostun maketi belirirse 3 ardisik kare sonra kilit birakilir; ates zaten sinif esitligi sartinda takilir |
+| 4 turluk akista dusman gorunmedi | Sistem TARAMA'da kalir, **sikmaz** -- bilincli davranis, degistirilmedi |
+
+**Asama 3'un gorev mantigi (butce / erken durma) bilerek degistirilmedi.**
+Yarismada 3 yoldan iki dost bir dusman geliyor ve 4 turluk akista "kontrol
+eder, sikmaz" davranisi dogru olan.
+
+### Hedef Takip (atessiz)
+
+Bir **olcum araci**, gorev modu degil. `active_task = 'takip'`.
+
+- Angajman makinesi **hic baslatilmaz** -> gozcu devir teslimi yok,
+  dost/dusman dogrulamasi yok, otonom ates yolu **tamamen kapali**.
+- `SERVO_MODLAR = OTONOM_MODLAR + ('takip',)` -> PID calisir.
+- Hedef secimi cift uzerinden, `tek_balon=True`: maket+balon varsa balona,
+  yalniz maket varsa yedek noktaya, yalniz balon varsa balona.
+- Kayipta **tahmin yurutmez** -- kilidi birakip son aciyi tutar. Mod tespit
+  surekliligini oldugu gibi gostermeli.
+- Durum cubuguna canli nisan hatasi **piksel ve derece** cinsinden yazilir.
+
+## 11. Guncel test durumu
+
+| paket | kapsam | durum |
+|---|---|---|
+| `tests_yeni_mimari.py` | 13 bolum: config tutarliligi, nisan noktasi, cift eslestirme, durum makinesi, ates kilidi, gozcu, kara liste, avci onceligi, capraz eslesme + kilit koprusu | **hepsi geciyor** |
+| `verify_arayuz.py` (scratchpad) | A-F: Asama 3 kapisi, durum zinciri, dost reddi, kalibrasyon, fare tiklamasi, Hedef Takip | **hepsi geciyor** |
+
+Nisan noktasi testleri `AIM_POINT_HEIGHT_RATIO`'ya **bagli** yazildi; oran
+degisirse testler kendiliginden dogru dali dogrular.
