@@ -1697,7 +1697,15 @@ kirmizi "su an PID/kalibrasyon hedefi" demek, "dusman" demek degil; nisangah
 merkezdeydi ve merkeze en yakin tespit oydu. Yine de renk kodunun anlami
 operator icin kafa karistirici olabilir.
 
-## 17. anavlizaşama2/3 cozumlemesi: balonsuz hedefte takilma (2026-08-16)
+## 17. (HATALI -- 18. BOLUME BAKIN) anavlizaşama2/3 ilk cozumlemesi
+
+> **BU BOLUM YANILTICI.** Videolarin yalnizca bazi bolumleri incelendi;
+> asama3'te 8. saniye ve asama2'de 52. saniye HIC acilmadi. Buradan
+> "balon %0 goruluyor, hic ates edilmedi" gibi YANLIS sonuclar cikarildi.
+> Gercekte her iki kayitta da balon var ve ates ediliyor; salinimin
+> kaynagi da burada yazildigi gibi nisan noktasi degisimi DEGIL, mekanik
+> rezonans. Dogru cozumleme 18. bolumde. Asagisi yalnizca kayit icin.
+
 
 Iki kayit kare kare cozumlendi (858 + 2287 kare, 405 + 847 metin degisimi).
 
@@ -1794,3 +1802,123 @@ gozlemi tam olarak bu.
    kullanilmali.
 
 Ates icin balon sarti KALMALI -- o bir guvenlik katmani, gevsetilmemeli.
+
+## 18. anavlizaşama2/3 TAM cozumlemesi (2026-08-16)
+
+Her iki kaydin HER KARESI olculdu (858 + 2287 kare). Cizim renk koduna gore
+kare kare: nisan alinan kutu (kirmizi = balon), kilitli maket (turuncu),
+nisangah konumu. Kritik anlarin durum metni ayrica okundu.
+
+| | asama3 | asama2 |
+|---|---|---|
+| sure | 28.6 sn | 76.2 sn |
+| balon kutusu goruldu | %19 | **%40** |
+| kilitli maket goruldu | %79 | %63 |
+| balonun son goruldugu an | **8.10 sn** | -- |
+
+### BULGU 1 -- Imha dogrulama KILITLENMESI (kritik; 14. bolumdeki D2 hatasi)
+
+Asama 3, durum metninden birebir:
+
+    7.6 sn  ATES - dusman-Fuze (1. hedef, 1. atis)      <- ATES EDILDI
+    7.7 sn  ATES - imha dogrulaniyor (1. atis)
+    8.1 sn  Atesleme basarili, imha dogrulaniyor...
+    8.3 sn  ATES - imha dogrulaniyor (1. atis)
+    8.4 sn  Ates engellendi: guven dusuk 0.55           <- PENCERE DOLDU
+    8.5 sn  Ates engellendi: maket bu karede tespit edilmedi
+    ...
+   28.5 sn  Ates engellendi: cifte balon eslesmemis     <- 20 SANIYE TAKILI
+
+Balon 8.10 saniyede kayboldu (patladi) ama sistem 20 saniye ATES durumunda
+kaldi ve TARAMA'ya HIC donmedi.
+
+Kok neden (`ates_dogrulama_adimi` + `_otonom_ates_denemesi`): ates aninda
+balon goruluyor (zaten ates sarti) ve ateste sonraki 0.7 saniyelik pencerede
+birkac kare DAHA goruluyor (patlama ani + YOLO gecikmesi).
+`FIRE_CONFIRM_MAX_SEEN = 1` bunu "balon hala orada" sayip `'tekrar'`
+donduruyor. Sonrasi kapali devre:
+
+    'tekrar' -> ates_serbest_mi -> balon artik YOK -> ENGELLENDI
+             -> ates_kaydet() CAGRILMIYOR
+             -> ates_sayisi artmiyor          => 'pes' asla tetiklenmiyor
+             -> son_ates_zamani guncellenmiyor => pencere hep dolu
+             -> _ates_balon_gorulme sifirlanmiyor => hep 'tekrar'
+             -> ates_sayisi > 0 oldugu icin KILIT'e de donulmuyor
+
+Yani **'tekrar' karari verildikten sonra ates edilemezse cikis yolu yok.**
+
+Asama 2'de ayni hata TETIKLENMEDI, cunku orada balon hala goruluyordu:
+
+    51.3 sn  ATES - imha dogrulaniyor (1. atis)
+    51.5 sn  ATES - imha dogrulaniyor (2. atis)    <- tekrar atesledi
+    52.3 sn  ATES - imha dogrulaniyor (3. atis)    <- ucuncu
+    53.0 sn  Aday secildi, yoneliniyor: -8.8, -0.9 <- BUTCE DOLDU, CIKTI
+    53.2 sn  YONELME | 3 cift | imha 0
+
+Butce dolunca `'pes'` -> `imha_edilemedi()` -> TARAMA -> yeni hedef. Tasarim
+boyle calismali; asama 3'te ates edilemedigi icin bu yol hic isletilemedi.
+
+### BULGU 2 -- Salinim MEKANIK: yapisal rezonans
+
+17. bolumde salinimin "nisan noktasi kaynak degisimi"nden geldigi
+soylenmisti; **bu yanlis**. Balon ve maket kutulari ayni sahnede oldugu icin
+taret saliniyorsa BIRLIKTE kayar, YOLO gurultusuyse bagimsiz titrerler.
+
+| | asama3 | asama2 |
+|---|---|---|
+| korelasyon (balon vs maket hareketi) | **+0.934** | **+0.852** |
+| ortak mod (taret) std | 14.7 px | 12.7 px |
+| fark mod (kutu gurultusu) std | 2.9 px | 3.9 px |
+| **salinimin taretten gelen payi** | **%96** | **%91** |
+
+FFT ile frekans:
+
+| pencere | RMS genlik | baskin frekans | periyot |
+|---|---|---|---|
+| a3 k101-243 | 21.9 px | **3.15 Hz** | 0.318 sn |
+| a2 k1424-1584 | 21.9 px | **2.24 Hz** | 0.447 sn |
+
+FAZ 3'te olculen yapisal rezonans **2.7 Hz (0.37 sn)** -- ayni bant. PID,
+taretin mekanik dogal frekansini uyariyor.
+
+### BULGU 3 -- Ates karari neden verilemiyor
+
+Balon GORULEN karelerde:
+
+| | asama3 | asama2 |
+|---|---|---|
+| pitch hatasi ort / std | +19 / 33 px | +24 / 44 px |
+| tolerans max(9, 0.35 x r) | 9.9 px | 9.2 px |
+| **tolerans icinde kare** | %37.9 | %22.5 |
+| **3+ kare ARDISIK seri** | **4 tane** | **16 tane** |
+| pitch kare kare degisim (ort) | 9.8 px | 10.0 px |
+| >20 px sicrayan kare | %19.5 | %17.8 |
+
+Salinim genligi (22 px RMS) toleransin (9-10 px) iki kati. Sinuzoidal bir
+salinimda genligin %45'inin altinda kalinan sure orani ~%30; olculen %22-38
+bununla birebir tutarli. `AIM_HOLD_FRAMES = 3` (0.1 sn) ise rezonans
+periyodunun (0.32-0.45 sn) dortte biri -- hedef tolerans penceresinden bu
+kadar surede gecip gidiyor.
+
+### Kullanicinin sorusuna cevap
+
+"Asama 3 sadece bir tane patlatip bekliyor mu?" -- **Hayir.** Gorev
+mantiginda boyle bir kural yok; `imha_edildi()` TARAMA'ya donup siradaki
+hedefe gecer (asama 2'de 53.0 sn'de calistigi goruluyor). Asama 3'te
+beklemenin sebebi yukaridaki dogrulama kilitlenmesi -- sistem kendi kendine
+cikmayacakti.
+
+### Onerilen duzeltmeler (UYGULANMADI)
+
+1. **Dogrulama kilidini kir** (kritik): `'tekrar'` donduyu halde ates
+   edilemeyen kareler sayilsin; birkac kare ust uste ates edilemezse `'pes'`
+   donsun. Cikis her durumda garanti olur.
+2. **`FIRE_CONFIRM_MAX_SEEN` gevset** (1 -> 3-4) veya pencereyi atesten
+   ~0.2 sn SONRA baslat. Patlamis balon birkac kare daha goruldugu icin
+   "patlamamis" sayiliyor.
+3. **Rezonansi sondur** (asil salinim kaynagi): PID cikisina 2-3.5 Hz
+   bandinda sonumleme -- turev terimi, cikis egim siniri veya notch.
+   Kazanc dusurmek en basiti ama yalpalama suresini uzatir.
+
+Not: `AIM_HOLD_FRAMES`'i veya toleransi buyutmek salinimi GIZLER, cozmez;
+ates dogrulugu duser. Once rezonans sondurulmeli.
