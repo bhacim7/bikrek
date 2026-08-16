@@ -273,7 +273,11 @@ CAMERA_TARGET_EXPOSURE_SEC = 0.010
 #
 # Bedeli IPC: kare başına 1.1 MB yerine 2.8 MB. Kare hızı düşerse veya
 # gecikme artarsa 960'a çekilebilir.
-DISPLAY_WIDTH = 1280
+# 1280 -> 1600: avci paneli artik ESNEK ve maksimize pencerede ~1810
+# piksele kadar aciliyor. 1280'lik kare oraya %41 gerilerek cizilirdi.
+# 1600 ile gerilme %13'e iniyor; 1920 yapilirsa hic gerilme kalmaz ama
+# IPC kare basina 6.4 MB'a cikar. Kare hizi duserse buradan geri cekilir.
+DISPLAY_WIDTH = 1600
 
 
 # =====================================================================
@@ -289,11 +293,12 @@ DISPLAY_WIDTH = 1280
 # degisince kendiliginden uyar. Sarti: camera_label'in Qt.AlignCenter
 # hizalamasi korunmali.
 UI_AVCI_GENISLIK = 1280      # avci panelinin genisligi (piksel)
-UI_GOZCU_GENISLIK = 640      # gozcu panelinin genisligi; gozcu onizlemesi
+UI_GOZCU_GENISLIK = 660      # gozcu panelinin genisligi; gozcu onizlemesi
                              # bu genislikte URETILIR (spotter_module), yani
                              # buyutunce gerilme olmaz, gercekten netlesir.
                              # IPC: 640x360 -> ~690 KB/kare, 5 Hz'de gider.
-UI_SAG_PANEL_PAYI = 24       # gozcu panelinin saginda/solunda kalan bosluk
+UI_SAG_PANEL_PAYI = 40       # gozcu panelinin saginda/solunda kalan bosluk
+                             # (GOREVLER|KONTROL yan yana sigsin diye genis)
 
 
 def ui_avci_etiket_boyutu():

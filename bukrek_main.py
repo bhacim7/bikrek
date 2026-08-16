@@ -28,7 +28,9 @@ class HavaSavunmaArayuz(QWidget):
         print("HATA AYIKLAMA: HavaSavunmaArayuz başlatıldı.")
         super().__init__()
         self.setWindowTitle('Hava Savunma Sistemi Arayüzü')
-        self.setGeometry(100, 100, 2560, 1600)
+        # Maksimize edilmezse kullanilacak baslangic boyutu. 2560x1600 idi:
+        # yukseklik cogu ekrandan buyuk oldugu icin pencere tasiyordu.
+        self.setGeometry(60, 60, 2000, 1100)
         self.setStyleSheet("background-color: black;")
 
         # Multiprocessing queues
@@ -44,10 +46,18 @@ class HavaSavunmaArayuz(QWidget):
         # --- UI Elemanları Oluşturma ---
         print("HATA AYIKLAMA: UI elemanları oluşturuluyor.")
         self.camera_label = QLabel(self)
-        # Boyut config'ten ve kare EN-BOY ORANINDAN türetiliyor (1280x737).
-        # Sabit 1280x720 yazılsaydı pixmap 1280x737 olmak isteyip 720'ye
-        # sığdırılır, yanlarda ~14'er piksel boşluk kalırdı.
-        self.camera_label.setFixedSize(*config.ui_avci_etiket_boyutu())
+        # AVCI PANELI ESNEK. Sabit boyut verilirse (ilk denemede 1280x737
+        # verilmişti) pencere `showMaximized()` ile 2560'a açıldığında panel
+        # 1280'de kalıyor ve ekranın yarısı boş kalıyordu. Artık pencereyle
+        # birlikte büyüyor; `_display_frame` her karede etiketin GÜNCEL
+        # boyutuna sığdırdığı için ek bir iş gerekmiyor.
+        #
+        # Alt sınır, düzenin çökmemesi için. Üst sınır yok: ekran ne kadar
+        # genişse o kadar büyür.
+        _av_g, _av_y = config.ui_avci_etiket_boyutu()
+        self.camera_label.setMinimumSize(_av_g, _av_y)
+        self.camera_label.setSizePolicy(QSizePolicy.Expanding,
+                                        QSizePolicy.Expanding)
         # HİZALAMA AÇIKÇA ORTALANIYOR — VARSAYILAN DEĞİL.
         # QLabel'in pixmap varsayılanı `AlignLeft | AlignVCenter`'dır. Kamera
         # 1920x1200 (16:10) verdiği için pixmap KeepAspectRatio ile 1728x1080
@@ -296,7 +306,8 @@ class HavaSavunmaArayuz(QWidget):
         main_layout.addWidget(self.info_label)
 
         govde_layout = QHBoxLayout()
-        govde_layout.addWidget(self.camera_label, 0, Qt.AlignTop)
+        # Germe payi 1: artan yatay alanin TAMAMI avci paneline gidiyor.
+        govde_layout.addWidget(self.camera_label, 1)
 
         right_layout = QVBoxLayout()
         right_layout.addWidget(self.spotter_label)
@@ -378,8 +389,8 @@ class HavaSavunmaArayuz(QWidget):
         control_layout.addWidget(self.connect_rpi_button)
 
         camera_buttons_layout = QHBoxLayout()
-        self.start_button = QPushButton('Kamera Başlat', self)
-        self.stop_button = QPushButton('Kamera Durdur', self)
+        self.start_button = QPushButton('Başlat', self)
+        self.stop_button = QPushButton('Durdur', self)
 
         self.apply_button_style(self.start_button, font_size=16, padding=8, bg_color="#28a745",
                                 hover_color="#218838", pressed_color="#1e7e34")
@@ -506,11 +517,10 @@ class HavaSavunmaArayuz(QWidget):
         sag_panel.setFixedWidth(config.UI_GOZCU_GENISLIK
                                 + config.UI_SAG_PANEL_PAYI)
         govde_layout.addWidget(sag_panel, 0, Qt.AlignTop)
-        # Artan yatay alan BURAYA gidiyor; paneller sabit kaliyor.
-        govde_layout.addStretch(1)
+        # BURADA addStretch YOK: artan alani avci paneli aliyor, yoksa
+        # panel kucuk kalip ekranin yarisi bos gorunuyordu.
 
-        main_layout.addLayout(govde_layout)
-        main_layout.addStretch(1)
+        main_layout.addLayout(govde_layout, 1)
 
         self.setLayout(main_layout)
         print("HATA AYIKLAMA: Düzen ayarlandı.")
