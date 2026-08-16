@@ -277,6 +277,40 @@ DISPLAY_WIDTH = 1280
 
 
 # =====================================================================
+#  ARAYUZ YERLESIMI
+# =====================================================================
+# Bu degerler YALNIZCA gorunumu belirler. Tespit, PID, kalibrasyon ve nisan
+# matematiginin tamami HAM kare koordinatlarinda yurur (bkz. `frame_orig_w`);
+# arayuze giden kare salt okunur bir GOSTERIM kopyasidir. Yani buradaki
+# sayilari degistirmek hicbir ayari bozmaz.
+#
+# Tek bagli nokta fare tiklamasi: `_etiket_to_kare` donusumu pixmap
+# geometrisini CALISMA ANINDA okur (sabit sayi kullanmaz), bu yuzden boyut
+# degisince kendiliginden uyar. Sarti: camera_label'in Qt.AlignCenter
+# hizalamasi korunmali.
+UI_AVCI_GENISLIK = 1280      # avci panelinin genisligi (piksel)
+UI_GOZCU_GENISLIK = 640      # gozcu panelinin genisligi; gozcu onizlemesi
+                             # bu genislikte URETILIR (spotter_module), yani
+                             # buyutunce gerilme olmaz, gercekten netlesir.
+                             # IPC: 640x360 -> ~690 KB/kare, 5 Hz'de gider.
+UI_SAG_PANEL_PAYI = 24       # gozcu panelinin saginda/solunda kalan bosluk
+
+
+def ui_avci_etiket_boyutu():
+    """
+    Avci etiketinin (QLabel) piksel boyutu.
+
+    Yukseklik kare EN-BOY ORANINDAN turetiliyor; sabit yazilsaydi (orn.
+    1280x720) pixmap KeepAspectRatio ile 1280x737 olmak isteyip 720'ye
+    sigdirilir ve yanlarda bosluk kalirdi. Oranla hesaplayinca goruntu
+    etikete TAM oturur, bosluk olmaz.
+    """
+    kare_g, kare_y = hunter_etkin_kare()
+    yuk = int(round(UI_AVCI_GENISLIK * kare_y / float(kare_g)))
+    return UI_AVCI_GENISLIK, yuk
+
+
+# =====================================================================
 #  ÖLÇEK KALİBRASYONU (derece / piksel)
 # =====================================================================
 # KAMERA VEYA LENS DEĞİŞİRSE YENİDEN ÖLÇÜLMELİ — arayüzdeki
@@ -541,7 +575,7 @@ SPOTTER_BLUE_RANGES = [((90, 80, 45), (135, 255, 255))]
 # Bir blobun aday sayılması için gereken en küçük alan (piksel).
 # 15 metrede 14 cm'lik balon gözcüde 10 piksel çap = ~79 piksel alan verir.
 # Eşik bunun altında olmalı ama gürültüyü de elemeli.
-SPOTTER_MIN_BLOB_AREA = 30
+SPOTTER_MIN_BLOB_AREA = 60
 
 # Bir blobun en/boy oranı bu aralığın dışındaysa balon sayılmaz. Balon
 # yuvarlaktır; uzun ince bir kırmızı leke maket parçası veya yansımadır.
@@ -552,7 +586,7 @@ SPOTTER_BALLOON_ASPECT = (0.5, 2.0)
 # orani tek basina yetmiyordu -- maket kutusu da kabaca kare olabildigi
 # icin 'balon' sayiliyor ve gozcu olmayan bir balona iz aciyordu.
 # 0.50 ikisini ayirir; kismen ortulen bir balon icin de pay birakir.
-SPOTTER_BALLOON_MIN_FILL = 0.50
+SPOTTER_BALLOON_MIN_FILL = 0.60
 
 # --- SADECE ARAYUZ: gozcu onizlemesinde cizilecek bloblar ---
 # Yonlendirmeye HICBIR etkisi yok. Operatorun "gozcu neyi goruyor, neden

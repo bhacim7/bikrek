@@ -44,7 +44,10 @@ class HavaSavunmaArayuz(QWidget):
         # --- UI Elemanları Oluşturma ---
         print("HATA AYIKLAMA: UI elemanları oluşturuluyor.")
         self.camera_label = QLabel(self)
-        self.camera_label.setFixedSize(1920, 1080)
+        # Boyut config'ten ve kare EN-BOY ORANINDAN türetiliyor (1280x737).
+        # Sabit 1280x720 yazılsaydı pixmap 1280x737 olmak isteyip 720'ye
+        # sığdırılır, yanlarda ~14'er piksel boşluk kalırdı.
+        self.camera_label.setFixedSize(*config.ui_avci_etiket_boyutu())
         # HİZALAMA AÇIKÇA ORTALANIYOR — VARSAYILAN DEĞİL.
         # QLabel'in pixmap varsayılanı `AlignLeft | AlignVCenter`'dır. Kamera
         # 1920x1200 (16:10) verdiği için pixmap KeepAspectRatio ile 1728x1080
@@ -62,13 +65,14 @@ class HavaSavunmaArayuz(QWidget):
         self.camera_label.setAlignment(Qt.AlignCenter)
         self.camera_label.setStyleSheet("background-color: black;")
 
-        self.image_label = QLabel(self)
-        self.image_label.setAlignment(Qt.AlignCenter)
-
         # GÖZCÜ önizlemesi. Gözcünün ne gördüğünü ve hangi açıyı ürettiğini
         # ekranda görmeden sahada hata ayıklamak imkânsız.
+        # Genişlik config'ten; `spotter_module.ONIZLEME_GENISLIK` de aynı
+        # değeri kullanıyor, yani önizleme bu boyutta ÜRETİLİYOR — panel
+        # büyüdüğünde görüntü gerilmiyor, gerçekten netleşiyor.
         self.spotter_label = QLabel(self)
-        self.spotter_label.setFixedSize(480, 270)
+        self.spotter_label.setFixedSize(config.UI_GOZCU_GENISLIK,
+                                        config.UI_GOZCU_GENISLIK * 9 // 16)
         self.spotter_label.setAlignment(Qt.AlignCenter)
         self.spotter_label.setStyleSheet("background-color: #101010; color: #888;")
         self.spotter_label.setText("Gözcü: kapalı")
@@ -80,10 +84,13 @@ class HavaSavunmaArayuz(QWidget):
         self.target_info_label = QLabel("Hedef Bilgisi: Yok")
         self.target_info_label.setStyleSheet("color: white; font-size: 14px;")
 
+        # Üst bilgi satırı (yaw/pitch/kare sayaçları). ARTIK DÜZENE BAĞLI:
+        # eskiden `move(1530, 5)` ile MUTLAK konumdaydı ve genişliği 760'a
+        # sabitlenmişti. Pencere daraldığında (avcı paneli 1920'den 1280'e
+        # inince) 1530+760 = 2290 piksel, pencerenin dışına taşıyordu.
         self.info_label = QLabel(self)
-        self.info_label.move(1530, 5)
-        # Tanı sayaçları da bu satıra yazılıyor; 350 piksel yetmiyordu.
-        self.info_label.setFixedSize(760, 30)
+        self.info_label.setFixedHeight(30)
+        self.info_label.setAlignment(Qt.AlignCenter)
         self.update_info_panel("BUKREK Hava Savunma Sistemi")
         print("HATA AYIKLAMA: UI elemanları oluşturuldu.")
 
@@ -274,11 +281,24 @@ class HavaSavunmaArayuz(QWidget):
         print("HATA AYIKLAMA: RPiCommunicator başlatıldı.")
 
         print("HATA AYIKLAMA: Ana düzen ve grup kutuları oluşturuluyor.")
-        main_layout = QHBoxLayout()
-        main_layout.addWidget(self.camera_label, 8)
+        # DÜZEN: üstte bilgi satırı, altında [avcı | sağ panel].
+        #
+        # Eskiden ana düzen tek bir QHBoxLayout'tu ve kamera etiketi
+        # `addWidget(self.camera_label, 8)` ile 8 GERME PAYIYLA ekleniyordu.
+        # Etiket sabit boyutlu olduğu için o pay ona hiç geçmiyor, artan alan
+        # sağdaki esnek widget'lara (butonlar yatayda Expanding) dağılıyordu.
+        # Avcı paneli küçültülünce butonlar açılan boşluğu doldurup sola
+        # kayıyordu — sahada görülen tam olarak buydu.
+        #
+        # Artık germe payı yok; artan alan açıkça bir addStretch'e gidiyor,
+        # yani paneller sabit kalıyor ve boşluk sağda toplanıyor.
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.info_label)
+
+        govde_layout = QHBoxLayout()
+        govde_layout.addWidget(self.camera_label, 0, Qt.AlignTop)
 
         right_layout = QVBoxLayout()
-        right_layout.addWidget(self.image_label)
         right_layout.addWidget(self.spotter_label)
         right_layout.addWidget(self.spotter_info_label)
         right_layout.addSpacerItem(QSpacerItem(10, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
@@ -312,7 +332,9 @@ class HavaSavunmaArayuz(QWidget):
         task_layout.addWidget(self.takip_button)
         task_layout.addWidget(self.manual_control_mode_button)
         tasks_group_box.setLayout(task_layout)
-        right_layout.addWidget(tasks_group_box)
+        # GOREVLER burada EKLENMIYOR: asagida KONTROL ile yan yana konuyor.
+        # Ikisi alt alta oldugunda sag panel ~1140 piksel yuksekliga
+        # ulasip ekrana sigmiyordu; yan yana koyunca ~250 piksel kazaniliyor.
         right_layout.addSpacerItem(
             QSpacerItem(10, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
 
@@ -390,7 +412,12 @@ class HavaSavunmaArayuz(QWidget):
         control_layout.addWidget(self.calibrate_button)
 
         control_group_box.setLayout(control_layout)
-        right_layout.addWidget(control_group_box)
+        # GOREVLER ve KONTROL yan yana. Genislik sag panele bolusturuluyor,
+        # her iki kutu da esit pay aliyor.
+        gruplar_satiri = QHBoxLayout()
+        gruplar_satiri.addWidget(tasks_group_box, 1)
+        gruplar_satiri.addWidget(control_group_box, 1)
+        right_layout.addLayout(gruplar_satiri)
 
         # --- Ateş Kontrolü ve Kısıtlı Bölge Ayarları Grup Kutusu ---
         self.fire_control_group_box = QGroupBox("Ateş Kontrolü ve Kısıtlı Bölge Ayarları")
@@ -471,7 +498,19 @@ class HavaSavunmaArayuz(QWidget):
         right_layout.addSpacerItem(
             QSpacerItem(10, 20, QSizePolicy.Minimum, QSizePolicy.Expanding))
 
-        main_layout.addLayout(right_layout, 0)
+        # Sag panel SABIT genislikte bir konteynere aliniyor. Layout'a
+        # dogrudan eklenseydi icindeki butonlar (yatayda Expanding) artan
+        # alani doldurup panelin genisligini pencereye gore degistirirdi.
+        sag_panel = QWidget(self)
+        sag_panel.setLayout(right_layout)
+        sag_panel.setFixedWidth(config.UI_GOZCU_GENISLIK
+                                + config.UI_SAG_PANEL_PAYI)
+        govde_layout.addWidget(sag_panel, 0, Qt.AlignTop)
+        # Artan yatay alan BURAYA gidiyor; paneller sabit kaliyor.
+        govde_layout.addStretch(1)
+
+        main_layout.addLayout(govde_layout)
+        main_layout.addStretch(1)
 
         self.setLayout(main_layout)
         print("HATA AYIKLAMA: Düzen ayarlandı.")

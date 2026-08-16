@@ -33,7 +33,9 @@ import numpy as np
 import config
 
 # UI önizlemesi bu genişliğe küçültülür ve bu hızda gönderilir.
-ONIZLEME_GENISLIK = 480
+# Genişlik config'ten geliyor ki arayüzdeki panel boyutuyla AYNI kalsın:
+# panel büyütülüp önizleme küçük bırakılırsa görüntü gerilir ve bulanıklaşır.
+ONIZLEME_GENISLIK = config.UI_GOZCU_GENISLIK
 ONIZLEME_HZ = 5.0
 
 # Aday sınıflandırma etiketleri
