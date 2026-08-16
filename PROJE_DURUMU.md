@@ -1268,3 +1268,221 @@ Bir **olcum araci**, gorev modu degil. `active_task = 'takip'`.
 
 Nisan noktasi testleri `AIM_POINT_HEIGHT_RATIO`'ya **bagli** yazildi; oran
 degisirse testler kendiliginden dogru dali dogrular.
+
+## 12. Saha kaydi cozumlemesi: asama2-3-hedefTakip.mp4 (2026-08-16)
+
+51.3 saniye, 1539 kare, guncel kodla cekildi (video 06:43, son commit 04:25).
+Durum satirlari kare kare cikarildi (398 metin degisimi), nisan hatasi
+kirmizi balon blobu izlenerek olculdu, cizilen kutular kenar bazinda
+olculdu. Ekran -> kare piksel olcegi nisangahin bilinen boyutundan
+(`crosshair_size = 10`) kalibre edildi: **1 ekran px = 1.05 kare px**.
+
+### Olculen nisan hatasi
+
+| faz | zaman | ort. hata | std |
+|---|---|---|---|
+| Asama 3 yalpalama | 1.1-2.5 sn | 370 px | 85 |
+| Asama 3 oturma | 2.5-5.0 sn | 21-26 px | **12-14** |
+| **Asama 3 oturmus** | **5-13 sn** | **2.1 px** | **0.2** |
+| Hedef Takip | 26-29 sn | 15-36 px | 1.6-8.7 |
+| Asama 2 oturma | 45-47 sn | 19-25 px | **11-15** |
+| **Asama 2 oturmus** | **48-51 sn** | **5.7 px** | **0.1** |
+
+Yani PID nihai olarak **cok kararli** (std 0.1-0.2 px). Sorun oturma
+fazindaki 2-3 saniyelik salinim.
+
+### Salinimin kok nedeni: nisan noktasi KAYNAK DEGISIMI
+
+Durum satirlarindan alinan ardisik hata degerleri (Asama 2, 45.9-46.8 sn):
+
+    yaw:   +26, +7, -18, -11, -10, -5, -5, -5, -5, -5, -5, -6, -5
+    pitch: +12, -6, -15, +22, +17, -49, -52, -4, +8, -18, -50, +5, +17
+
+**Yaw oturuyor (-5 px sabit), pitch -52 ile +22 arasinda ziplyor.** Bu
+asimetri tesadufi degil: nisan noktasinin iki kaynagi **ayni x'te ama farkli
+y'de**.
+
+Olculdu (uc ayri kareden):
+
+| kare | maket kutusu | balon merkezi y | yedek nisan y | **fark** |
+|---|---|---|---|---|
+| 150 | 172x208 | 561 | 536 | **-25 px** |
+| 300 | 167x202 | 569 | 540 | **-29 px** |
+| 1445 | 162x208 | 570 | 536 | **-34 px** |
+
+Balon goruldugunde nisan = balon merkezi. Balon kacirildiginda nisan =
+`maket_merkez_y + PAIR_FALLBACK_AIM_OFFSET (0.75) x maket_genisligi`, yani
+**25-34 piksel YUKARIDA**. Taret bir noktaya oturur, kaynak degisir, hata
+bir anda ~30 px olur, taret geri doner. Salinim budur.
+
+`_ciftleri_sirala` her karede bagimsiz calisiyor -- hicbir sureklilik yok.
+KILIT koprusu yalnizca "maket yok, balon var" durumunu kapatiyor; TERSI
+("maket var, balon yok") hala yedek formule dusuyor.
+
+### Hedef Takip'te hedefin ortalanamamasi
+
+26-29 saniye arasi olculen hata 15-36 px ve dusmuyor. Uc ayri sebep:
+
+1. **O sahnede balon YOK** (k872 goruntusu). Nisan noktasi maketten
+   turetiliyor ve kutunun **altina** dusuyor -- kasitli davranis (balonun
+   olmasi gereken yer), ama kullanicinin bekledigi "kutunun tam ortasi"
+   degil. Hedef Takip bir olcum araci oldugu icin burada tahmin yurutmek
+   yanlis.
+2. **Rakip tespit hedefi calyor**: k825'te tek karede **yaw hatasi +400 px**
+   olcusuldu, sonraki karede 0'a dondu. `ciftler[0]` (merkeze en yakin cift)
+   kare kare degisiyor.
+3. Kaynak degisimi (yukaridaki madde) burada da calisiyor.
+
+### Ates neden yalnizca BIR kez geliyor
+
+Asama 3'te ates **4.07 saniyede** verildi (`ATES - dusman-F16 (1. hedef)`).
+Hemen ardindan k123'ten itibaren, 10.5 saniyeye kadar kesintisiz:
+
+    Durum: TARAMA - gozcude uygun aday yok (1-3 iz).
+    Hedef: TARAMA | 1-2 cift | imha 1
+
+Gozcu izi goruyor, avci cifti goruyor, ama sistem angaje **olmuyor**.
+Sebep: `_otonom_ates_denemesi` ates komutunu gonderir gondermez
+`imha_edildi()` cagiriyor; o da hedefi `BLACKLIST_TTL_SEC = 12` saniye kara
+listeye aliyor. `avcida_hazir_hedef_var` da kara liste kontrolu yaptigi icin
+avci hedefi merkezde gorse bile 12 saniye boyunca dokunmuyor.
+
+**Sistemde imha DOGRULAMASI yok: "ates ettim" = "imha ettim" varsayiliyor.**
+Sarjor takili degilken (veya iska gectiginde) sistem bunu asla ogrenmiyor.
+Ayni desen Asama 2'de de goruldu (48 sn ates, sonrasi ayni).
+
+### Kilitli hedefin kutusu neden kirmizi olmuyor
+
+Cizim kurali (`bukrek_main.py` ~2283):
+
+    if current_tracked_target_class and det['class_name'] == current_tracked_target_class:
+        if current_target_bbox_for_pid and det['bbox'] == current_target_bbox_for_pid:
+            renk = KIRMIZI
+        else:
+            renk = SARI
+    else:
+        renk = YESIL
+
+Otonom yolda `current_target_bbox_for_pid`, `_nisan_tespiti`'nin urettigi
+**SANAL** kutudur: `(cx-r, cy-r, 2r, 2r)`, sinif adi **maketin** adi. Bu kutu
+hicbir gercek tespitin bbox'i degil, dolayisiyla esitlik **asla** tutmuyor:
+
+- maket tespiti  -> sinif tutuyor, bbox tutmuyor -> **SARI**
+- balon tespiti  -> sinif tutmuyor ('balon' vs 'dusman-f16') -> **YESIL**
+
+Yani otonom modda **hicbir kutu kirmizi olamaz**. Islevsel bir hata degil,
+ama operator kilidi goremiyor. Videoda gozlenen tam olarak budur.
+
+### False positive durumu
+
+Cizilen kutular kare kare sayildi:
+
+| kutu/kare | kare | oran |
+|---|---|---|
+| 0 | 589 | %38.3 |
+| 1 | 212 | %13.8 |
+| 2 | 678 | %44.1 |
+| 3+ | 60 | %3.9 |
+
+Sahnede gercek hedef 2 kutu (maket + balon). %3.9 fazladan kutu = false
+positive. **%38.3'te hic kutu yok** -- bunun bir kismi kameranin hedefe
+bakmadigi geciler, ama tespit sureksizligi de burada.
+
+Boyut kapisi **calisiyor ama sinirda**: k872'deki devasa sahte
+`dusman-fuze (0.74)` kutusu olculdu -> **693x592 kare px**. Kapi maket icin
+40..700 px. 693 < 700, yani **7 piksel farkla geciyor**. Tum videoda kapiyi
+asan kutu yalnizca 17 karede goruldu (en buyuk 720 px).
+
+Kapinin ust siniri `TARGET_MIN_RANGE_M = 4.0` metreden geliyor:
+
+    50 cm @ 4 m  -> 500 px, x1.40 marj = 700 px
+
+Sahada en yakin hedef 7.5 metre. `TARGET_MIN_RANGE_M = 7.5` yapilirsa:
+
+    50 cm @ 7.5 m -> 267 px, x1.40 marj = 373 px
+
+693, 487, 464, 445 px'lik sahte kutularin **hepsi** elenirdi. Olculen gercek
+maket kutusu 162-172 px, yani 373 sinirinin cok altinda -- kayip yok.
+
+### Balonun gercek boyutu 14 cm degil
+
+Olculen balon kutusu 78x74 kare px, maket kutusu 162x208 px. Maket 50 cm
+kabul edilirse mesafe 9.6 m cikiyor; ayni mesafede 78 px'lik balonun gercek
+capi **18.7 cm**. `GERCEK_BOYUTLAR_M['balon'] = 0.14` bu yuzden olcumle
+uyusmuyor. Su anda zarari yok (balon kapisi 11..196 px, 78 px rahat geciyor)
+ama yakin mesafede balonu elemeye baslayabilir.
+
+## 13. Gozcu renk ayarlari: "maket taninmayan, balon taninan" set (2026-08-16)
+
+Kullanicinin saha gozlemi: gozcude balon surekli tespit ediliyor, F16 maketi
+cok az, fuze neredeyse hic. **Bu bilincli bir tasarim sonucudur, hata
+degildir** -- ve istenirse geri donulebilsin diye mevcut set burada
+arsivleniyor.
+
+### Neden maketler taninmiyor
+
+`spotter_module.balon_adaylari()` adaylari **yalnizca kirmizi maskeden**
+cikarir ve uc kapi uygular:
+
+    SPOTTER_MIN_BLOB_AREA    = 30      # alan
+    SPOTTER_BALLOON_ASPECT   = (0.5, 2.0)   # en/boy
+    SPOTTER_BALLOON_MIN_FILL = 0.50    # dolgunluk (blob / kendi kutusu)
+
+- **F16 maketi**: olculen dolgunluk **0.37** -> dolgunluk kapisinda elenir.
+- **Fuze**: ince uzun, en/boy orani 0.5-2.0 araliginin disinda -> elenir.
+- **Balon**: dolgunluk 0.70 (daire icin teorik 0.785) -> gecer.
+
+Yani gozcu **kasten yalnizca balon ariyor**. Mavi maske hicbir zaman aday
+uretmez; sadece balonun ustundeki pencerede siniflandirmada kullanilir.
+
+### Arsivlenen ayar seti (su an yururlukte)
+
+```python
+SPOTTER_RED_RANGES  = [((0, 120, 70), (10, 255, 255)),
+                       ((170, 120, 70), (179, 255, 255))]
+SPOTTER_BLUE_RANGES = [((90, 80, 45), (135, 255, 255))]
+SPOTTER_MIN_BLOB_AREA    = 30
+SPOTTER_BALLOON_ASPECT   = (0.5, 2.0)
+SPOTTER_BALLOON_MIN_FILL = 0.50
+SPOTTER_MODEL_WINDOW_ABOVE = (0.2, 3.5)
+SPOTTER_MODEL_WINDOW_WIDTH = 2.5
+SPOTTER_FRIEND_BLUE_RATIO  = 0.60
+SPOTTER_ENEMY_BLUE_RATIO   = 0.25
+```
+
+**Bu set ile olculen davranis** (uc hedef gozcu acisindayken, `gozcu_tani.py`):
+
+    kirmizi piksel : 1537 (%0.167)   mavi piksel : 504 (%0.055)
+    BALON ADAYI    : 1 tane -> yaw +5.8, pitch +1.5, cap 22 px, alan 343 px2
+      maket penceresi: kirmizi 929 | mavi 0 -> mavi_oran 0.000 -> DUSMAN (dogru)
+    Solda kirmizi F16 (265 px kirmizi) : ADAY DEGIL (balonu yok)
+    Ortada mavi F16                    : ADAY DEGIL (balonu yok, mavi aday uretmez)
+
+### Alternatif: "maketlere de git, balonu yoksa gec"
+
+Kullanicinin onerisi. Su anki davranista balonu gozcude blob vermeyen bir
+hedef **hic denenmiyor** -- taret oraya gitmiyor. Alternatifte maket de aday
+olur, taret doner, avci bakar, balon yoksa kara listeye alinip gecilir.
+
+| | su anki (balon-merkezli) | onerilen (makete de git) |
+|---|---|---|
+| bos yere donme | yok | olur (her balonsuz maket icin ~2 sn) |
+| balonu gozcude gorunmeyen hedef | **kacirilir** | bulunur |
+| Asama 3'te dost maketler | hic ziyaret edilmez | ziyaret edilir, elenir |
+
+Uygulanacaksa dolgunluk/en-boy kapilari **aday uretiminde** gevsetilip
+`sinif` alanina "balonsuz" isareti eklenmesi ve `aday_sirala`'da bunlarin
+**sona** konmasi yeterli; balon adaylari onceligini korur.
+
+**Karar: su an degistirilmiyor.** Bu bolum ayarlara geri donulebilsin diye
+kayit altina alinmistir.
+
+### `gozcu_tani.py` ciktisindaki yaniltici satir
+
+Arac su satiri **sabit metin** olarak yazdiriyor (`gozcu_tani.py:198`):
+
+    (mevcut ayar: S>=140, V>=60 -> yukaridaki tabloda son satir)
+
+Gercek ayar `S>=80, V>=45`. Metin 9. bolumdeki esik degisikliginde
+guncellenmemis; ciktinin ust kismindaki `SPOTTER_BLUE_RANGES` dogru
+basiliyor. Duzeltilmeli, yoksa esik taramasi yanlis satirdan okunur.
