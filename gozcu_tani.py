@@ -195,7 +195,14 @@ def main():
                                  np.array((135, 255, 255), np.uint8))
                 satir += f"{int(np.count_nonzero(mm)):7d}"
             print(satir)
-        print("      (mevcut ayar: S>=140, V>=60 -> yukaridaki tabloda son satir)")
+        # Mevcut ayar SABIT METIN olarak yazilmamali: esik degisince burasi
+        # guncellenmiyor ve tarama tablosu yanlis satirdan okunuyor.
+        # (Sahada boyle oldu: config S>=80,V>=45 iken arac "S>=140,V>=60"
+        # yaziyordu.) Deger artik config'den okunuyor.
+        _s_ayar = config.SPOTTER_BLUE_RANGES[0][0][1]
+        _v_ayar = config.SPOTTER_BLUE_RANGES[0][0][2]
+        print(f"      (mevcut ayar: S>={_s_ayar}, V>={_v_ayar} "
+              f"-- tabloda bu esige en yakin hucreye bak)")
 
     for ad, gorsel in (("ham.png", kare),
                        ("kirmizi_maske.png", kirmizi),

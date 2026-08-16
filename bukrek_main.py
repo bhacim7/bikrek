@@ -2688,14 +2688,20 @@ class HavaSavunmaArayuz(QWidget):
         if self.angajman.durum == ATES:
             self._otonom_ates_denemesi()
 
-        if self.is_aimed_at_target and self.active_task in ['task2', 'task3'] and not self.target_destroyed:
+        # ATEŞ durumunda durum çubuğunun TEK yazarı `_otonom_ates_denemesi`.
+        # Bu satır eskiden koşulsuz çalışıyordu ve hemen yukarıdaki çağrının
+        # yazdığı mesajı aynı karede eziyordu — imha doğrulama penceresinin
+        # ("1. atış" / "2. atış" / "İMHA DOĞRULANDI") ekranda hiç görünmemesi
+        # demekti bu. Kayıtta da gözlenmişti: "KİLİT" ile "Hedefe nişan alındı"
+        # arasında sürekli gidip gelen satır budur.
+        if (self.is_aimed_at_target and self.active_task in self.OTONOM_MODLAR
+                and not self.target_destroyed
+                and self.angajman.durum != ATES):
             current_time = time.time()
-            if current_time - self.last_fire_time < self.fire_cooldown_interval:
-                pass
-            else:
+            if current_time - self.last_fire_time >= self.fire_cooldown_interval:
                 try:
                     self._update_status_label("Durum: Hedefe nişan alındı, otomatik ateş bekleniyor...")
-                except Exception as e:
+                except Exception:
                     pass
 
         delta_time = current_frame_time - self.pid_update_time
