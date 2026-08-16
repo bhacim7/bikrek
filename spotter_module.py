@@ -58,6 +58,35 @@ def _temizle(maske):
     return cv2.morphologyEx(maske, cv2.MORPH_CLOSE, cekirdek)
 
 
+def balon_kapisi(alan, w, h):
+    """
+    Bir blob balon adayı olabilir mi?
+
+    Döner: None (aday) veya elenme sebebi (kısa metin).
+
+    Karar burada TEK yerde veriliyor; hem `balon_adaylari` hem de arayüz
+    çizimi (`gosterim_bloklari`) bunu çağırıyor. Ayrı yazılsalardı arayüz
+    er ya da geç gerçek kararla ayrışır ve yanlış bilgi gösterirdi.
+    """
+    if alan < config.SPOTTER_MIN_BLOB_AREA:
+        return f"alan {alan}<{config.SPOTTER_MIN_BLOB_AREA}"
+    if w <= 0 or h <= 0:
+        return "gecersiz"
+    oran = w / float(h)
+    en_kucuk, en_buyuk = config.SPOTTER_BALLOON_ASPECT
+    if not (en_kucuk <= oran <= en_buyuk):
+        return f"en/boy {oran:.2f}"
+    # DOLGUNLUK: blob kendi kutusunu ne kadar dolduruyor? Daire icin
+    # pi/4 = 0.785. Sahada olculdu: gercek balon 0.70, kirmizi F16
+    # maketi 0.37. En-boy orani tek basina yetmiyordu -- maketin
+    # kutusu da kabaca kare cikabildigi icin 'balon' sayilip iz
+    # aciliyordu (gozcu_tani.py aday #0).
+    dolgu = alan / float(w * h)
+    if dolgu < config.SPOTTER_BALLOON_MIN_FILL:
+        return f"dolgunluk {dolgu:.2f}"
+    return None
+
+
 def balon_adaylari(kirmizi_maske):
     """
     Kırmızı maskeden balon adaylarını çıkarır.
@@ -67,24 +96,11 @@ def balon_adaylari(kirmizi_maske):
     """
     n, _, stats, merkezler = cv2.connectedComponentsWithStats(kirmizi_maske, 8)
     adaylar = []
-    en_kucuk, en_buyuk = config.SPOTTER_BALLOON_ASPECT
     for i in range(1, n):
         alan = int(stats[i, cv2.CC_STAT_AREA])
-        if alan < config.SPOTTER_MIN_BLOB_AREA:
-            continue
         w = int(stats[i, cv2.CC_STAT_WIDTH])
         h = int(stats[i, cv2.CC_STAT_HEIGHT])
-        if h <= 0:
-            continue
-        oran = w / float(h)
-        if not (en_kucuk <= oran <= en_buyuk):
-            continue
-        # DOLGUNLUK: blob kendi kutusunu ne kadar dolduruyor? Daire icin
-        # pi/4 = 0.785. Sahada olculdu: gercek balon 0.70, kirmizi F16
-        # maketi 0.37. En-boy orani tek basina yetmiyordu -- maketin
-        # kutusu da kabaca kare cikabildigi icin 'balon' sayilip iz
-        # aciliyordu (gozcu_tani.py aday #0).
-        if alan / float(w * h) < config.SPOTTER_BALLOON_MIN_FILL:
+        if balon_kapisi(alan, w, h) is not None:
             continue
         adaylar.append({
             'cx': float(merkezler[i][0]),
@@ -94,6 +110,50 @@ def balon_adaylari(kirmizi_maske):
             'cap': float(max(w, h)),
         })
     return adaylar
+
+
+def gosterim_bloklari(kirmizi_maske, mavi_maske):
+    """
+    ARAYÜZ İÇİN blob listesi — YÖNLENDİRMEYE HİÇBİR ETKİSİ YOKTUR.
+
+    Gözcünün gördüğü her şeyi operatöre göstermek için. Kararı bu fonksiyon
+    vermiyor; yalnızca `balon_kapisi`nin verdiği kararı raporluyor:
+
+        aday=True   -> balon adayı, iz açılır, taret buraya gidebilir
+        aday=False  -> elendi; `ret` alanı NEDEN elendiğini söyler
+
+    MAVİ bloblar hiçbir zaman aday olmaz. Gözcünün aday üretimi tamamen
+    kırmızı maskeye dayalı; mavi maske yalnızca balonun üstündeki pencerede
+    dost/düşman oranı için okunuyor. Mavi bloblar burada SADECE operatör
+    "gözcü maviyi görüyor mu" sorusunu yanıtlayabilsin diye listeleniyor.
+
+    Çıktı birkaç yüz bayt; önizleme karesiyle birlikte, düşük hızda gider.
+    """
+    bloklar = []
+    for renk, maske in (('kirmizi', kirmizi_maske), ('mavi', mavi_maske)):
+        if maske is None:
+            continue
+        n, _, stats, merkezler = cv2.connectedComponentsWithStats(maske, 8)
+        bulunan = []
+        for i in range(1, n):
+            alan = int(stats[i, cv2.CC_STAT_AREA])
+            if alan < config.SPOTTER_DISPLAY_MIN_AREA:
+                continue
+            w = int(stats[i, cv2.CC_STAT_WIDTH])
+            h = int(stats[i, cv2.CC_STAT_HEIGHT])
+            ret = balon_kapisi(alan, w, h) if renk == 'kirmizi' else 'mavi'
+            bulunan.append({
+                'x': int(stats[i, cv2.CC_STAT_LEFT]),
+                'y': int(stats[i, cv2.CC_STAT_TOP]),
+                'w': w, 'h': h,
+                'alan': alan,
+                'renk': renk,
+                'aday': renk == 'kirmizi' and ret is None,
+                'ret': ret or '',
+            })
+        bulunan.sort(key=lambda b: -b['alan'])
+        bloklar.extend(bulunan[:config.SPOTTER_DISPLAY_MAX_BLOBS])
+    return bloklar
 
 
 def maket_penceresi(aday, kare_gen, kare_yuk):
@@ -373,7 +433,7 @@ def spotter_worker(command_queue, result_queue):
 
         yakalama = time.time()
         try:
-            izler, kirmizi, _ = kareyi_coz(frame, yonetici, yakalama)
+            izler, kirmizi, mavi = kareyi_coz(frame, yonetici, yakalama)
         except Exception as e:
             print(f"Gozcu analiz hatasi: {e}")
             continue
@@ -398,6 +458,13 @@ def spotter_worker(command_queue, result_queue):
                                        max(1, int(frame.shape[0] * olcek))))
             sonuc['onizleme'] = kucuk
             sonuc['onizleme_olcek'] = olcek
+            # Blob listesi yalnızca önizlemeyle BİRLİKTE gidiyor: çizim
+            # zaten önizleme hızında yenileniyor, her karede göndermek
+            # boşuna IPC yükü olurdu. Yönlendirmeyi beslemez.
+            try:
+                sonuc['bloklar'] = gosterim_bloklari(kirmizi, mavi)
+            except Exception as e:
+                print(f"Gozcu blok cikarimi hatasi: {e}")
 
         if result_queue.full():
             try:

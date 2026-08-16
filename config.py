@@ -554,6 +554,14 @@ SPOTTER_BALLOON_ASPECT = (0.5, 2.0)
 # 0.50 ikisini ayirir; kismen ortulen bir balon icin de pay birakir.
 SPOTTER_BALLOON_MIN_FILL = 0.50
 
+# --- SADECE ARAYUZ: gozcu onizlemesinde cizilecek bloblar ---
+# Yonlendirmeye HICBIR etkisi yok. Operatorun "gozcu neyi goruyor, neden
+# aday saymiyor" sorusunu ekranda yanitlayabilmesi icin. Esik aday
+# esiginden (SPOTTER_MIN_BLOB_AREA) DUSUK, cunku amac elenenleri de
+# gostermek.
+SPOTTER_DISPLAY_MIN_AREA = 20
+SPOTTER_DISPLAY_MAX_BLOBS = 12    # renk basina; IPC yuku sinirli kalsin
+
 # --- Dost/düşman ayrımı: "maviyi üstte ara" ---
 # Aşama 3'te "en büyük kırmızı yoğunluk = düşman" kuralı ÇALIŞMAZ; mesafeye
 # duyarlıdır. Örnek görselde ölçüldü (kırmızı piksel alanı):

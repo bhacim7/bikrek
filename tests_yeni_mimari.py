@@ -741,6 +741,68 @@ for _ad, _sinif, _px, _bekle in (
 
 print()
 print("=" * 70)
+print("15. GOZCU GOSTERIM BLOKLARI (yalnizca cizim, yonlendirmeye etkisiz)")
+print("=" * 70)
+
+_g = np.zeros((720, 1280, 3), np.uint8); _g[:] = (35, 35, 35)
+
+
+def _ucak(x, y, renk):
+    cv2.rectangle(_g, (x - 8, y - 40), (x + 8, y + 40), renk, -1)
+    cv2.rectangle(_g, (x - 35, y - 6), (x + 35, y + 6), renk, -1)
+
+
+_KRM, _MAV = (40, 40, 220), (220, 120, 40)
+_ucak(320, 300, _KRM)                          # balonsuz kirmizi maket
+_ucak(450, 300, _MAV)                          # dost mavi maket
+cv2.circle(_g, (450, 358), 11, _KRM, -1)       # dostun balonu
+_ucak(750, 285, _KRM)                          # dusman maket
+cv2.circle(_g, (750, 343), 11, _KRM, -1)       # dusmanin balonu
+
+_hsv = cv2.cvtColor(_g, cv2.COLOR_BGR2HSV)
+_krm = sp._temizle(sp._maske(_hsv, config.SPOTTER_RED_RANGES))
+_mav = sp._temizle(sp._maske(_hsv, config.SPOTTER_BLUE_RANGES))
+
+_adaylar = sp.balon_adaylari(_krm)
+_bloklar = sp.gosterim_bloklari(_krm, _mav)
+_blok_aday = [b for b in _bloklar if b['aday']]
+_blok_elenen = [b for b in _bloklar if b['renk'] == 'kirmizi' and not b['aday']]
+_blok_mavi = [b for b in _bloklar if b['renk'] == 'mavi']
+
+kontrol("gosterim aday sayisi GERCEK aday sayisiyla ayni",
+        len(_blok_aday) == len(_adaylar), f"{len(_blok_aday)} vs {len(_adaylar)}")
+kontrol("elenen kirmizi maketler cizim listesinde var",
+        len(_blok_elenen) >= 2, f"{len(_blok_elenen)} adet")
+kontrol("mavi blob cizim listesinde var (dost gorunur olsun)",
+        len(_blok_mavi) >= 1, f"{len(_blok_mavi)} adet")
+kontrol("mavi blob ASLA aday degil",
+        all(not b['aday'] for b in _blok_mavi))
+kontrol("maket elenme sebebi DOLGUNLUK olarak raporlaniyor",
+        any('dolgunluk' in b['ret'] for b in _blok_elenen),
+        ", ".join(sorted({b['ret'] for b in _blok_elenen})))
+
+# Cizim etiketi ile gercek karar ASLA ayrismamali (tek kapi: balon_kapisi)
+_uyum = True
+for _b in _bloklar:
+    if _b['renk'] != 'kirmizi':
+        continue
+    _gercek = any(abs(a['cx'] - (_b['x'] + _b['w'] / 2.0)) < 3 and
+                  abs(a['cy'] - (_b['y'] + _b['h'] / 2.0)) < 3 for a in _adaylar)
+    if _gercek != _b['aday']:
+        _uyum = False
+kontrol("cizimin 'aday' etiketi gercek kararla birebir uyuyor", _uyum)
+
+# YONLENDIRME DEGISMEDI: izler hala yalnizca balon adaylarindan uretiliyor
+_yon = sp.IzYoneticisi()
+_izler, _, _ = sp.kareyi_coz(_g, _yon, 1000.0)
+kontrol("iz sayisi = balon aday sayisi (maketler iz acmiyor)",
+        len(_izler) == len(_adaylar), f"{len(_izler)} iz / {len(_adaylar)} aday")
+kontrol("dost balonu 'dost', dusman balonu 'dusman' siniflandi",
+        sorted(i.sinif for i in _izler) == ['dost', 'dusman'],
+        ", ".join(sorted(i.sinif for i in _izler)))
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)

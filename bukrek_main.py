@@ -106,6 +106,7 @@ class HavaSavunmaArayuz(QWidget):
         self.gozcu_zamani = 0.0
         self.gozcu_indeks = None       # gözcünün açtığı kamera indeksi
         self.gozcu_onizleme = None
+        self.gozcu_bloklari = []       # SADECE cizim: gozcunun ham bloblari
         self.angajman = engagement.AngajmanMakinesi()
         self.aktif_cift = None         # o karedeki maket+balon çifti
         self.balon_gercek_goruldu = False
@@ -753,14 +754,56 @@ class HavaSavunmaArayuz(QWidget):
         self.gozcu_indeks = son.get('indeks')
         if 'onizleme' in son:
             self.gozcu_onizleme = (son['onizleme'], son.get('onizleme_olcek', 1.0))
+            # Bloklar onizleme ile BIRLIKTE geliyor; ayni karenin
+            # goruntusu ve bloblari eslesik kalsin diye burada guncelleniyor.
+            self.gozcu_bloklari = son.get('bloklar', [])
 
     def _gozcu_ciz(self):
-        """Gözcü önizlemesini izlerle birlikte çiz."""
+        """
+        Gözcü önizlemesini izlerle VE ham bloblarla birlikte çiz.
+
+        Görsel dil:
+          kalın daire      -> AKTİF İZ. Aday sayıldı, taret buraya gidebilir.
+                              Rengi sınıfı verir (kırmızı düşman, mavi dost,
+                              sarı kararsız).
+          ince kırmızı kutu-> kırmızı blob, balon kapısından GEÇEMEDİ.
+                              Yanında elenme sebebi yazılı.
+          ince mavi kutu   -> mavi blob. Gözcü maviyi görüyor ama mavi
+                              HİÇBİR ZAMAN aday üretmez (bkz.
+                              `spotter_module.gosterim_bloklari`).
+
+        Bloblar YALNIZCA GÖSTERİM. Hedef seçimi ve taret yönlendirmesi
+        yalnızca izlere bakar; bu çizim onlara hiç dokunmaz.
+        """
         if self.gozcu_onizleme is None:
             return
         kare, olcek = self.gozcu_onizleme
         kare = kare.copy()
         yuk, gen = kare.shape[:2]
+
+        # Önce ham bloblar (arkada kalsınlar), sonra izler.
+        for blok in self.gozcu_bloklari:
+            x = int(blok['x'] * olcek)
+            y = int(blok['y'] * olcek)
+            w = max(2, int(blok['w'] * olcek))
+            h = max(2, int(blok['h'] * olcek))
+            if blok['renk'] == 'mavi':
+                # Etiket YOK: kutunun rengi zaten "mavi blob" diyor. Metin
+                # yazmak yandaki kırmızı maketin sebebiyle üst üste biniyor.
+                renk, etiket = (255, 150, 40), ''
+            elif blok['aday']:
+                # Bu blob zaten iz olarak daireyle çizilecek; kutusu ince kalsın.
+                renk, etiket = (0, 220, 220), ''
+            else:
+                # Elenme sebebi kısaltılıyor: önizleme 480 px geniş, uzun
+                # metin komşu blobun üstüne taşıyor.
+                renk = (90, 90, 235)
+                etiket = blok['ret'].replace('dolgunluk', 'dolg').replace('en/boy', 'oran')
+            cv2.rectangle(kare, (x, y), (x + w, y + h), renk, 1)
+            if etiket:
+                cv2.putText(kare, etiket, (x, max(8, y - 3)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.28, renk, 1)
+
         for iz in self.gozcu_izler:
             # Açıdan piksele geri dönüş (önizleme ölçeğinde)
             px = int(gen / 2 + (iz['yaw'] - config.SPOTTER_YAW_OFFSET)
@@ -1223,6 +1266,7 @@ class HavaSavunmaArayuz(QWidget):
             self.spotter_cmd_q.put("STOP")
         self.gozcu_izler = []
         self.gozcu_onizleme = None
+        self.gozcu_bloklari = []
         self.spotter_label.setText("Gözcü: kapalı")
         self.spotter_info_label.setText("Gözcü: -")
 
@@ -2002,14 +2046,20 @@ class HavaSavunmaArayuz(QWidget):
             # gibi görünüyor. Hangi kameranın nerede olduğunu ekrandan
             # görebilmek gerekiyor.
             _ix = f"kam{self.gozcu_indeks}" if self.gozcu_indeks is not None else "kam?"
+            # Blob sayımı: "gözcü hiçbir şey görmüyor" ile "görüyor ama aday
+            # saymıyor" ayrımı ekrandan anlaşılsın. İkisi çok farklı sorunlar.
+            _k = sum(1 for b in self.gozcu_bloklari if b['renk'] == 'kirmizi')
+            _m = sum(1 for b in self.gozcu_bloklari if b['renk'] == 'mavi')
+            _blok = f" | blob K{_k}/M{_m}"
             if self.gozcu_izler:
                 en_iyi = self.gozcu_izler[0]
                 self.spotter_info_label.setText(
-                    f"Gözcü [{_ix}]: {len(self.gozcu_izler)} iz | ilk: "
+                    f"Gözcü [{_ix}]: {len(self.gozcu_izler)} iz{_blok} | ilk: "
                     f"{en_iyi['yaw']:+.1f}° {en_iyi['pitch']:+.1f}° "
                     f"({en_iyi['sinif']}, {en_iyi['yaw_hiz']:+.1f}°/s)")
             elif self.gozcu_onizleme is not None:
-                self.spotter_info_label.setText(f"Gözcü [{_ix}]: çalışıyor, iz yok")
+                self.spotter_info_label.setText(
+                    f"Gözcü [{_ix}]: çalışıyor, iz yok{_blok}")
             else:
                 self.spotter_info_label.setText("Gözcü: veri gelmiyor")
         except Exception as e:
