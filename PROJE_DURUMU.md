@@ -1621,3 +1621,78 @@ kayipta yeni hedef seciliyor, balon kirmizi / maket turuncu ciziliyor.
 - Asama 3 gorev mantigi (butce / erken durma).
 - `AIM_POINT_HEIGHT_RATIO = 0.5` (tam merkez).
 - Gozcu renk ayarlari -- 13. bolumde arsivlendigi gibi duruyor.
+
+## 16. Gozcu gosterim dogrulamasi ve dolgunluk esiginin zayifligi (2026-08-16)
+
+Blob cizimi eklendikten sonra sahada dogrulandi: arayuz ekran goruntusu
+(Asama 1, etiketler gorunur) + `gozcu_tani` ciktilari. Sahnede 3 maket vardi
+(dusman-F16, dost-F16, dusman-Fuze) ve **hicbirinin balonu yoktu**.
+
+### Gosterim/karar uyumu: TAM
+
+Arayuz bilgi satiri `blob K4/M3` yazdi. Ayni kare (`gozcu_tani/ham.png`)
+kendi kodumuzla cozuldugunde: 4 kirmizi blob, 3 mavi blob, 2 aday. Birebir
+ayni. `balon_kapisi`nin tek kaynak olmasi calisiyor -- arayuz gercek karari
+raporluyor, ayri bir hesap yapmiyor.
+
+Cizim de dogru: elenen bloblar sebebiyle birlikte gorunuyor ("dolg 0.46",
+"oran 0.37"), mavi bloblar ince mavi kutuyla, adaylar daireyle.
+
+### AMA: dolgunluk kapisi maketin DURUSUNA bagli
+
+Olculen kirmizi bloblar:
+
+| # | konum | boyut | alan | en/boy | dolgunluk | karar |
+|---|---|---|---|---|---|---|
+| 0 | (830,296) | 34x42 | 601 | 0.81 | 0.42 | elendi (fuze) |
+| 1 | (522,305) | 36x29 | 530 | 1.24 | **0.51** | **ADAY** |
+| 2 | (0,370) | 6x19 | 102 | 0.32 | 0.89 | elendi (en/boy) |
+| 3 | (152,366) | 6x8 | **43** | 0.75 | 0.90 | **ADAY** |
+
+Sahnede balon YOKKEN gozcu **2 aday** uretti ve ikisi de yanlis:
+
+- **#1 kirmizi F16 maketi**, dolgunluk 0.51 -- esik 0.50'yi **0.01 farkla**
+  gecti. Sahada daha once olculen deger 0.37'ydi. Fark durus: o kayitta maket
+  acili/yandan duruyordu, burada KARSIDAN (burun kameraya donuk) ve silueti
+  kompakt. Yani 0.50 esigi maketin acisina gore basarili/basarisiz oluyor.
+- **#3 43 piksellik minik leke** (6x8 px). `SPOTTER_MIN_BLOB_AREA = 30` cok
+  dusuk: gozcude (DPP 0.0535) 19 cm'lik balon **20 metrede bile ~82 piksel**
+  alan kaplar. 43 px hicbir mesafede balon olamaz.
+
+Dolgunluk esigi duyarliligi (ayni kare):
+
+    0.40 -> 3 aday      0.55 -> 1 aday
+    0.46 -> 2 aday      0.60 -> 1 aday
+    0.50 -> 2 aday  <-- su anki
+    0.70 -> 1 aday
+
+Olculen gercek balon dolgunlugu 0.70 (daire icin teorik pi/4 = 0.785).
+
+### Zarar degerlendirmesi
+
+Guvenlik sorunu DEGIL: taret bu adaya gider, avci bakar, balon yok, cift
+kurulamaz, dogrulama 1.5 sn'de zaman asimina ugrar, 5 sn kara liste, siradaki
+adaya gecilir. Ates kilidi maket+balon sart kostugu icin yanlis ates imkansiz.
+
+Maliyet yalnizca ZAMAN: her yanlis aday ~2 saniye. Ilginc olan, bu davranisin
+kullanicinin 13. bolumde tarif ettigi alternatife ("makete de git, balonu
+yoksa gec") kazara benzemesi -- ama secilerek degil, esik sinirda oldugu icin.
+
+### Onerilen (HENUZ UYGULANMADI, onay bekliyor)
+
+1. `SPOTTER_BALLOON_MIN_FILL` 0.50 -> **0.60**. Gercek balon 0.70 olctugu icin
+   pay kalir; karsidan duran maketi (0.51) eler. Kismen ortulen balon icin
+   0.60 hala makul.
+2. `SPOTTER_MIN_BLOB_AREA` 30 -> **60**. En uzak mesafede (20 m) balon ~82 px;
+   60 hem pay birakir hem 43 px'lik gurultuyu keser.
+
+### Avci tarafi: boyut kapisi tuttu
+
+Ayni karede avci uc tespit uretti (0.87 / 0.80 / 0.81) ve **hicbiri sahte
+degildi** -- onceki kayitlarda arka planda beliren dev `dusman-fuze` kutulari
+yok. Olculen kutular ~145x169 ve ~131x210 px, yeni kapi 40-374 px.
+
+Not: `dost-F16` KIRMIZI kutuyla cizildi. Bu dogru davranis -- Asama 1'de
+kirmizi "su an PID/kalibrasyon hedefi" demek, "dusman" demek degil; nisangah
+merkezdeydi ve merkeze en yakin tespit oydu. Yine de renk kodunun anlami
+operator icin kafa karistirici olabilir.
