@@ -303,13 +303,17 @@ class HavaSavunmaArayuz(QWidget):
         # Artık germe payı yok; artan alan açıkça bir addStretch'e gidiyor,
         # yani paneller sabit kalıyor ve boşluk sağda toplanıyor.
         main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(12, 8, 12, 12)
+        main_layout.setSpacing(10)
         main_layout.addWidget(self.info_label)
 
         govde_layout = QHBoxLayout()
+        govde_layout.setSpacing(16)      # avci ile sag panel arasi
         # Germe payi 1: artan yatay alanin TAMAMI avci paneline gidiyor.
         govde_layout.addWidget(self.camera_label, 1)
 
         right_layout = QVBoxLayout()
+        right_layout.setSpacing(12)      # gruplar arasi nefes payi
         right_layout.addWidget(self.spotter_label)
         right_layout.addWidget(self.spotter_info_label)
         right_layout.addSpacerItem(QSpacerItem(10, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
@@ -321,8 +325,9 @@ class HavaSavunmaArayuz(QWidget):
         # --- GÖREVLER Grup Kutusu ---
         tasks_group_box = QGroupBox("GÖREVLER")
         tasks_group_box.setStyleSheet(
-            "color: white; font-size: 16px; font-weight: bold; border: 2px solid white; border-radius: 8px; padding: 5px;")
+            self.grup_stili())
         task_layout = QVBoxLayout()
+        task_layout.setSpacing(10)
 
         self.task1_button = QPushButton("Aşama 1", self)
         self.task2_button = QPushButton("Aşama 2", self)
@@ -330,12 +335,12 @@ class HavaSavunmaArayuz(QWidget):
         self.takip_button = QPushButton("Hedef Takip (ateşsiz)", self)
         self.manual_control_mode_button = QPushButton("Tam Manuel Kontrol", self)
 
-        self.apply_button_style(self.task1_button, font_size=18, padding=10)
-        self.apply_button_style(self.task2_button, font_size=18, padding=10)
-        self.apply_button_style(self.task3_button, font_size=18, padding=10)
-        self.apply_button_style(self.takip_button, font_size=18, padding=10,
+        self.apply_button_style(self.task1_button, font_size=19, padding=15)
+        self.apply_button_style(self.task2_button, font_size=19, padding=15)
+        self.apply_button_style(self.task3_button, font_size=19, padding=15)
+        self.apply_button_style(self.takip_button, font_size=19, padding=15,
                                 bg_color="#2E7D64", hover_color="#3E9C80")
-        self.apply_button_style(self.manual_control_mode_button, font_size=18, padding=10)
+        self.apply_button_style(self.manual_control_mode_button, font_size=19, padding=15)
 
         task_layout.addWidget(self.task1_button)
         task_layout.addWidget(self.task2_button)
@@ -352,7 +357,7 @@ class HavaSavunmaArayuz(QWidget):
         # --- Aşama 3 Ayarları Grup Kutusu (YENİ) ---
         self.task3_settings_group_box = QGroupBox("Aşama 3 Ayarları")
         self.task3_settings_group_box.setStyleSheet(
-            "color: white; font-size: 16px; font-weight: bold; border: 2px solid white; border-radius: 8px; padding: 5px;")
+            self.grup_stili())
         task3_settings_layout = QVBoxLayout()
         self.a_label = QLabel("Angajman Bölgesi A (°):")
         self.a_label.setStyleSheet("color: white; font-size: 12px;")
@@ -367,7 +372,7 @@ class HavaSavunmaArayuz(QWidget):
         self.b_input.setStyleSheet("color: black; background-color: white; font-size: 12px;")
 
         self.task3_start_button = QPushButton("Angajmanı Al", self)
-        self.apply_button_style(self.task3_start_button, font_size=18, padding=10, bg_color="#007bff")
+        self.apply_button_style(self.task3_start_button, font_size=19, padding=15, bg_color="#007bff")
 
         task3_settings_layout.addWidget(self.a_label)
         task3_settings_layout.addWidget(self.a_input)
@@ -381,20 +386,22 @@ class HavaSavunmaArayuz(QWidget):
         # --- KONTROL Grup Kutusu ---
         control_group_box = QGroupBox("KONTROL")
         control_group_box.setStyleSheet(
-            "color: white; font-size: 16px; font-weight: bold; border: 2px solid white; border-radius: 8px; padding: 5px;")
+            self.grup_stili())
         control_layout = QVBoxLayout()
+        control_layout.setSpacing(10)
 
         self.connect_rpi_button = QPushButton('RPi Bağla', self)
-        self.apply_button_style(self.connect_rpi_button, font_size=16, padding=8)
+        self.apply_button_style(self.connect_rpi_button, font_size=17, padding=13)
         control_layout.addWidget(self.connect_rpi_button)
 
         camera_buttons_layout = QHBoxLayout()
+        camera_buttons_layout.setSpacing(10)
         self.start_button = QPushButton('Başlat', self)
         self.stop_button = QPushButton('Durdur', self)
 
-        self.apply_button_style(self.start_button, font_size=16, padding=8, bg_color="#28a745",
+        self.apply_button_style(self.start_button, font_size=17, padding=13, bg_color="#28a745",
                                 hover_color="#218838", pressed_color="#1e7e34")
-        self.apply_button_style(self.stop_button, font_size=16, padding=8, bg_color="#dc3545",
+        self.apply_button_style(self.stop_button, font_size=17, padding=13, bg_color="#dc3545",
                                 hover_color="#c82333", pressed_color="#bd2130")
 
         camera_buttons_layout.addWidget(self.start_button)
@@ -404,21 +411,21 @@ class HavaSavunmaArayuz(QWidget):
         self.stop_task_button = QPushButton('Görevi Durdur', self)
         self.fire_weapon_button = QPushButton("ATEŞ ET")
 
-        self.apply_button_style(self.stop_task_button, font_size=16, padding=8, bg_color="#ffc107",
+        self.apply_button_style(self.stop_task_button, font_size=17, padding=13, bg_color="#ffc107",
                                 hover_color="#e0a800", pressed_color="#d39e00")
-        self.apply_button_style(self.fire_weapon_button, font_size=20, padding=12, bg_color="#dc3545",
+        self.apply_button_style(self.fire_weapon_button, font_size=21, padding=17, bg_color="#dc3545",
                                 hover_color="#c82333", pressed_color="#bd2130")
 
         control_layout.addWidget(self.stop_task_button)
         control_layout.addWidget(self.fire_weapon_button)
 
         self.reset_angles_button = QPushButton("Açıları Sıfırla (0,0)", self)
-        self.apply_button_style(self.reset_angles_button, font_size=16, padding=8, bg_color="#17a2b8",
+        self.apply_button_style(self.reset_angles_button, font_size=17, padding=13, bg_color="#17a2b8",
                                 hover_color="#138496", pressed_color="#117a8b")
         control_layout.addWidget(self.reset_angles_button)
 
         self.calibrate_button = QPushButton("Derece/Piksel Ölç", self)
-        self.apply_button_style(self.calibrate_button, font_size=14, padding=6, bg_color="#6f42c1",
+        self.apply_button_style(self.calibrate_button, font_size=15, padding=11, bg_color="#6f42c1",
                                 hover_color="#5a32a3", pressed_color="#4e2a8e")
         control_layout.addWidget(self.calibrate_button)
 
@@ -426,6 +433,7 @@ class HavaSavunmaArayuz(QWidget):
         # GOREVLER ve KONTROL yan yana. Genislik sag panele bolusturuluyor,
         # her iki kutu da esit pay aliyor.
         gruplar_satiri = QHBoxLayout()
+        gruplar_satiri.setSpacing(14)
         gruplar_satiri.addWidget(tasks_group_box, 1)
         gruplar_satiri.addWidget(control_group_box, 1)
         right_layout.addLayout(gruplar_satiri)
@@ -433,8 +441,9 @@ class HavaSavunmaArayuz(QWidget):
         # --- Ateş Kontrolü ve Kısıtlı Bölge Ayarları Grup Kutusu ---
         self.fire_control_group_box = QGroupBox("Ateş Kontrolü ve Kısıtlı Bölge Ayarları")
         self.fire_control_group_box.setStyleSheet(
-            "color: white; font-size: 16px; font-weight: bold; border: 2px solid white; border-radius: 8px; padding: 5px;")
+            self.grup_stili())
         fire_control_layout = QVBoxLayout()
+        fire_control_layout.setSpacing(10)
 
         no_fire_start_layout = QHBoxLayout()
         label_no_fire_start = QLabel("Ateşsiz Bölge Başlangıç Yaw (°):")
@@ -460,12 +469,12 @@ class HavaSavunmaArayuz(QWidget):
 
         no_fire_buttons_layout = QHBoxLayout()
         self.apply_no_fire_zone_button = QPushButton("Ateşsiz Bölge Uygula", self)
-        self.apply_button_style(self.apply_no_fire_zone_button, font_size=14, padding=6, bg_color="#007bff",
+        self.apply_button_style(self.apply_no_fire_zone_button, font_size=15, padding=11, bg_color="#007bff",
                                 hover_color="#0069d9", pressed_color="#0062cc")
         no_fire_buttons_layout.addWidget(self.apply_no_fire_zone_button)
 
         self.clear_no_fire_zone_button = QPushButton("Ateşsiz Bölgeyi Temizle", self)
-        self.apply_button_style(self.clear_no_fire_zone_button, font_size=14, padding=6, bg_color="#6c757d",
+        self.apply_button_style(self.clear_no_fire_zone_button, font_size=15, padding=11, bg_color="#6c757d",
                                 hover_color="#5a6268", pressed_color="#545b62")
         no_fire_buttons_layout.addWidget(self.clear_no_fire_zone_button)
         fire_control_layout.addLayout(no_fire_buttons_layout)
@@ -477,7 +486,7 @@ class HavaSavunmaArayuz(QWidget):
         # --- MANUEL YÖN KONTROLÜ Grup Kutusu ---
         self.direct_manual_control_group_box = QGroupBox("Doğrudan Manuel Kontrol")
         self.direct_manual_control_group_box.setStyleSheet(
-            "color: white; font-size: 16px; font-weight: bold; border: 2px solid white; border-radius: 8px; padding: 5px;")
+            self.grup_stili())
         direct_manual_control_layout = QVBoxLayout()
 
         grid_layout = QVBoxLayout()
@@ -487,10 +496,10 @@ class HavaSavunmaArayuz(QWidget):
         self.left_button = QPushButton("Sol", self)
         self.right_button = QPushButton("Sağ", self)
 
-        self.apply_button_style(self.up_button, font_size=16, padding=8)
-        self.apply_button_style(self.down_button, font_size=16, padding=8)
-        self.apply_button_style(self.left_button, font_size=16, padding=8)
-        self.apply_button_style(self.right_button, font_size=16, padding=8)
+        self.apply_button_style(self.up_button, font_size=17, padding=13)
+        self.apply_button_style(self.down_button, font_size=17, padding=13)
+        self.apply_button_style(self.left_button, font_size=17, padding=13)
+        self.apply_button_style(self.right_button, font_size=17, padding=13)
 
         grid_layout.addWidget(self.up_button, alignment=Qt.AlignCenter)
 
@@ -595,6 +604,35 @@ class HavaSavunmaArayuz(QWidget):
 
         QCoreApplication.instance().aboutToQuit.connect(self.close_event)
         print("HATA AYIKLAMA: HavaSavunmaArayuz başlatma tamamlandı.")
+
+    @staticmethod
+    def grup_stili():
+        """
+        Grup kutusu stili — tek yerde.
+
+        Eskiden dört ayrı yerde aynı satır tekrar ediyordu ve `padding: 5px`
+        ile içerik çerçeveye yapışıyordu; başlık da çerçevenin üstüne
+        biniyordu (QGroupBox başlığı için `margin-top` + `subcontrol-origin`
+        gerekiyor). Kenarlık saf beyazdan gri tonuna alındı: beyaz çerçeve
+        siyah zeminde göze batıp içeriği bastırıyordu.
+        """
+        return """
+            QGroupBox {
+                color: #e8e8e8;
+                font-size: 16px;
+                font-weight: bold;
+                border: 2px solid #5a5a5a;
+                border-radius: 10px;
+                margin-top: 14px;
+                padding: 18px 14px 14px 14px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 14px;
+                padding: 0 8px;
+            }
+        """
 
     def apply_button_style(self, button, font_size=30, padding=20, bg_color="#808080", hover_color="#A9A9A9",
                            pressed_color="#696969"):

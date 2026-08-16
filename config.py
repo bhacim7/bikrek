@@ -293,11 +293,11 @@ DISPLAY_WIDTH = 1600
 # degisince kendiliginden uyar. Sarti: camera_label'in Qt.AlignCenter
 # hizalamasi korunmali.
 UI_AVCI_GENISLIK = 1280      # avci panelinin genisligi (piksel)
-UI_GOZCU_GENISLIK = 660      # gozcu panelinin genisligi; gozcu onizlemesi
+UI_GOZCU_GENISLIK = 760      # gozcu panelinin genisligi; gozcu onizlemesi
                              # bu genislikte URETILIR (spotter_module), yani
                              # buyutunce gerilme olmaz, gercekten netlesir.
                              # IPC: 640x360 -> ~690 KB/kare, 5 Hz'de gider.
-UI_SAG_PANEL_PAYI = 40       # gozcu panelinin saginda/solunda kalan bosluk
+UI_SAG_PANEL_PAYI = 44       # gozcu panelinin saginda/solunda kalan bosluk
                              # (GOREVLER|KONTROL yan yana sigsin diye genis)
 
 
