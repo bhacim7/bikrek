@@ -904,12 +904,39 @@ print("=" * 70)
 # (a) SAHA SENARYOSU (analizaşama3.mp4): balonsuz dusman-F16'ya kilitlenildi
 # ve 42 saniye cikilamadi. Dogrulama artik balonu sart kosuyor.
 _balonsuz = engagement.cift_eslestir([det('dusman-F16', 800, 300, 130, 150)])
+_balonlu = engagement.cift_eslestir(
+    [det('dusman-F16', 800, 300, 130, 150), det('balon', 845, 470, 45, 45)])
 _m27 = engagement.AngajmanMakinesi(); _m27.basla('task3')
 _m27.hedef_yaw, _m27.hedef_pitch = -0.17, 0.0     # sahada olculen aci
 _m27._gec(engagement.DOGRULAMA)
 _s27 = None
-for _k in range(config.VERIFY_CONFIRM_FRAMES + 2):
+# Balona SURE TANINIYOR (VERIFY_NO_BALLOON_GIVEUP_SEC): sinif tutarliligi
+# 4 karede saglansa da balon gec gorulebilecegi icin hemen elenmiyor.
+# Sanal zamani ilerleterek o esigi asiyoruz.
+_t27 = _m27.durum_zamani
+for _k in range(int(config.VERIFY_NO_BALLOON_GIVEUP_SEC * 30) + 4):
+    _m27.durum_zamani = _t27 - _k / 30.0
     _s27 = _m27.dogrulama_adimi(_balonsuz)
+    if _m27.durum != engagement.DOGRULAMA:
+        break
+kontrol("balonsuz hedef ~%.2f sn icinde birakiliyor" % config.VERIFY_NO_BALLOON_GIVEUP_SEC,
+        _k / 30.0 <= config.VERIFY_NO_BALLOON_GIVEUP_SEC + 0.10,
+        f"{_k} kare = {_k/30.0:.2f} sn")
+
+# Balon GEC gorulurse (esigin icinde) hedef KACIRILMAMALI
+_m27b = engagement.AngajmanMakinesi(); _m27b.basla('task3')
+_m27b.hedef_yaw, _m27b.hedef_pitch = 0.0, 0.0
+_m27b._gec(engagement.DOGRULAMA)
+_t27b = _m27b.durum_zamani
+_gec_esik = int(config.VERIFY_NO_BALLOON_GIVEUP_SEC * 30) - 3
+for _k in range(60):
+    _m27b.durum_zamani = _t27b - _k / 30.0
+    _m27b.dogrulama_adimi(_balonlu if _k >= _gec_esik else _balonsuz)
+    if _m27b.durum != engagement.DOGRULAMA:
+        break
+kontrol("balon GEC gorulurse hedef kacirilmiyor",
+        _m27b.durum == engagement.KILIT,
+        f"{_m27b.durum} (balon {_gec_esik/30.0:.2f} sn'de goruldu)")
 kontrol("balonsuz hedef KILIT'e ALINMIYOR",
         _m27.durum == engagement.TARAMA, _m27.durum)
 kontrol("balonsuz hedef kara listeye giriyor",
@@ -926,8 +953,6 @@ kontrol("genis yaricap (4.0) 3.58 dereceyi kapatirdi (sorunun kaniti)",
         3.58 <= config.BLACKLIST_RADIUS_DEG)
 
 # (b) BALONLU hedef hala dogrulanmali
-_balonlu = engagement.cift_eslestir(
-    [det('dusman-F16', 800, 300, 130, 150), det('balon', 845, 470, 45, 45)])
 _m28 = engagement.AngajmanMakinesi(); _m28.basla('task3')
 _m28.hedef_yaw, _m28.hedef_pitch = 6.23, 0.0
 _m28._gec(engagement.DOGRULAMA)

@@ -539,6 +539,19 @@ class AngajmanMakinesi:
         if cift.balon is not None:
             self._dogrulama_balon += 1
 
+        # ERKEN ÇIKIŞ. Balonun yokluğu, sınıfın ne olduğundan BAĞIMSIZ bir
+        # bilgi: balon yoksa hedef ateşlenemez, sınıfını öğrenmenin değeri
+        # yok. Aşağıdaki sınıf tutarlılığını beklemek kararı gereksiz yere
+        # geciktiriyordu — maket aralıklı görülüyorsa `ENGAGE_VERIFY_TIMEOUT`
+        # sınırına kadar (en kötü 1.5 sn) sarkıyordu.
+        if (self._dogrulama_balon == 0
+                and self.gecen() >= config.VERIFY_NO_BALLOON_GIVEUP_SEC):
+            self.kara_listeye_al(
+                config.BLACKLIST_NO_BALLOON_TTL_SEC, 'balon yok (erken)',
+                yaricap=config.BLACKLIST_NO_BALLOON_RADIUS_DEG)
+            self._gec(TARAMA)
+            return None
+
         self._sinif_gecmisi.append(cift.sinif)
         if len(self._sinif_gecmisi) > config.VERIFY_CONFIRM_FRAMES:
             self._sinif_gecmisi.pop(0)
@@ -567,6 +580,14 @@ class AngajmanMakinesi:
             # Kara liste DAR ve KISA: amaç elemek değil, sıradakine
             # geçebilmek. Süre dolunca hedef yeniden denenir.
             if self._dogrulama_balon < config.VERIFY_MIN_BALLOON_FRAMES:
+                # BALONA SÜRE TANI. Sınıf tutarlılığı 4 karede (0.13 sn)
+                # sağlanabiliyor; balon ise YOLO için küçük nesne ve ilk
+                # karelerde kaçırılabiliyor. Süre tanımadan elemek, balonu
+                # GERÇEKTEN olan bir hedefi yanlışlıkla listeden düşürürdü.
+                # Ölçüm: balon karelerin %19-40'ında görülüyor; 0.4 saniye
+                # (12 kare) en kötü oranla bile %92 yakalama demek.
+                if self.gecen() < config.VERIFY_NO_BALLOON_GIVEUP_SEC:
+                    return None
                 self.kara_listeye_al(
                     config.BLACKLIST_NO_BALLOON_TTL_SEC, 'balon yok',
                     yaricap=config.BLACKLIST_NO_BALLOON_RADIUS_DEG)

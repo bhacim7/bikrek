@@ -742,7 +742,11 @@ ENGAGE_SLEW_TOLERANCE_DEG = 1.0
 # Durum zaman aşımları (saniye). Hızlı imha modunda takılıp kalmak yanlış
 # yöne gitmekten pahalıdır.
 ENGAGE_SLEW_TIMEOUT = 2.5
-ENGAGE_VERIFY_TIMEOUT = 1.5
+# 1.5 -> 1.0: dogrulama karar veremiyorsa bosuna bekleniyor. Balonsuz
+# hedef artik VERIFY_NO_BALLOON_GIVEUP_SEC ile 0.4 saniyede eleniyor;
+# bu timeout yalnizca 'maket var ama sinif tutarsiz' durumunda devrede
+# kaliyor ve orada da 1.0 saniye yeterli (30 karede 4 ardisik ayni sinif).
+ENGAGE_VERIFY_TIMEOUT = 1.0
 ENGAGE_LOCK_TIMEOUT = 8.0
 
 # Doğrulama: maket sınıfı kaç kare üst üste aynı çıkmalı, hangi güvenin
@@ -839,7 +843,10 @@ BLACKLIST_FRIEND_TTL_SEC = 600.0  # dost maketler için pratikte kalıcı
 # 1.5 derece 16 metrede yalnizca ~0.42 m yanal bolge kapatir: hedefin
 # kendisini yakalar, 1 metre yanindakini birakir.
 BLACKLIST_NO_BALLOON_RADIUS_DEG = 1.5
-BLACKLIST_NO_BALLOON_TTL_SEC = 4.0
+# 4.0 -> 3.0: elenen hedefin yeniden denenebilmesi icin beklenen sure.
+# Kisaltmak, balonu ARA SIRA gorunen bir hedefe daha cabuk donmeyi saglar;
+# cok kisaltmak ise ayni hedefte gidip gelmeye yol acar.
+BLACKLIST_NO_BALLOON_TTL_SEC = 3.0
 
 # Dogrulama penceresinde balon EN AZ bu kadar karede gorulmeli.
 #
@@ -849,6 +856,20 @@ BLACKLIST_NO_BALLOON_TTL_SEC = 4.0
 # kilitlenildi ve 42 saniye boyunca cikilamadi, cunku dogrulama yalnizca
 # SINIFA bakiyordu -- balonun varligini hic sormuyordu.
 VERIFY_MIN_BALLOON_FRAMES = 1
+
+# ERKEN CIKIS: dogrulamada balon bu SURE boyunca HIC gorulmediyse, sinif
+# tutarliligini beklemeden hedefi birak.
+#
+# NEDEN: balon sarti `dusman_mi(sinif)` blogunun ICINDE, yani ancak
+# VERIFY_CONFIRM_FRAMES kadar ARDISIK ayni sinif toplandiktan sonra
+# calisiyordu. Maket araliklı goruluyorsa o toplanma uzuyor ve karar
+# ENGAGE_VERIFY_TIMEOUT'a kadar (en kotu 1.5 sn) sarkiyordu. Oysa balonun
+# yoklugu sinifin ne oldugundan BAGIMSIZ bir bilgi: balon yoksa hedef
+# ateslenemez, sinifi ogrenmenin degeri yok.
+#
+# 0.40 sn = 12 kare @30fps. Balonun gercekten var olup birkac kare
+# kacirildigi durumu elemeyecek kadar uzun, bosuna beklemeyecek kadar kisa.
+VERIFY_NO_BALLOON_GIVEUP_SEC = 0.40
 
 # Doğrulaması zaman aşımına uğrayan aday için KISA ömürlü kara liste.
 # Sahada ölçüldü (AnalizVideo.mp4, 17-23 sn): taret gözcünün verdiği açıya
