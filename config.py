@@ -799,7 +799,12 @@ FIRE_MAX_ATTEMPTS = 3         # ayni hedefe ardisik en fazla kac ates
 #
 # 0.4 sn gecikme + MAX_SEEN 4 ile o olcum rahat geciyor: sayim 8.00'da
 # basliyor, 8.10'a kadar 3 kare goruluyor, 3 <= 4 -> "imha onaylandi".
-FIRE_CONFIRM_DELAY_SEC = 0.4
+#
+# 0.4 -> 0.6 (servo-tetik dali): tetik artik SERVO ile mekanik cekiliyor ve
+# mermi, roleye gore ~0.2 sn (FIRE_SERVO_LEG_SEC) daha gec cikiyor. Pencere
+# o gecikmeyi de kapsamali, yoksa patlamamis balon sayimi erken baslar ve
+# "balon hala orada" yanlisligi geri gelir. Role moduna donulurse 0.4'e cek.
+FIRE_CONFIRM_DELAY_SEC = 0.6
 
 # 'tekrar ates' istendigi halde ates kilidi ARDISIK bu kadar karede izin
 # vermezse hedef birakilir.

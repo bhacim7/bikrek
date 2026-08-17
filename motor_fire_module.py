@@ -21,6 +21,33 @@ PITCH_DIR_PIN = 23
 PITCH_STEP_PIN = 25
 FIRE_PIN = 16  # control1.py'deki RELAY_PIN'e karşılık gelir
 
+# --- TETİK MODU ---
+# 'servo' : GPIO'daki hobi servosu tetiği mekanik olarak çeker (yeni yol)
+# 'relay' : GPIO16 rölesi elektronik tetiği sürer (eski yol, geri dönüş için)
+FIRE_MODE = 'servo'
+
+# SERVO TETİK — lgpio tx_servo ile yazılım zamanlı 50 Hz darbe.
+#
+# NEDEN GPIO12: herhangi bir pin çalışır (tx_servo yazılım zamanlı) ama
+# 12/13/18/19 Pi 5'te RP1'in DONANIM PWM birimine de bağlı. Yazılım zamanlı
+# darbede rahatsız edici titreşim görülürse, kabloya dokunmadan yalnızca
+# yazılımı donanım PWM'e çevirme seçeneği açık kalsın diye 12 seçildi.
+# (18 dolu: EMERGENCY_STOP_PIN.)  Fiziksel pin: GPIO12 = 32 numaralı pin.
+#
+# BESLEME UYARISI: servo Pi'nin 5V pininden BESLENMEZ — MG996R kalkışta
+# 1-2 A çeker ve Pi 5 çöker. Ayrı 5-6V BEC kullanılmalı, GND'ler ortak.
+FIRE_SERVO_PIN = 12
+
+# Konumlar µs cinsinden (50 Hz, 500-2500 µs ~ 0-180°, 11.1 µs/derece).
+# 30 derece = 333 µs. İKİ DEĞER DE SAHADA KALİBRE EDİLMELİ: `servo_tani.py`
+# ile tetiğin çekildiği ve serbest kaldığı gerçek µs değerleri bulunur.
+FIRE_SERVO_REST_US = 1500      # dinlenme (tetik serbest)
+FIRE_SERVO_PULL_US = 1833      # çekili (dinlenme + 30 derece)
+
+FIRE_SERVO_LEG_SEC = 0.20      # tek yön hareket süresi (MG996R 30° ~0.1 sn + pay)
+FIRE_SERVO_CYCLES = 1          # fire başına git-gel sayısı (sürekli sarsma için büyüt)
+FIRE_SERVO_FREQ = 50           # standart hobi servo frekansı (Hz)
+
 # rpi_motor_server.py'den alınan acil durdurma pini
 EMERGENCY_STOP_PIN = 18
 
@@ -332,6 +359,20 @@ def initialize_gpio():
             print(
                 f"DEBUG (motor_fire_module): FIRE_PIN ({FIRE_PIN}) başlangıçta RELAY_INACTIVE ({RELAY_INACTIVE}) yapıldı.")
             sys.stdout.flush()
+
+            # SERVO TETİK: pini çıkış olarak al, dinlenme konumuna götür,
+            # sonra darbeyi kes (servo gevşer, akım çekmez). tx_servo
+            # darbelerini lgpio'nun kendi iş parçacığı ürettiği için bu
+            # bekleme step motor üretimini etkilemez.
+            if FIRE_MODE == 'servo':
+                LGpio.gpio_claim_output(lgh, FIRE_SERVO_PIN, LGPIO_LOW)
+                _servo_darbe(FIRE_SERVO_REST_US)
+                time.sleep(0.5)              # dinlenmeye oturması için
+                _servo_darbe(0)              # darbeyi kes
+                print(
+                    f"DEBUG (motor_fire_module): SERVO TETİK hazır (GPIO{FIRE_SERVO_PIN}, "
+                    f"dinlenme {FIRE_SERVO_REST_US} us).")
+                sys.stdout.flush()
 
             # Acil durdurma pini (giriş olarak ayarla, pull-up direnci ile)
             LGpio.gpio_claim_input(lgh, EMERGENCY_STOP_PIN, LGpio.SET_PULL_UP)
@@ -790,6 +831,47 @@ def perform_motion_step():
     return perform_servo_step()
 
 
+def _servo_darbe(genislik_us):
+    """
+    Servo darbe genişliğini ayarlar; 0 = darbeyi kes (servo gevşer).
+
+    lgpio.tx_servo darbeleri kütüphanenin KENDİ iş parçacığında üretir —
+    çağrı anında döner, Python tarafını bloklamaz. Yazılım zamanlı olduğu
+    için ~onlarca µs titreşim olabilir (~1-2 derece); 30 derecelik kaba
+    git-gel için önemsiz. Rahatsız ederse GPIO12 donanım PWM'e bağlı,
+    kablo değişmeden yazılım donanım PWM'e çevrilebilir.
+    """
+    LGpio.tx_servo(lgh, FIRE_SERVO_PIN, int(genislik_us), FIRE_SERVO_FREQ, 0, 0)
+
+
+def _servo_ates():
+    """
+    Servo tetiği FIRE_SERVO_CYCLES kez çekip bırakır.
+
+    Süre bütçesi: cycle başına 2 x FIRE_SERVO_LEG_SEC (varsayılan 0.4 sn).
+    Bu çağrı Pi komut döngüsünde BLOKLAR — tek atışta kabul edilebilir;
+    CYCLES büyütülürse ayrı iş parçacığına alınmalı.
+
+    PC tarafındaki imha doğrulama penceresi (FIRE_CONFIRM_DELAY_SEC) bu
+    mekanik gecikmeyi kapsayacak şekilde ayarlandı: mermi, röleye göre
+    ~FIRE_SERVO_LEG_SEC daha geç çıkar.
+    """
+    print(
+        f"DEBUG (motor_fire_module): SERVO ateşleme: {FIRE_SERVO_CYCLES} çevrim, "
+        f"{FIRE_SERVO_PULL_US}us <-> {FIRE_SERVO_REST_US}us")
+    sys.stdout.flush()
+    for _ in range(FIRE_SERVO_CYCLES):
+        _servo_darbe(FIRE_SERVO_PULL_US)
+        time.sleep(FIRE_SERVO_LEG_SEC)
+        _servo_darbe(FIRE_SERVO_REST_US)
+        time.sleep(FIRE_SERVO_LEG_SEC)
+    # Dinlenmeye oturduktan sonra darbeyi kes: servo gevşer, ısınmaz.
+    time.sleep(0.1)
+    _servo_darbe(0)
+    print("DEBUG (motor_fire_module): Servo ateşleme tamamlandı.")
+    sys.stdout.flush()
+
+
 def fire_weapon():
     """
     Ateşleme mekanizmasını tetikler.
@@ -802,6 +884,9 @@ def fire_weapon():
         return
 
     try:
+        if FIRE_MODE == 'servo':
+            _servo_ates()
+            return
         print(
             f"DEBUG (motor_fire_module): GPIO {FIRE_PIN} -> RELAY_ACTIVE ({RELAY_ACTIVE}) yapılıyor (Ateşleme Başladı).")
         sys.stdout.flush()
@@ -874,6 +959,18 @@ def cleanup_gpio():
     if _gpio_initialized and lgh is not None and lgh >= 0:
         try:
             # set_motors_enabled(False) # KALDIRILDI: Kullanıcının isteği üzerine motorlar devre dışı bırakılmayacak.
+            if FIRE_MODE == 'servo':
+                # Servoyu dinlenmeye götürüp darbeyi kes — tetik çekili
+                # kalmasın. Kapanışta 0.4 sn beklemek kabul edilebilir.
+                try:
+                    _servo_darbe(FIRE_SERVO_REST_US)
+                    time.sleep(0.4)
+                    _servo_darbe(0)
+                    print("DEBUG (motor_fire_module): Servo tetik dinlenmede, darbe kesildi.")
+                    sys.stdout.flush()
+                except Exception as _se:
+                    print(f"Uyarı (motor_fire_module): servo dinlendirme hatası: {_se}")
+                    sys.stdout.flush()
             if FIRE_PIN is not None and RELAY_INACTIVE is not None:
                 LGpio.gpio_write(lgh, FIRE_PIN, RELAY_INACTIVE) # Ateşleme pinini güvenli duruma getir
                 print(
