@@ -1010,6 +1010,11 @@ def _servo_ates():
         for _ in range(FIRE_SERVO_CYCLES):
             _servo_darbe(FIRE_SERVO_PULL_US)
             time.sleep(FIRE_SERVO_LEG_SEC)
+            # ÇEKİLİ BEKLEME. Standart servoda bu bekleme boyunca servo
+            # konumu AKTİF OLARAK TUTAR (tork uygular), yani tetik yayı
+            # kolu geri itemez. 'hiz' modunda bu mümkün değildi: orada
+            # nötr = dur = tork yok.
+            time.sleep(FIRE_SERVO_HOLD_SEC)
             _servo_darbe(FIRE_SERVO_REST_US)
             time.sleep(FIRE_SERVO_LEG_SEC)
 
