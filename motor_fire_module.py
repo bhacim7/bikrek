@@ -41,10 +41,30 @@ FIRE_SERVO_PIN = 12
 # Konumlar µs cinsinden (50 Hz, 500-2500 µs ~ 0-180°, 11.1 µs/derece).
 # 30 derece = 333 µs. İKİ DEĞER DE SAHADA KALİBRE EDİLMELİ: `servo_tani.py`
 # ile tetiğin çekildiği ve serbest kaldığı gerçek µs değerleri bulunur.
-FIRE_SERVO_REST_US = 1500      # dinlenme (tetik serbest)
-FIRE_SERVO_PULL_US = 1833      # çekili (dinlenme + 30 derece)
+# SAHADA KALİBRE EDİLDİ (servo_tani.py, standart 180° servo).
+#
+# 1500 = "dinlenme" DEĞİLDİR. 1500 yalnızca servonun kendi orta noktasıdır;
+# tetiğin nerede serbest kaldığıyla ilgisi yoktur. Doğru değer montaj
+# geometrisine bağlıdır: kolun boyu, takıldığı açı, tetiğin strok mesafesi.
+# Bu sistemde tetik 1600 us'de tam serbest kalıyor, 1500'de hâlâ hafif
+# çekili duruyordu.
+#
+#   REST 1600 us = 99.0 derece   (tetik serbest)
+#   PULL  933 us = 39.0 derece   (tetik çekili)
+#   hareket 667 us = 60.0 derece
+#
+# MEKANİK SINIRA PAY (500-2500 us aralığında):
+#   PULL tarafında 39 derece, REST tarafında 81 derece boş pay var.
+#   Yani servo hiçbir konumda sınıra dayanmıyor — dayanmak sürekli tork
+#   demektir ve servoyu ısıtıp dişlisini aşındırır.
+FIRE_SERVO_REST_US = 1600      # dinlenme (tetik serbest)
+FIRE_SERVO_PULL_US = 933       # çekili
 
-FIRE_SERVO_LEG_SEC = 0.20      # tek yön hareket süresi (MG996R 30° ~0.1 sn + pay)
+# HAREKET SURESI. Olculen hareket 60 derece (933 <-> 1600 us).
+# MG995 katalog hizi ~0.20 sn/60 derece @4.8V, ~0.16 sn @6V -- yani 0.20
+# TAM SINIRDA kalirdi ve yuk altinda servo aciya varamadan bir sonraki
+# komut gelirdi. 0.28 pay birakiyor.
+FIRE_SERVO_LEG_SEC = 0.28      # tek yon hareket suresi (60 derece + pay)
 FIRE_SERVO_CYCLES = 1          # fire başına git-gel sayısı (sürekli sarsma için büyüt)
 FIRE_SERVO_FREQ = 50           # standart hobi servo frekansı (Hz)
 
@@ -63,7 +83,10 @@ FIRE_SERVO_FREQ = 50           # standart hobi servo frekansı (Hz)
 # konum bir miktar kayabilir (yük, gerilim, sürtünme farkı). Tetik mekanik
 # bir sınıra dayandığı için pratikte tolere edilebilir, ama tekrar
 # edilebilirlik standart servodakinin altındadır. Mümkünse 'konum'.
-FIRE_SERVO_MODE = 'hiz'
+# STANDART (180) SERVOYA GECILDI -> 'konum'. Surekli donus servosunda
+# yasanan konum kaymasi bu modda yapisal olarak IMKANSIZ: servo her
+# komutta ayni aciya gidip orada TUTAR.
+FIRE_SERVO_MODE = 'konum'
 
 # --- 'hiz' modu ayarları (yalnızca FIRE_SERVO_MODE == 'hiz' iken) ---
 #
