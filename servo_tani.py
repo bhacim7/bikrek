@@ -105,7 +105,7 @@ def tus_oku(istem):
 SERVO_PIN = 12
 FREQ = 50
 ALT, UST = 500, 2500
-NOTR = 1500
+NOTR = 1465
 
 # --- gpiochip bul (motor_fire_module._find_gpiochip ile ayni mantik) ---
 # gpio_get_chip_info -> [status, lines, name, label];  LABEL = info[3]

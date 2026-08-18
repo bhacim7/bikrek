@@ -63,11 +63,38 @@ FIRE_SERVO_FREQ = 50           # standart hobi servo frekansı (Hz)
 # konum bir miktar kayabilir (yük, gerilim, sürtünme farkı). Tetik mekanik
 # bir sınıra dayandığı için pratikte tolere edilebilir, ama tekrar
 # edilebilirlik standart servodakinin altındadır. Mümkünse 'konum'.
-FIRE_SERVO_MODE = 'konum'
+FIRE_SERVO_MODE = 'hiz'
 
-# 'hiz' modu ayarları (yalnızca FIRE_SERVO_MODE == 'hiz' iken kullanılır)
-FIRE_SERVO_NEUTRAL_US = 1500   # DUR noktası
+# --- 'hiz' modu ayarları (yalnızca FIRE_SERVO_MODE == 'hiz' iken) ---
+#
+# DUR NOKTASI SAHADA KALİBRE EDİLDİ: `servo_tani.py` 'k' komutuyla 1465 µs
+# bulundu. 1500 değil — sürekli dönüş servolarında fabrika trim kayması
+# normaldir ve kalibre edilmezse "dur" komutu servoyu yavaşça döndürmeye
+# devam eder.
+FIRE_SERVO_NEUTRAL_US = 1465
 FIRE_SERVO_SPEED_US = 300      # nötrden uzaklık: büyük = hızlı
+
+# TETİĞİ HANGİ YÖN ÇEKİYOR?
+# Sahada gözlendi (`servo_tani.py`): 'b' (GERİ, nötrün ALTI) tetiği ÇEKİYOR,
+# 'f' (İLERİ, nötrün ÜSTÜ) bırakıyor. Dolayısıyla çekme yönü NEGATİF.
+#   -1 : çekme = NEUTRAL - SPEED   (mevcut montaj)
+#   +1 : çekme = NEUTRAL + SPEED   (servo ters takılırsa bunu +1 yapın)
+FIRE_SERVO_PULL_DIR = -1
+
+# SÜRELER — TAHMİNİ BAŞLANGIÇ DEĞERLERİ, SAHADA AYARLANACAK.
+#
+# Sürekli dönüş servosunda "şu açıya git" denemediği için süre = mesafe.
+# Kol tetiği çekene kadar dönmeli, ama mekanik sınıra dayandıktan sonra
+# dönmeye devam etmek servoyu zorlar (ısınma, dişli aşınması).
+#
+# NASIL AYARLANIR:
+#   - tetik ÇEKİLMİYORSA  -> PULL_SEC'i 0.05 artırın
+#   - servo zorlanıyor/ısınıyorsa (sınıra dayanıp itiyor) -> azaltın
+#   - kol başladığı yere DÖNMÜYORSA -> RELEASE_SEC'i PULL_SEC'e göre
+#     ayarlayın (yük farkı yüzünden geri dönüş biraz farklı sürebilir)
+FIRE_SERVO_PULL_SEC = 0.25     # tetiği çekme süresi
+FIRE_SERVO_HOLD_SEC = 0.10     # çekili bekleme (mekanizmanın tetiklenmesi)
+FIRE_SERVO_RELEASE_SEC = 0.25  # tetiği bırakma (geri dönüş) süresi
 
 # rpi_motor_server.py'den alınan acil durdurma pini
 EMERGENCY_STOP_PIN = 18
@@ -899,23 +926,28 @@ def _servo_ates():
     """
     if FIRE_SERVO_MODE == 'hiz':
         # SÜREKLİ DÖNÜŞ SERVOSU: konum yazılamaz, yalnızca "şu hızda şu süre
-        # dön" denebilir. Çekme ve bırakma AYNI süreyle yapılıyor ki kol
-        # başladığı yere dönsün; açık döngü olduğu için tam dönmeyebilir,
-        # sapma birikirse `servo_tani.py` ile süreler yeniden ayarlanmalı.
-        ileri = FIRE_SERVO_NEUTRAL_US + FIRE_SERVO_SPEED_US
-        geri = FIRE_SERVO_NEUTRAL_US - FIRE_SERVO_SPEED_US
+        # dön" denebilir — açık döngü.
+        #
+        # SIRA ÖNEMLİ: önce ÇEK, sonra BIRAK. İlk sürümde önce nötrün üstü
+        # (ileri) veriliyordu; sahada o yönün tetiği BIRAKTIĞI görüldü, yani
+        # ateşleme ters sırayla çalışırdı.
+        cek = FIRE_SERVO_NEUTRAL_US + FIRE_SERVO_PULL_DIR * FIRE_SERVO_SPEED_US
+        birak = FIRE_SERVO_NEUTRAL_US - FIRE_SERVO_PULL_DIR * FIRE_SERVO_SPEED_US
         print(
             f"DEBUG (motor_fire_module): SERVO(hiz) ateşleme: "
-            f"{FIRE_SERVO_CYCLES} çevrim, ileri {ileri}us / geri {geri}us, "
-            f"bacak {FIRE_SERVO_LEG_SEC}s")
+            f"{FIRE_SERVO_CYCLES} çevrim | çek {cek}us ({FIRE_SERVO_PULL_SEC}s) "
+            f"-> tut {FIRE_SERVO_HOLD_SEC}s -> bırak {birak}us "
+            f"({FIRE_SERVO_RELEASE_SEC}s) | nötr {FIRE_SERVO_NEUTRAL_US}us")
         sys.stdout.flush()
         for _ in range(FIRE_SERVO_CYCLES):
-            _servo_darbe(ileri)
-            time.sleep(FIRE_SERVO_LEG_SEC)
-            _servo_darbe(FIRE_SERVO_NEUTRAL_US)     # DUR
-            time.sleep(0.05)
-            _servo_darbe(geri)
-            time.sleep(FIRE_SERVO_LEG_SEC)
+            _servo_darbe(cek)
+            time.sleep(FIRE_SERVO_PULL_SEC)
+            # Nötr = DUR. Sürekli dönüş servosunda nötrde tork yoktur, yani
+            # tetik yayı kolu geri itebilir; bekleme kısa tutuluyor.
+            _servo_darbe(FIRE_SERVO_NEUTRAL_US)
+            time.sleep(FIRE_SERVO_HOLD_SEC)
+            _servo_darbe(birak)
+            time.sleep(FIRE_SERVO_RELEASE_SEC)
             _servo_darbe(FIRE_SERVO_NEUTRAL_US)     # DUR
             time.sleep(0.05)
     else:
