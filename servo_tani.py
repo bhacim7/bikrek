@@ -40,23 +40,44 @@ SERVO_PIN = 12
 FREQ = 50
 ALT, UST = 500, 2500
 
-# gpiochip bul (motor_fire_module._find_gpiochip ile ayni mantik, kisaltilmis)
+# gpiochip bul — motor_fire_module._find_gpiochip ile AYNI mantik.
+#
+# DIKKAT: gpio_get_chip_info -> [status, lines, name, label]
+#   info[2] = "gpiochip15"   (NAME)
+#   info[3] = "pinctrl-rp1"  (LABEL)   <-- karsilastirilacak olan BU
+# Ilk surumde yanlislikla info[2] karsilastirilmisti ve Pi 5'te chip hicbir
+# zaman bulunamiyordu ("40 pinli basliga ait gpiochip bulunamadi").
 _LABELS = ('pinctrl-rp1', 'pinctrl-bcm2712', 'pinctrl-bcm2711', 'pinctrl-bcm2835')
 h = None
+_yedek = None          # etiket tutmazsa: 40+ hatli ilk chip
 for n in range(32):
     try:
         aday = lgpio.gpiochip_open(n)
-    except lgpio.error:
-        continue
+    except Exception:
+        continue       # bu numarada cihaz yok
     try:
         bilgi = lgpio.gpio_get_chip_info(aday)
-        if bilgi[2] in _LABELS:
+        hat = int(bilgi[1])
+        etiket = str(bilgi[3])
+        print("  gpiochip%-2d  %-24s %d hat" % (n, etiket, hat))
+        if etiket in _LABELS:
             h = aday
-            print("gpiochip%d acildi (%s)" % (n, bilgi[2]))
+            print("gpiochip%d secildi (%s)" % (n, etiket))
             break
-    except lgpio.error:
-        pass
+        if hat >= 40 and _yedek is None:
+            _yedek = (n, aday, etiket)
+            continue   # yedegi ACIK tut, kapatma
+    except Exception as e:
+        print("  gpiochip%d bilgisi okunamadi: %s" % (n, e))
     lgpio.gpiochip_close(aday)
+
+if h is None and _yedek is not None:
+    n, h, etiket = _yedek
+    print("UYARI: bilinen etiket yok, 40+ hatli gpiochip%d kullanilacak (%s)"
+          % (n, etiket))
+elif h is not None and _yedek is not None:
+    lgpio.gpiochip_close(_yedek[1])     # yedek gereksiz kaldi
+
 if h is None:
     print("HATA: 40 pinli basliga ait gpiochip bulunamadi (gpiodetect ile bakin).")
     sys.exit(1)
