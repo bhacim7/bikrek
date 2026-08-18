@@ -109,7 +109,8 @@ def yardim():
   x      TESHIS (servo tipini belirle)      m  mod degistir      ?  bu liste
   KONUM: a/d -+10   z/c -+50   s/w -+2   r dinlenme   p cekili   t prova
   HIZ  : f ileri    b geri     space dur  +/- hiz     1/2 sure   t prova
-  0      darbeyi kes            q  cik
+  k      NOTR (DUR) kalibrasyonu -- surekli donus servosunda SART
+  0      darbeyi kes (ACIL DUR)  q  cik
 """)
 
 
@@ -171,9 +172,18 @@ sure = 0.30            # hiz modunda tek yon hareket suresi (sn)
 dinlenme = None
 cekili = None
 
-darbe(NOTR)
+# ACILISTA DARBE VERILMIYOR.
+# Surekli donus servosunda 1500 us cogu zaman TAM DUR DEGILDIR (fabrika
+# trim kaymasi). Acilista darbe verilirse servo hicbir tusa basilmadan
+# yavasca donmeye baslar ve "komutlarim etkilemiyor" gibi gorunur.
+# Servo darbe gelmeyince gevser ve durur; kullanici acikca komut verene
+# kadar sessiz kaliyoruz.
+darbe(0)
 print()
-print("Baslangic: %d us (notr). SERVO TIPI BILINMIYOR." % NOTR)
+print("SURUM: 3 (teshis + konum/hiz modu + notr kalibrasyonu)")
+print("Servoya DARBE VERILMEDI -- su anda gevsek ve durgun olmali.")
+print("Hala donuyorsa besleme/kart sorunu var, once onu cozun.")
+print()
 print("ONCE 'x' yazip TESHIS calistirin.")
 yardim()
 
@@ -208,7 +218,35 @@ try:
             print("  mod: %s" % mod.upper())
         elif k == '0':
             darbe(0)
-            print("  darbe kesildi (servo gevsek).")
+            print("  darbe kesildi (servo gevsek, DURUR).")
+        elif k == 'k':
+            # NOTR (DUR) KALIBRASYONU -- yalnizca surekli donus servosunda
+            # anlamli. 1500 us cogu serboda tam dur degildir; gercek dur
+            # noktasi 1440-1560 arasinda bir yerdedir ve BULUNMALIDIR,
+            # yoksa "dur" komutu servoyu yavasca dondurmeye devam eder.
+            print()
+            print("  NOTR (DUR) KALIBRASYONU")
+            print("  Servo simdi %d us alacak. Kolu izleyin." % NOTR)
+            print("  n/j = -1/+1 us,  N/J = -10/+10 us,  Enter = kaydet, i = iptal")
+            gecici = NOTR
+            darbe(gecici)
+            while True:
+                kk = input("    [notr adayi %d us] > " % gecici).strip()
+                if kk == '':
+                    NOTR = gecici
+                    print("    NOTR = %d us olarak kaydedildi." % NOTR)
+                    break
+                if kk.lower() == 'i':
+                    print("    iptal edildi.")
+                    break
+                adimlar = {'n': -1, 'j': 1, 'N': -10, 'J': 10}
+                if kk in adimlar:
+                    gecici = max(ALT, min(UST, gecici + adimlar[kk]))
+                    darbe(gecici)
+                else:
+                    print("    n/j/N/J, Enter veya i")
+            darbe(0)
+            print("  darbe kesildi.")
 
         # ---------------- KONUM MODU ----------------
         elif mod == 'konum' and k in ('a', 'd', 'z', 'c', 's', 'w'):
@@ -291,7 +329,7 @@ finally:
     elif mod == 'hiz':
         print("SUREKLI DONUS SERVOSU -- motor_fire_module.py'ye:")
         print("    FIRE_SERVO_MODE      = 'hiz'")
-        print("    FIRE_SERVO_NEUTRAL_US = %d" % NOTR)
+        print("    FIRE_SERVO_NEUTRAL_US = %d      # kalibre edilmis DUR" % NOTR)
         print("    FIRE_SERVO_SPEED_US  = %d      # notrdan uzaklik" % hiz)
         print("    FIRE_SERVO_LEG_SEC   = %.2f" % sure)
         print()
