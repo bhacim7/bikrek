@@ -100,8 +100,26 @@ lgpio.gpio_claim_output(h, SERVO_PIN, 0)
 
 
 def darbe(us):
-    """us = 0 ise darbeyi kes (servo gevser)."""
-    lgpio.tx_servo(h, SERVO_PIN, int(us), FREQ, 0, 0)
+    """
+    us > 0 : servo darbesi ver.  us <= 0 : darbeyi KES (servo gevser).
+
+    DARBEYI KESMEK ICIN tx_servo(..., 0) KULLANILMAZ. lgpio'nun bu
+    surumunde 0 gecerli bir darbe genisligi degil ve
+        lgpio.error: 'bad PWM micros'
+    atiyor (sahada goruldu). Dogru yol PWM'i durdurmak: tx_pwm frekansi 0
+    verilince cikis tamamen kesilir. Yine de basarisiz olursa pini dogrudan
+    LOW'a cekiyoruz -- amac her kosulda servoya darbe gitmemesi.
+    """
+    if us and int(us) > 0:
+        lgpio.tx_servo(h, SERVO_PIN, int(us), FREQ, 0, 0)
+        return
+    try:
+        lgpio.tx_pwm(h, SERVO_PIN, 0, 0)      # frekans 0 = PWM dur
+    except Exception:
+        try:
+            lgpio.gpio_write(h, SERVO_PIN, 0)  # son care: pini LOW yap
+        except Exception:
+            pass
 
 
 def yardim():

@@ -866,7 +866,23 @@ def _servo_darbe(genislik_us):
     git-gel için önemsiz. Rahatsız ederse GPIO12 donanım PWM'e bağlı,
     kablo değişmeden yazılım donanım PWM'e çevrilebilir.
     """
-    LGpio.tx_servo(lgh, FIRE_SERVO_PIN, int(genislik_us), FIRE_SERVO_FREQ, 0, 0)
+    # DARBEYI KESMEK ICIN tx_servo(..., 0) KULLANILMAZ. lgpio'nun bazi
+    # surumlerinde 0 gecerli bir darbe genisligi degil ve
+    #     lgpio.error: 'bad PWM micros'
+    # atiyor (sahada Pi 5 uzerinde goruldu). Bu istisna initialize_gpio()
+    # icinde yakalanmadigi icin TUM GPIO baslatmasini dusurur, yani motorlar
+    # da calismaz. Dogru yol PWM'i durdurmak: tx_pwm frekansi 0.
+    if genislik_us and int(genislik_us) > 0:
+        LGpio.tx_servo(lgh, FIRE_SERVO_PIN, int(genislik_us),
+                       FIRE_SERVO_FREQ, 0, 0)
+        return
+    try:
+        LGpio.tx_pwm(lgh, FIRE_SERVO_PIN, 0, 0)      # frekans 0 = PWM dur
+    except Exception:
+        try:
+            LGpio.gpio_write(lgh, FIRE_SERVO_PIN, 0)  # son care: pin LOW
+        except Exception:
+            pass
 
 
 def _servo_ates():
