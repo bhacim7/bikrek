@@ -92,9 +92,47 @@ FIRE_SERVO_PULL_DIR = -1
 #   - servo zorlanıyor/ısınıyorsa (sınıra dayanıp itiyor) -> azaltın
 #   - kol başladığı yere DÖNMÜYORSA -> RELEASE_SEC'i PULL_SEC'e göre
 #     ayarlayın (yük farkı yüzünden geri dönüş biraz farklı sürebilir)
-FIRE_SERVO_PULL_SEC = 0.25     # tetiği çekme süresi
+FIRE_SERVO_PULL_SEC = 0.40     # tetiği çekme süresi
 FIRE_SERVO_HOLD_SEC = 0.10     # çekili bekleme (mekanizmanın tetiklenmesi)
-FIRE_SERVO_RELEASE_SEC = 0.25  # tetiği bırakma (geri dönüş) süresi
+
+# ATEŞTEN ÖNCE REFERANSA DÖNÜŞ süresi. VARSAYILAN 0 = KAPALI.
+#
+# Fikir: kol nerede kaldıysa oradan başlamak önceki atışın sapmasını taşır;
+# kısa bir bırakma darbesi kolu dayanağa yaslayıp her atışı aynı noktadan
+# başlatır. AMA bu, mermi çıkış anını `HOME_SEC` kadar geciktirir ve PC
+# tarafındaki imha doğrulama payını yer:
+#     mermi çıkışı = HOME_SEC + 0.05 + PULL_SEC
+#     bu değer FIRE_CONFIRM_DELAY_SEC'ten KÜÇÜK kalmalı.
+#
+# Uzatılmış `RELEASE_SEC` (PULL x 1.4) zaten her çevrimin sonunda kolu
+# dayanağa yaslıyor, yani aynı işi bedelsiz yapıyor. Bu yüzden varsayılan
+# kapalı. Sapma buna rağmen birikirse açın — ama o zaman config.py'deki
+# FIRE_CONFIRM_DELAY_SEC'i de en az o kadar büyütün.
+FIRE_SERVO_HOME_SEC = 0.0
+# BIRAKMA SÜRESİ ÇEKMEDEN UZUN — BU BİLEREK BÖYLE.
+#
+# SAHADA GÖRÜLDÜ: "bazen az çekilip kalıyor, geri salmıyor; birkaç atıştan
+# sonra kol başladığı yerde değil."
+#
+# Sebep açık döngü: servo nereye geldiğini BİLMİYOR, sadece "şu süre dön"
+# komutunu uyguluyor. Gerçekte dönülen açı şunlara göre değişiyor:
+#   - ivmelenme payı (servo anında tam hıza çıkmaz; kısa hareketlerde
+#     hızlanma+yavaşlama toplam hareketin büyük kısmını oluşturur),
+#   - besleme gerilimi (düşerse aynı sürede daha az döner),
+#   - yük ve sürtünme.
+# Çekme ile bırakma birbirini tam götürmediği için fark ATIŞ BAŞINA BİRİKİR
+# ve kol yavaş yavaş kayar.
+#
+# Açık döngüde tek güvenilir çare MEKANİK REFERANS: bırakma yönünde bilerek
+# FAZLA döndürüp kolu bir dayanağa (veya tetiğin serbest konumuna) yaslamak.
+# Fazla süre boyunca servo dayanağı iter, kol daha ileri gidemez ve her
+# çevrim AYNI noktada biter — birikim sıfırlanır.
+#
+# 0.56 = PULL_SEC x 1.4, yani %40 fazla.
+# DİKKAT: bu ancak bırakma yönünde bir DAYANAK varsa işe yarar. Dayanak
+# yoksa kol her atışta bırakma yönüne kayar; o durumda değeri PULL_SEC'e
+# eşitleyip mekanik dayanak eklenmeli.
+FIRE_SERVO_RELEASE_SEC = 0.56  # tetiği bırakma (geri dönüş) + dayanma payı
 
 # rpi_motor_server.py'den alınan acil durdurma pini
 EMERGENCY_STOP_PIN = 18
@@ -939,6 +977,19 @@ def _servo_ates():
             f"-> tut {FIRE_SERVO_HOLD_SEC}s -> bırak {birak}us "
             f"({FIRE_SERVO_RELEASE_SEC}s) | nötr {FIRE_SERVO_NEUTRAL_US}us")
         sys.stdout.flush()
+
+        # ATEŞTEN ÖNCE REFERANSA DÖN.
+        # Açık döngüde kol nerede kaldıysa oradan başlanır; önceki atıştan
+        # kalan sapma bu atışa taşınır ve hatalar birikir. Kısa bir bırakma
+        # darbesiyle kolu dayanağa yaslayıp HER ATIŞA AYNI NOKTADAN
+        # başlıyoruz. Dayanak yoksa bu adım zararsızdır (kol biraz daha
+        # bırakma yönüne gider, çekme onu zaten geri alır).
+        if FIRE_SERVO_HOME_SEC > 0:
+            _servo_darbe(birak)
+            time.sleep(FIRE_SERVO_HOME_SEC)
+            _servo_darbe(FIRE_SERVO_NEUTRAL_US)
+            time.sleep(0.05)
+
         for _ in range(FIRE_SERVO_CYCLES):
             _servo_darbe(cek)
             time.sleep(FIRE_SERVO_PULL_SEC)
