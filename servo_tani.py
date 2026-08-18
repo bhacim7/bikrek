@@ -54,6 +54,54 @@ except ImportError:
     print("  sudo apt install python3-lgpio")
     sys.exit(1)
 
+# --- TEK TUS GIRISI ---
+# Ilk surum input() kullaniyordu, yani her komut icin ENTER gerekiyordu.
+# Sahada bu "klavyeden yazdigim hicbir seye tepki vermiyor" olarak goruldu:
+# kullanici harflere basiyor, hepsi satirda birikiyor ve Enter'a basilmadigi
+# icin hicbiri islenmiyordu. Servo kalibrasyonu kumanda gibi ANINDA tepki
+# vermeli -- bir tusa basinca servo hemen hareket etmeli ki etkisi gorulsun.
+try:
+    import termios
+    import tty
+    _TTY = sys.stdin.isatty()
+except Exception:          # Windows / pty olmayan ortam
+    termios = None
+    tty = None
+    _TTY = False
+
+
+def tus_oku(istem):
+    """
+    Tek tus okur (Enter GEREKMEZ). TTY yoksa satir moduna duser.
+
+    Ham (raw) modda Ctrl+C sinyal uretmez, '\\x03' baytI olarak gelir --
+    o yuzden elle KeyboardInterrupt'a ceviriyoruz, yoksa arac kapanmaz.
+    """
+    sys.stdout.write(istem)
+    sys.stdout.flush()
+    if not _TTY:
+        # TTY yok: satir modu. Enter gerekli, kullaniciya bir kez soylenir.
+        try:
+            return sys.stdin.readline().strip()
+        except Exception:
+            return 'q'
+    fd = sys.stdin.fileno()
+    eski = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, eski)
+    if ch in ('\x03', '\x04'):      # Ctrl+C / Ctrl+D
+        raise KeyboardInterrupt
+    if ch == '\r':
+        ch = '\n'
+    # Basilan tusu ekrana yaz ki ne yaptigi gorunsun
+    sys.stdout.write(('<Enter>' if ch == '\n' else
+                      '<space>' if ch == ' ' else ch) + "\n")
+    sys.stdout.flush()
+    return ch
+
 SERVO_PIN = 12
 FREQ = 50
 ALT, UST = 500, 2500
@@ -128,7 +176,7 @@ def yardim():
   KONUM: a/d -+10   z/c -+50   s/w -+2   r dinlenme   p cekili   t prova
   HIZ  : f ileri    b geri     space dur  +/- hiz     1/2 sure   t prova
   k      NOTR (DUR) kalibrasyonu -- surekli donus servosunda SART
-  0      darbeyi kes (ACIL DUR)  q  cik
+  0      darbeyi kes (ACIL DUR)  q  cik     [TEK TUS -- Enter gerekmez]
 """)
 
 
@@ -145,7 +193,7 @@ def teshis():
     print("TESHIS -- servoyu IZLEYIN ve sorulara cevap verin")
     print("=" * 62)
     print("Kola isaret koyun (bant/kalem) ki donus gorulebilsin.")
-    input("Hazir olunca Enter...")
+    tus_oku("Hazir olunca herhangi bir tusa basin... ")
 
     print("\n1) Notr (1500 us) veriliyor, 2 saniye...")
     darbe(NOTR)
@@ -159,8 +207,8 @@ def teshis():
     time.sleep(1.0)
 
     print()
-    c = input("Kol 3 saniye boyunca DURMADAN mi dondu, yoksa bir yere gidip\n"
-              "DURDU mu?  [d = durmadan dondu / s = gidip durdu] > ").strip().lower()
+    c = tus_oku("Kol 3 saniye DURMADAN mi dondu, yoksa gidip DURDU mu?  "
+                "[d / s] > ").strip().lower()
     print()
     if c.startswith('d'):
         print("=> SUREKLI DONUS (360) SERVOSU.")
@@ -198,7 +246,9 @@ cekili = None
 # kadar sessiz kaliyoruz.
 darbe(0)
 print()
-print("SURUM: 3 (teshis + konum/hiz modu + notr kalibrasyonu)")
+print("SURUM: 4 (TEK TUS girisi -- Enter GEREKMEZ)")
+print("giris modu: %s" % ("TEK TUS (aninda tepki)" if _TTY
+                          else "SATIR (her komuttan sonra ENTER gerekli)"))
 print("Servoya DARBE VERILMEDI -- su anda gevsek ve durgun olmali.")
 print("Hala donuyorsa besleme/kart sorunu var, once onu cozun.")
 print()
@@ -214,11 +264,13 @@ try:
             istem = "[HIZ  ileri=%d geri=%d sure=%.2fs] > " % (
                 NOTR + hiz, NOTR - hiz, sure)
         try:
-            k = input(istem).strip().lower()
-        except EOFError:
+            k = tus_oku(istem)
+        except (EOFError, KeyboardInterrupt):
+            print()
             break
-        if not k:
+        if not k or k == chr(10):
             continue
+        k = k.lower()          # ana komutlar kucuk harf
 
         if k == 'q':
             break
@@ -249,8 +301,12 @@ try:
             gecici = NOTR
             darbe(gecici)
             while True:
-                kk = input("    [notr adayi %d us] > " % gecici).strip()
-                if kk == '':
+                try:
+                    kk = tus_oku("    [notr adayi %d us] > " % gecici)
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    break
+                if kk == chr(10):
                     NOTR = gecici
                     print("    NOTR = %d us olarak kaydedildi." % NOTR)
                     break
@@ -298,7 +354,7 @@ try:
         elif mod == 'hiz' and k == 'b':
             darbe(NOTR - hiz)
             print("  GERI (%d us) -- durdurmak icin space" % (NOTR - hiz))
-        elif mod == 'hiz' and k in ('space', ' ', 'n'):
+        elif mod == 'hiz' and k in (' ', 'n'):
             darbe(NOTR)
             print("  DUR (notr %d us)" % NOTR)
         elif mod == 'hiz' and k in ('+', '='):
