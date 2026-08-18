@@ -48,6 +48,27 @@ FIRE_SERVO_LEG_SEC = 0.20      # tek yön hareket süresi (MG996R 30° ~0.1 sn +
 FIRE_SERVO_CYCLES = 1          # fire başına git-gel sayısı (sürekli sarsma için büyüt)
 FIRE_SERVO_FREQ = 50           # standart hobi servo frekansı (Hz)
 
+# --- SERVO TIPI ---
+# 'konum' : STANDART (180°) servo. Darbe genişliği = AÇI. Yaz, oraya gider,
+#           BEKLER. REST/PULL iki sabit sayıdır. Tetik için ideal.
+# 'hiz'   : SÜREKLİ DÖNÜŞ (360°) servosu. Darbe genişliği = HIZ ve YÖN;
+#           NEUTRAL = dur, uzaklaştıkça hızlanır. KONUM KAVRAMI YOK
+#           (potansiyometresi sökülmüş, nerede olduğunu bilmez).
+#           Hareket ancak "şu hızda şu SÜRE dön" ile yapılır — AÇIK DÖNGÜ.
+#
+# Hangisi olduğu etiketten anlaşılmıyor (MG995 iki sürümde de satılıyor).
+# `servo_tani.py` içindeki 'x' TEŞHİSİ ile belirlenir.
+#
+# 'hiz' MODUNUN BEDELİ: servo nereye geldiğini bilmediği için her atışta
+# konum bir miktar kayabilir (yük, gerilim, sürtünme farkı). Tetik mekanik
+# bir sınıra dayandığı için pratikte tolere edilebilir, ama tekrar
+# edilebilirlik standart servodakinin altındadır. Mümkünse 'konum'.
+FIRE_SERVO_MODE = 'konum'
+
+# 'hiz' modu ayarları (yalnızca FIRE_SERVO_MODE == 'hiz' iken kullanılır)
+FIRE_SERVO_NEUTRAL_US = 1500   # DUR noktası
+FIRE_SERVO_SPEED_US = 300      # nötrden uzaklık: büyük = hızlı
+
 # rpi_motor_server.py'den alınan acil durdurma pini
 EMERGENCY_STOP_PIN = 18
 
@@ -366,12 +387,16 @@ def initialize_gpio():
             # bekleme step motor üretimini etkilemez.
             if FIRE_MODE == 'servo':
                 LGpio.gpio_claim_output(lgh, FIRE_SERVO_PIN, LGPIO_LOW)
-                _servo_darbe(FIRE_SERVO_REST_US)
+                # 'hiz' modunda dinlenme = NOTR (dur); konum yazilamaz.
+                _bekleme = (FIRE_SERVO_NEUTRAL_US
+                            if FIRE_SERVO_MODE == 'hiz' else FIRE_SERVO_REST_US)
+                _servo_darbe(_bekleme)
                 time.sleep(0.5)              # dinlenmeye oturması için
                 _servo_darbe(0)              # darbeyi kes
                 print(
-                    f"DEBUG (motor_fire_module): SERVO TETİK hazır (GPIO{FIRE_SERVO_PIN}, "
-                    f"dinlenme {FIRE_SERVO_REST_US} us).")
+                    f"DEBUG (motor_fire_module): SERVO TETİK hazır "
+                    f"(GPIO{FIRE_SERVO_PIN}, mod={FIRE_SERVO_MODE}, "
+                    f"bekleme {_bekleme} us).")
                 sys.stdout.flush()
 
             # Acil durdurma pini (giriş olarak ayarla, pull-up direnci ile)
@@ -856,16 +881,42 @@ def _servo_ates():
     mekanik gecikmeyi kapsayacak şekilde ayarlandı: mermi, röleye göre
     ~FIRE_SERVO_LEG_SEC daha geç çıkar.
     """
-    print(
-        f"DEBUG (motor_fire_module): SERVO ateşleme: {FIRE_SERVO_CYCLES} çevrim, "
-        f"{FIRE_SERVO_PULL_US}us <-> {FIRE_SERVO_REST_US}us")
-    sys.stdout.flush()
-    for _ in range(FIRE_SERVO_CYCLES):
-        _servo_darbe(FIRE_SERVO_PULL_US)
-        time.sleep(FIRE_SERVO_LEG_SEC)
-        _servo_darbe(FIRE_SERVO_REST_US)
-        time.sleep(FIRE_SERVO_LEG_SEC)
+    if FIRE_SERVO_MODE == 'hiz':
+        # SÜREKLİ DÖNÜŞ SERVOSU: konum yazılamaz, yalnızca "şu hızda şu süre
+        # dön" denebilir. Çekme ve bırakma AYNI süreyle yapılıyor ki kol
+        # başladığı yere dönsün; açık döngü olduğu için tam dönmeyebilir,
+        # sapma birikirse `servo_tani.py` ile süreler yeniden ayarlanmalı.
+        ileri = FIRE_SERVO_NEUTRAL_US + FIRE_SERVO_SPEED_US
+        geri = FIRE_SERVO_NEUTRAL_US - FIRE_SERVO_SPEED_US
+        print(
+            f"DEBUG (motor_fire_module): SERVO(hiz) ateşleme: "
+            f"{FIRE_SERVO_CYCLES} çevrim, ileri {ileri}us / geri {geri}us, "
+            f"bacak {FIRE_SERVO_LEG_SEC}s")
+        sys.stdout.flush()
+        for _ in range(FIRE_SERVO_CYCLES):
+            _servo_darbe(ileri)
+            time.sleep(FIRE_SERVO_LEG_SEC)
+            _servo_darbe(FIRE_SERVO_NEUTRAL_US)     # DUR
+            time.sleep(0.05)
+            _servo_darbe(geri)
+            time.sleep(FIRE_SERVO_LEG_SEC)
+            _servo_darbe(FIRE_SERVO_NEUTRAL_US)     # DUR
+            time.sleep(0.05)
+    else:
+        print(
+            f"DEBUG (motor_fire_module): SERVO(konum) ateşleme: "
+            f"{FIRE_SERVO_CYCLES} çevrim, "
+            f"{FIRE_SERVO_PULL_US}us <-> {FIRE_SERVO_REST_US}us")
+        sys.stdout.flush()
+        for _ in range(FIRE_SERVO_CYCLES):
+            _servo_darbe(FIRE_SERVO_PULL_US)
+            time.sleep(FIRE_SERVO_LEG_SEC)
+            _servo_darbe(FIRE_SERVO_REST_US)
+            time.sleep(FIRE_SERVO_LEG_SEC)
+
     # Dinlenmeye oturduktan sonra darbeyi kes: servo gevşer, ısınmaz.
+    # 'hiz' modunda nötr zaten "dur" demek, darbeyi kesmek de aynı sonucu
+    # verir ama akım çekmeyi tamamen bitirir.
     time.sleep(0.1)
     _servo_darbe(0)
     print("DEBUG (motor_fire_module): Servo ateşleme tamamlandı.")
@@ -963,7 +1014,9 @@ def cleanup_gpio():
                 # Servoyu dinlenmeye götürüp darbeyi kes — tetik çekili
                 # kalmasın. Kapanışta 0.4 sn beklemek kabul edilebilir.
                 try:
-                    _servo_darbe(FIRE_SERVO_REST_US)
+                    _servo_darbe(FIRE_SERVO_NEUTRAL_US
+                                 if FIRE_SERVO_MODE == 'hiz'
+                                 else FIRE_SERVO_REST_US)
                     time.sleep(0.4)
                     _servo_darbe(0)
                     print("DEBUG (motor_fire_module): Servo tetik dinlenmede, darbe kesildi.")
