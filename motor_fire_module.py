@@ -41,30 +41,16 @@ FIRE_SERVO_PIN = 12
 # Konumlar µs cinsinden (50 Hz, 500-2500 µs ~ 0-180°, 11.1 µs/derece).
 # 30 derece = 333 µs. İKİ DEĞER DE SAHADA KALİBRE EDİLMELİ: `servo_tani.py`
 # ile tetiğin çekildiği ve serbest kaldığı gerçek µs değerleri bulunur.
-# SAHADA KALİBRE EDİLDİ (servo_tani.py, standart 180° servo).
-#
-# 1500 = "dinlenme" DEĞİLDİR. 1500 yalnızca servonun kendi orta noktasıdır;
-# tetiğin nerede serbest kaldığıyla ilgisi yoktur. Doğru değer montaj
-# geometrisine bağlıdır: kolun boyu, takıldığı açı, tetiğin strok mesafesi.
-# Bu sistemde tetik 1600 us'de tam serbest kalıyor, 1500'de hâlâ hafif
-# çekili duruyordu.
-#
-#   REST 1600 us = 99.0 derece   (tetik serbest)
-#   PULL  933 us = 39.0 derece   (tetik çekili)
-#   hareket 667 us = 60.0 derece
-#
-# MEKANİK SINIRA PAY (500-2500 us aralığında):
-#   PULL tarafında 39 derece, REST tarafında 81 derece boş pay var.
-#   Yani servo hiçbir konumda sınıra dayanmıyor — dayanmak sürekli tork
-#   demektir ve servoyu ısıtıp dişlisini aşındırır.
 FIRE_SERVO_REST_US = 1600      # dinlenme (tetik serbest)
-FIRE_SERVO_PULL_US = 933       # çekili
-
-# HAREKET SURESI. Olculen hareket 60 derece (933 <-> 1600 us).
-# MG995 katalog hizi ~0.20 sn/60 derece @4.8V, ~0.16 sn @6V -- yani 0.20
-# TAM SINIRDA kalirdi ve yuk altinda servo aciya varamadan bir sonraki
-# komut gelirdi. 0.28 pay birakiyor.
-FIRE_SERVO_LEG_SEC = 0.28      # tek yon hareket suresi (60 derece + pay)
+FIRE_SERVO_PULL_US = 833       # çekili
+# Gerçek strok: 1600 - 833 = 767 us. 500-2500 us = 0-180 derece olduğuna göre
+# 11.11 us/derece, yani hareket 30 DEĞİL ~69 derecedir (99.0 -> 75.0 derece).
+# MG996R katalog hızı 0.17 sn/60 derece @4.8 V -> 69 derece ~0.20 sn. Yani
+# LEG_SEC = 0.20 katalog değeriyle TAM SINIRDA; sahada sorunsuz çalışıyor ama
+# gerilim düşerse (Pi 5V hattı servo yükünde sarkar) servo açıya varmadan
+# sonraki komut gelir. Tetik yarım çekili kalırsa ilk bakılacak yer burasıdır:
+# 0.24'e çıkar.
+FIRE_SERVO_LEG_SEC = 0.20      # tek yön hareket süresi
 FIRE_SERVO_CYCLES = 1          # fire başına git-gel sayısı (sürekli sarsma için büyüt)
 FIRE_SERVO_FREQ = 50           # standart hobi servo frekansı (Hz)
 
@@ -83,9 +69,6 @@ FIRE_SERVO_FREQ = 50           # standart hobi servo frekansı (Hz)
 # konum bir miktar kayabilir (yük, gerilim, sürtünme farkı). Tetik mekanik
 # bir sınıra dayandığı için pratikte tolere edilebilir, ama tekrar
 # edilebilirlik standart servodakinin altındadır. Mümkünse 'konum'.
-# STANDART (180) SERVOYA GECILDI -> 'konum'. Surekli donus servosunda
-# yasanan konum kaymasi bu modda yapisal olarak IMKANSIZ: servo her
-# komutta ayni aciya gidip orada TUTAR.
 FIRE_SERVO_MODE = 'konum'
 
 # --- 'hiz' modu ayarları (yalnızca FIRE_SERVO_MODE == 'hiz' iken) ---
@@ -231,7 +214,7 @@ STEPS_PER_DEGREE_PITCH = PULSES_PER_REV_PITCH * GEAR_RATIO_PITCH / 360.0  # 44.4
 # yani bunlar YARIM periyottur (0.00015 -> 3333 pulse/sn).
 # CS-M22323 (NEMA23) rotor ataleti yüksek olduğundan sabit hızda kalkış adım
 # kaçırmaya yol açar; hareket rampasız yapılmamalıdır.
-MIN_DELAY = 0.00015   # Maksimum hız
+MIN_DELAY = 0.00040   # Maksimum hız
 MAX_DELAY = 0.0015    # Kalkış ve duruş hızı
 ACCEL_STEP = 0.00003  # Hızlanma ivmesi
 DECEL_STEP = 0.00008  # Frenleme ivmesi
@@ -280,7 +263,7 @@ _servo_bres_pitch = 0.0
 # oldu, yani marj var. 70'e çıkarıldı: kör ilerleme yaw 7.5°, pitch 11.2°
 # (dikey görüşün %20'si) — hâlâ hedefi kareden çıkarmayacak seviyede.
 # Yavaş gelirse artır, aşma/kayıp başlarsa düşür: ayarlanacak ilk yer burası.
-SERVO_MAX_DEG_PER_SEC = 100.0
+SERVO_MAX_DEG_PER_SEC = 50.0
 
 # Sabit bir alt gecikme YETERSİZ kalıyordu. İki eksen ortak darbe saatini
 # paylaşıyor; gecikmeyi adım/derece oranı küçük olan eksenden (pitch)

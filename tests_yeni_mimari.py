@@ -358,8 +358,16 @@ _yaw_otonom = (1.0 / (2 * mfm._servo_gecikme_siniri(1.0, 0.0))
                / mfm.STEPS_PER_DEGREE_YAW)
 print(f"  otonom tepe hiz: yaw {_yaw_otonom:.0f} derece/sn, "
       f"pitch {_pitch_otonom:.0f} derece/sn (kirpilmis)")
-kontrol("yaw tam hizina cikabiliyor",
-        abs(_yaw_otonom - mfm.SERVO_MAX_DEG_PER_SEC) < 1.0, f"{_yaw_otonom:.0f}")
+# Otonom yaw tepe hizi iki tavanin KUCUGU: yazilim siniri
+# (SERVO_MAX_DEG_PER_SEC) ile donanim siniri (MIN_DELAY / adim-derece).
+# MIN_DELAY 0.00040'a cekildiginde (sahada titresim icin yavaslatildi)
+# donanim tavani 46.9 derece/sn'e duser ve yazilim sinirini gecersiz kilar.
+_yaw_tavan = min(mfm.SERVO_MAX_DEG_PER_SEC,
+                 _tavan / mfm.STEPS_PER_DEGREE_YAW)
+kontrol("yaw iki tavanin kucugune cikabiliyor",
+        abs(_yaw_otonom - _yaw_tavan) < 1.0,
+        f"{_yaw_otonom:.1f} = min(yazilim {mfm.SERVO_MAX_DEG_PER_SEC:.0f}, "
+        f"donanim {_tavan / mfm.STEPS_PER_DEGREE_YAW:.1f}) derece/sn")
 # Devir teslim butcesi: en kotu pitch yolu ~20 derece, ENGAGE_SLEW_TIMEOUT icinde
 # bitmeli. Pitch hizi bunun altina duserse yalpalama zaman asimina ugrar.
 kontrol("pitch hizi devir teslim butcesine yetiyor",
