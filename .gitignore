@@ -22,3 +22,8 @@ env/
 # Kayıtlar / çıktılar
 *.mp4
 *.avi
+
+# Tanilama araclarinin gorsel ciktilari
+gozcu_tani/
+kamera_kalite/
+yolo_kalite/
