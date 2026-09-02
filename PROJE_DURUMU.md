@@ -1,11 +1,15 @@
 # BUKREK Hava Savunma Sistemi — Proje Durumu ve Devir Belgesi
 
 > Bu belge, bir oturum boyunca yapılan tüm çalışmanın özetidir. Yeni bir
-> konuşmada bağlam olarak paylaşılabilir. Son güncelleme: 2026-08-14.
+> konuşmada bağlam olarak paylaşılabilir. **Son güncelleme: 2026-09-02.**
 >
-> **En güncel durum için önce en sondaki "FAZ 3" bölümünü okuyun.** Belge
-> kronolojik büyüyor; aşağıdaki eski bölümlerde geçen bazı sayılar FAZ 3'te
-> güncellendi.
+> **En güncel durum için önce en sondaki 26. bölümü ("Güncel durum özeti")
+> okuyun**, sonra 19-25. bölümleri. Belge kronolojik büyüyor; aşağıdaki eski
+> bölümlerde geçen bazı sayılar sonraki bölümlerde güncellendi. Özellikle
+> 17. bölüm HATALIDIR (18. bölüme bakın).
+>
+> Yan belgeler: `ENKODER_ENTEGRASYON.md` (yaw enkoder sıralı yapılacaklar
+> listesi), `VIDEO_KONUSMA_METNI.md` (görev kabiliyet gösterimi videosu).
 
 ---
 
@@ -1922,3 +1926,472 @@ cikmayacakti.
 
 Not: `AIM_HOLD_FRAMES`'i veya toleransi buyutmek salinimi GIZLER, cozmez;
 ates dogrulugu duser. Once rezonans sondurulmeli.
+
+
+---
+
+# BOLUM 19-26: 18. BOLUMDEN SONRASI (2026-08-16 .. 2026-09-02)
+
+> Bu blok, 18. bolumun yazildigi andan bugune kadar yapilan HER SEYI kapsar:
+> arayuz yerlesimi, olculen uc duzeltmenin uygulanmasi, balonsuz hedefte
+> kilitlenmenin cozumu, elektronik tetikten servo tetige gecis, gorev
+> kabiliyet gosterimi videosu metni, taret hizlarinin sahada dusurulmesi ve
+> yaw enkoder plani.
+>
+> **Numaralandirma notu:** belgede 15. bolum yoktur (14'ten 16'ya atlar).
+> Eksik bir icerik degil, yalnizca numaralandirma hatasidir; geriye donuk
+> duzeltilirse mevcut baslik referanslari bozulur, o yuzden birakildi.
+
+## 19. Arayuz yerlesimi (2026-08-16)
+
+Uc adimda yapildi; ilk iki adim sirasiyla birbirinin hatasini duzeltti.
+
+**19.1 Ilk deneme (`6ecf309`) — HATALIYDI.** Avci paneli 1280x737'ye
+SABITLENDI. Pencere `showMaximized()` ile aciliyor; 2560x1440 ekranda panel
+1280'de kaldi, icerik sol uste sikisti ve **ekranin %73'u bos kaldi.**
+
+**19.2 Duzeltme (`1cf0c39`).** `camera_label` esnek yapildi
+(`setMinimumSize` + `QSizePolicy.Expanding`), artan alan germe payi 1 ile
+avciya verildi, bosa giden `addStretch` cagrilari kaldirildi.
+
+| | onceki | sonraki |
+|---|---|---|
+| avci paneli (2560x1440'ta) | 1280x737 (sabit) | 1814x1043 |
+| ekran doluluk | %27 | %74 |
+| `DISPLAY_WIDTH` | 1280 | 1600 |
+| gerilme | %41 | %13 |
+| IPC kare boyutu | 2.8 MB | 4.4 MB |
+
+**19.3 Ferahlatma (`9a10e25`).** Gozcu 660 -> **760** (760x427), sag panel
+804. Avci esnek oldugu icin kendiliginden 1710x984'e kisildi, gerilme %7'ye
+dustu. Buton dolgusu/fontu buyutuldu, layout araliklari tanimlandi (hicbiri
+tanimli degildi), `QGroupBox` stili tek bir `grup_stili` yardimcisinda
+toplandi.
+
+**Kritik nokta — bu degerler matematigi BOZMAZ.** Tespit, PID, kalibrasyon
+ve nisan hesabinin tamami HAM kare koordinatlarinda yurur; arayuze giden
+kare salt okunur bir gosterim kopyasidir. Tek bagli nokta fare tiklamasidir
+ve `_etiket_to_kare` pixmap geometrisini **calisma aninda okur**, sabit sayi
+kullanmaz. Uc pencere boyutunda dogrulandi (min / orta / maksimize): merkeze
+tiklama ham merkeze **0.00 px** hatayla dusuyor, letterbox ofseti
+(maksimizede ust/alt 129 px) dogru hesaplaniyor. Sarti: `camera_label`'in
+`Qt.AlignCenter` hizalamasi korunmali.
+
+Ilgili ayarlar `config.py` > ARAYUZ YERLESIMI: `UI_AVCI_GENISLIK = 1280`,
+`UI_GOZCU_GENISLIK = 760`, `UI_SAG_PANEL_PAYI = 44`, `DISPLAY_WIDTH = 1600`.
+Gozcu onizlemesi bu genislikte **URETILIR** (`spotter_module`), yani
+buyutunce gerilme olmaz, gercekten netlesir.
+
+## 20. 18. bolumdeki uc duzeltmenin uygulanmasi (`b5998fc`)
+
+18. bolum uc oneri birakmisti (UYGULANMADI notuyla). Kullanici "ilk ucunu
+uygula" dedi; ucu de uygulandi.
+
+**D1 — Imha dogrulama kilidi kirildi (kritik).** 18. bolumde olculen
+**20 saniyelik takilmanin** dogrudan caresi. Eski hata zinciri: `'tekrar'`
+karari verildikten sonra ates edilemezse `ates_kaydet()` cagrilmiyordu ->
+sayac artmiyordu -> `'pes'` asla tetiklenmiyordu -> `ates_sayisi > 0` oldugu
+icin KILIT'e de donulmuyordu. Sistem ATES durumunda kilitli kaliyordu.
+Artik engellenen her kare `AngajmanMakinesi.ates_engellendi()` ile sayiliyor;
+`FIRE_RETRY_GIVEUP_FRAMES = 45` (1.5 sn) asilinca `imha_edilemedi()` cagrilip
+TARAMA'ya donuluyor. **Cikis her durumda garanti.** Basarili ates ve TARAMA
+gecisi sayaci sifirliyor.
+
+**D2 — Patlama penceresi.** Saha olcumu: ates 7.60 sn'de verildi, balon
+8.10'da kayboldu — patlamis balon **0.5 saniye (15 kare) daha gorundu**
+(mermi ucus suresi + patlama + YOLO'nun kutuyu birakmasi). Gecikmesiz
+sayimda bu kareler "balon hala orada" sayilip patlamis hedefe tekrar ates
+ediliyordu. Sayim artik atesten `FIRE_CONFIRM_DELAY_SEC` kadar SONRA
+basliyor, `FIRE_CONFIRM_MAX_SEEN` 1 -> **4**.
+
+**D3 — Rezonans sonumleme.** Olculdu: salinimin **%91-96'si taretin KENDI
+hareketi** (balon ve maket kutulari **+0.93 korelasyonla** birlikte kayiyor),
+baskin frekans **2.24-3.15 Hz** — FAZ 3'te olculen yapisal rezonansla
+(2.7 Hz) ayni bant. Denetleyici saf oransal (KD=0.001, etkisiz) ve donguda
+~185 ms olu zaman var; bu birlesim o frekansta salinim uretir.
+
+PID cikisina birinci derece alcak geciren suzgec eklendi,
+`PID_OUTPUT_SMOOTHING = 0.30` (fc = **1.70 Hz**):
+
+| frekans | ne | kazanc |
+|---|---|---|
+| 0.5 Hz | yonelme | 0.96 — oturma hizi korunuyor |
+| 2.7 Hz | rezonans | 0.53 — salinim ~%47 bastiriliyor |
+
+Beklenen: 21.9 px RMS -> ~11.7 px. Suzgec hafizasi `reset_pid_state`'te
+sifirlanir; `0.0` yazilirsa suzgec kapanir (eski davranis).
+
+**Bilerek YAPILMAYAN:** tolerans buyutulmedi. Kullanicinin saha beyani
+"sistem her mesafede nisangahin tam ortasina vuruyor" oldugu icin paralaks
+kalemi butceden cikarildi; 16.2 m'de 95 mm balon yaricapina karsi tolerans
+20 px'e (80 mm) cikabilirdi — **ama once salinim sonmeli**, cunku salinim
+tepesi (31 px = 124 mm) balonun disinda kaliyor. Tolerans buyutmek salinimi
+GIZLER, cozmez.
+
+## 21. Balonsuz hedefte "sanal kilitlenme" (`5591871`, `302c33e`)
+
+**Saha kaydi:** `analizasama3.mp4`, 1285 kare, 97 durum blogu kare kare
+cozumlendi. Sistem **balonsuz** bir dusman-F16'ya kilitlendi ve **42 saniye
+cikamadi**; ayni karede avci, balonu GORUNEN baska bir dusman hedefi de
+goruyordu. Videoda balona nisan alinan kare orani **5/1285 (%0.4)**.
+
+Kullanicinin sorusu "sanal kilitlenmeyi mi kaldirsak" idi. **Kaldirilmadi** —
+sanal nisan noktasi KILIT'te takip koprusu icin gerekli. Ayrim netlestirildi:
+
+> **DOGRULAMA'da balon SART** (hedef secimi kararidir).
+> **KILIT'te gecici kayip TOLERE EDILIR** (takip kararidir).
+
+**C1 — Dogrulamaya balon sarti.** `dogrulama_adimi` yalnizca SINIFA
+bakiyordu, balonun varligini hic sormuyordu. Artik dogrulama penceresinde
+balon en az `VERIFY_MIN_BALLOON_FRAMES` (1) kez gorulmeli.
+
+**C2 — KILIT zaman asiminda kara liste.** Eskiden timeout TARAMA'ya donuyor
+ama kara listeye ALMIYORDU; `avcida_hazir_hedef_var` ayni hedefi aninda geri
+seciyordu — kisir dongu.
+
+**Kara liste artik KAYIT BASINA yaricap tutuyor.** Sebep, kullanicinin
+sordugu tam nokta: kara liste hedef degil **ACI** tutar, genis yaricap
+KOMSU hedefi de kapatir.
+
+| mesafe | 1.0 m yanal ayrim | 4.0 der yaricap |
+|---|---|---|
+| 7.5 m | 7.59 der | guvenli |
+| 16.0 m | **3.58 der** | **komsuyu KAPATIR** |
+
+Bu yuzden: balonsuz/timeout icin `BLACKLIST_NO_BALLOON_RADIUS_DEG = 1.5` +
+`BLACKLIST_NO_BALLOON_TTL_SEC = 3.0` (16 m'de ~0.42 m bolge, 3 saniye sonra
+hedef tekrar acilir); imha ve dost icin eski `4.0` derece korunuyor.
+
+**C3 — Gozcu esikleri GERI ALINDI.** `SPOTTER_MIN_BLOB_AREA` 60 -> **30**,
+`SPOTTER_BALLOON_MIN_FILL` 0.60 -> **0.45**. 60/0.60 sahada **gercek balonu
+eliyordu**: gozcu panelinde fuzenin altindaki balon "alan 34<60" ve
+"dolg 0.50" etiketleriyle elenmis gorunuyordu. O degerler tek bir karedeki
+maket olcumune gore onerilmisti — **hatali oneriydi**. Artik gevsek taraf
+tercih ediliyor: kacirmanin bedeli gorev basarisizligi, bosuna gidisin
+bedeli ~1.5 saniye.
+
+**C4 — Durum cubugu ezilmesi.** "Hedefe nisan alindi" satiri otonom modda
+durum makinesinin mesajini eziyordu (2.6-11.8 sn arasi kesintisiz), sistemin
+KILIT'te takildigi ekrandan okunamiyordu. Artik yalnizca manuel/Asama 1'de
+yaziliyor. KILIT mesajina "balon VAR/BALON YOK | nisan TAMAM/bekliyor"
+eklendi.
+
+### 21.1 Cikis hizlandirmasi ve yakalanan regresyon (`302c33e`)
+
+Saha geri bildirimi: "takilma bitti ama siradaki hedefe gecis beklenenden
+uzun suruyor." Darbogaz olculdu: balon sarti `dusman_mi(sinif)` blogunun
+ICINDE calisiyordu, yani ancak `VERIFY_CONFIRM_FRAMES` kadar ARDISIK ayni
+sinif toplandiktan sonra devreye giriyordu; maket araliklı goruluyorsa karar
+`ENGAGE_VERIFY_TIMEOUT`'a kadar sarkiyordu.
+
+  - `VERIFY_NO_BALLOON_GIVEUP_SEC = 0.40` **(YENI)** — dogrulamada balon bu
+    sure boyunca HIC gorulmediyse sinif tutarliligini beklemeden birak.
+  - `ENGAGE_VERIFY_TIMEOUT` 1.5 -> **1.0**
+  - `BLACKLIST_NO_BALLOON_TTL_SEC` 4.0 -> **3.0**
+
+**Bu degisiklik bir REGRESYON uretmisti, testte yakalandi ve duzeltildi:**
+sinif tutarliligi 4 karede (0.13 sn) saglaniyor ve balon sarti balona HIC
+SURE TANIMADAN tetikleniyordu. Balon YOLO icin kucuk nesnedir ve ilk
+karelerde kacirilir (olcum: karelerin %19-40'inda goruluyor), yani balonu
+GERCEKTEN olan bir hedef yanlislikla elenirdi. Artik balon sarti da
+`VERIFY_NO_BALLOON_GIVEUP_SEC` dolmadan karar vermiyor.
+
+Olculen davranis:
+
+| senaryo | sonuc |
+|---|---|
+| balonlu hedef (balon hemen) | 3 kare (0.10 sn) -> **KILIT** |
+| balon 0.30 sn sonra goruldu | 9 kare (0.30 sn) -> **KILIT** (kacirilmiyor) |
+| balon 0.60 sn sonra goruldu | 12 kare (0.40 sn) -> TARAMA (esik asildi) |
+| balonsuz hedef | 12 kare (0.40 sn) -> TARAMA |
+| maket araliklı, balon yok | 12 kare (0.40 sn) -> TARAMA (eskiden 1.5 sn) |
+
+Sure butcesi: tipik cikis **~0.70 sn** (yalpalama 0.30 + dogrulama 0.40),
+en kotu **2.90 sn** (onceden 4.00).
+
+**Kullanicinin "hangi deger bekleme suresini gosterir" sorusunun cevabi:**
+`VERIFY_NO_BALLOON_GIVEUP_SEC` (balonsuz hedefi birakma) ve
+`ENGAGE_VERIFY_TIMEOUT` (en kotu hal tavani). Kisaltmak isterse once
+`VERIFY_NO_BALLOON_GIVEUP_SEC` dusurulur — ama 0.30'un altina inilmemeli,
+balonun kacirilma orani oraya kadar tolere edilebilir.
+
+## 22. Elektronik tetikten SERVO tetige gecis (dal: `servo-tetik`)
+
+Kullanici roleli elektronik tetigi birakip mekanik tetigi **hobi servosuyla**
+cekmeye gecti. Is **ayri bir dalda** yapildi (`servo-tetik`), calisan sistem
+bozulmadan durdu.
+
+### 22.1 GPIO16 -> GPIO12
+
+| | GPIO16 | GPIO12 |
+|---|---|---|
+| kullanim | role (ac/kapat) | servo (PWM) |
+| donanim PWM | yok | **var** (RP1 PWM0) |
+| gerekli mi | — | zorunlu degil ama titresimi azaltir |
+
+Kodda tek degisiklik `FIRE_SERVO_PIN = 12`. Elektrik olarak servo sinyal
+ucu (turuncu/sari) GPIO12'ye, GND ortak; **servo beslemesi ayri olmali**
+(asagida).
+
+### 22.2 Pi 5 tuzagi: `pigpio` CALISMAZ
+
+Pi 5'in GPIO'su RP1 yardimci yongasindan gecer; `pigpio` bunu bilmez.
+Kullanilan kutuphane **`lgpio`**. Bu belgeye yazilmasinin sebebi: internetteki
+servo orneklerinin cogu `pigpio` kullanir ve Pi 5'te sessizce hicbir sey
+yapmaz.
+
+### 22.3 Yasanan hatalar ve cozumleri
+
+| hata | belirti | cozum |
+|---|---|---|
+| `gpio_get_chip_info` yanlis alan | "gpiochip bulunamadi" | etiket `bilgi[3]`'te, `bilgi[2]` degil (`06a29c5`) |
+| `tx_servo(h, pin, 0)` | `lgpio.error: 'bad PWM micros'` | sifir icin `tx_pwm(h, pin, 0, 0)` (`5e4dcdb`) — **bu cokme `motor_fire_module`'un tum GPIO baslatmasini da oldururdu** |
+| acilista 1500 us darbe | surekli donus servosu kendiliginden donuyordu | acilista darbe verilmiyor + `k` ile notr kalibrasyonu (`c6c81d9`) |
+| `input()` Enter bekliyordu | tus basimlari tek satirda birikiyordu | termios raw mod, **tek tus** girisi (`dba7ad4`) |
+| ates dizisi ters | once biraktiriyor, sonra cekiyordu | `FIRE_SERVO_PULL_DIR` (`64a2fdf`) |
+| konum kaymasi | birkac atistan sonra baslangic yerinde degil | birakma yonunde dayanaga yaslanma payi (`7c3a3f7`) |
+
+### 22.4 360 derece (surekli donus) servo yanlis parcaydi
+
+Kullanicinin ilk aldigi servo **surekli donus (360)** modeliydi. Bu servoda
+darbe genisligi **konum degil HIZ** demektir:
+
+  - 1500 us civari = dur, altinda bir yone, ustunde diger yone doner
+  - **Konum kavrami yoktur** — "30 derece git gel" ancak "su kadar sure don"
+    ile taklit edilir, ve sure/gerilim/yuk degistikce **konum kayar**
+
+Kullanicinin gozlemi tam olarak buydu: "bazen az cekilip kaliyor, geri
+salmiyor; birkac kez yaptigimda baslangic yerinde degil." Sebep servonun
+tipiydi, kodun hatasi degildi. `FIRE_SERVO_MODE = 'hiz'` bu servo icin
+yazildi ve calisti, ama **tekrar edilebilirligi dusuktu**.
+
+**Cozum: standart 180 derece servoya gecildi** (`732707f`). O servoda darbe
+genisligi = **konum**; servo her komutta ayni aciya gidip orada TUTAR, yani
+konum kaymasi **yapisal olarak imkansiz**. `FIRE_SERVO_MODE = 'konum'`.
+Kod degisikligi gerekmedi — iki mod da zaten yazilmisti, yalnizca sabit
+degisti.
+
+### 22.5 Guncel (sahada calisan) ayarlar
+
+```python
+FIRE_SERVO_MODE   = 'konum'
+FIRE_SERVO_PIN    = 12
+FIRE_SERVO_REST_US = 1600      # tetik serbest   (99.0 derece)
+FIRE_SERVO_PULL_US =  833      # tetik cekili    (75.0 derece)  -> strok ~69 derece
+FIRE_SERVO_LEG_SEC = 0.20      # tek yon hareket suresi
+FIRE_SERVO_CYCLES  = 1
+FIRE_SERVO_FREQ    = 50
+```
+
+**"Dinlenme neden 1500 degil?"** — 1500 us servonun kendi orta noktasidir;
+tetigin nerede serbest kaldigiyla **ilgisi yoktur**. Dogru deger montaj
+geometrisine baglidir (kol boyu, takilma acisi, tetik stroku). Bu sistemde
+tetik 1600'de tam serbest kaliyor, 1500'de hala hafif cekili duruyordu.
+1600 dogru degerdir.
+
+**Mekanik sinira pay:** 500-2500 us araliginda PULL tarafinda 75 derece,
+REST tarafinda 81 derece bos pay var — servo hicbir konumda sinira
+dayanmiyor. Dayanmak surekli tork demektir, servoyu isitip dislisini
+asindirir.
+
+**`FIRE_CONFIRM_DELAY_SEC` 0.4 -> 0.6** bu dalda buyutuldu: tetik artik
+mekanik cekiliyor ve mermi roleye gore ~0.2 sn (`FIRE_SERVO_LEG_SEC`) daha
+gec cikiyor; patlama penceresi bu gecikmeyi de kapsamali. **Role moduna
+donulurse 0.4'e cekilmeli.**
+
+### 22.6 Besleme uyarisi (acik konu)
+
+Servo su an **Pi 5'in 5V pininden** besleniyor. MG996R sinifi bir servo
+kalkista 1-2 A cekebilir; Pi'nin 5V pini bunu garanti etmez. Belirtisi
+kullanicinin da yasadigi turden davranistir: servo aciya varamadan komut
+biter, tetik yarim cekili kalir. **Onerilen: servoya ayri 5-6 V besleme,
+GND Pi ile ortak.** Enkoder (50 mA) icin Pi 5V yeterlidir, servo icin
+degildir.
+
+### 22.7 `servo_tani.py` (yeni tanilama araci)
+
+Pi'de tek basina calisan, `motor_fire_module`'a dokunmadan servoyu deneme
+araci. Tek tus girisi (Enter gerekmez):
+
+| tus | is |
+|---|---|
+| `x` | tani: gpiochip, pin, mod, mevcut ayarlar |
+| `k` | notr (DUR) kalibrasyonu — surekli donus servosu icin |
+| yon tuslari | konum/hiz komutu ver |
+
+Saha kalibrasyonu bu araclarla yapildi. Servo ayarlari degisecekse **once
+bu arac** kullanilmali, `motor_fire_module` sonra guncellenmeli.
+
+## 23. Gorev Kabiliyet Gosterimi videosu konusma metni (`734b3db`)
+
+Sartname (`2026 Sartname TR v1.5`, madde 2.4.4.1) yedi yetenek istiyor.
+`VIDEO_KONUSMA_METNI.md` bu yediyi **sirasiyla ve eksiksiz** karsilayan
+konusma metnini icerir.
+
+| yetenek | icerik |
+|---|---|
+| 1 | Arayuz tum fonksiyonlariyla anlatilir (entegre sistem uzerinden — pozitif degerlendiriliyor) |
+| 2 | Duragan halde 15 m'deki balonun patlatilmasi |
+| 3 | Iki eksende hareket ederken Acil Durdur |
+| 4 | Ates ederken Acil Durdur |
+| 5 | Iki eksende hareket eden hedefin takibi |
+| 6 | 5/10/15 m'de tespit + siniflandirma (F16, Mini/Micro IHA, Fuze, Helikopter) |
+| 7 (ops.) | 10 m'de 1 kirmizi + 2 mavi; otonom imha, 10 sn bekle, Acil Durdur, 10 sn bekle, kapat |
+
+Belgede ayrica: **4:30-4:50 hedef sure** (sartname siniri en az 2, en fazla
+5 dakika), zaman damgali **YouTube aciklamasi** (aciklamada gosterim
+noktalarinin belirtilmesi zorunlu) ve cekim oncesi **kontrol listesi** var.
+
+Sartnamenin atlanmamasi gereken maddeleri: en az 720p, **tek** video,
+**yalnizca YouTube** ("Liste disi" yuklenebilir), yetenekler **belirtilen
+sirayla** ve videonun ilgili kisminda **kacinci yetenek oldugu yazili**
+olmali. Link T3 KYS formuna eklenir; **linkte sorun olursa takim elenir.**
+
+## 24. Taret donus hizlari: nereden ayarlanir (`197793c`)
+
+Kullanicinin sorusu: "otonom modlarda hiz hic degismeden sadece manuel modda
+butonlarla kontrolde donus hizlarini nerden ayarliyorum."
+
+**Cevap: manuel ve otonom AYNI dort sabiti paylasir.** Ikisi
+`motor_fire_module.py` icindeki tek bir darbe motorunu kullanir; sadece
+manuel icin ayri bir hiz ayari **yoktur**.
+
+```python
+MIN_DELAY  = 0.00040   # en yuksek hiz  (darbeler arasi YARIM periyot)
+MAX_DELAY  = 0.0015    # kalkis ve durus hizi
+ACCEL_STEP = 0.00003   # hizlanma ivmesi
+DECEL_STEP = 0.00008   # frenleme ivmesi
+```
+
+`MIN_DELAY` **kucultmek hizlandirir**, buyutmek yavaslatir (yarim periyot).
+Rampa zorunludur: CS-M22323 (NEMA23) rotor ataleti yuksek, sabit hizda
+kalkis adim kacirir.
+
+Otonom tarafta **ek** bir tavan var: `SERVO_MAX_DEG_PER_SEC`. Gercek otonom
+hiz **ikisinin kucugudur**.
+
+### 24.1 Sahada yapilan dusurme (kullanici olcumu)
+
+| sabit | onceki | **guncel** | etkisi |
+|---|---|---|---|
+| `MIN_DELAY` | 0.00015 | **0.00040** | darbe tavani 3333 -> **1250** darbe/sn |
+| `SERVO_MAX_DEG_PER_SEC` | 100.0 | **50.0** | otonom yazilim tavani |
+
+Ortaya cikan gercek hizlar (`STEPS_PER_DEGREE_YAW = 26.667`,
+`STEPS_PER_DEGREE_PITCH = 44.444`):
+
+| eksen | onceki tepe | **guncel tepe** | baglayan |
+|---|---|---|---|
+| yaw | 125 der/sn | **46.9 der/sn** | **DONANIM** (MIN_DELAY) |
+| pitch | 75 der/sn | **28.1 der/sn** | donanim |
+
+**Dikkat edilecek nokta:** `MIN_DELAY` 0.00040'a cekilince yaw'da donanim
+tavani (46.9) yazilim sinirinin (50) **ALTINA** dustu — yani
+`SERVO_MAX_DEG_PER_SEC` yaw'da artik **baglayici degil**. Hatali bir durum
+degildir, ama yaw'i hizlandirmak icin `SERVO_MAX_DEG_PER_SEC`'i buyutmek
+**hicbir sey yapmaz**; `MIN_DELAY` kucultulmelidir.
+
+Testteki "yaw tam hizina cikabiliyor" kontrolu iki tavanin esit olmasini
+varsayiyordu; gercek degismezi (**ikisinin kucugu**) olcecek sekilde
+guncellendi. Devir teslim butcesi hala geciyor: pitch'te 20 derece /
+28.1 = **0.71 sn** < `ENGAGE_SLEW_TIMEOUT`/2.
+
+### 24.2 Ayni committeki tetik ayarlari
+
+`FIRE_SERVO_PULL_US` 933 -> **833** (REST 1600 ile strok ~69 derece),
+`FIRE_SERVO_LEG_SEC` 0.28 -> **0.20**. MG996R katalogunda 69 derece
+~0.20 sn eder, yani **tam sinirda**; sahada sorunsuz calisiyor ama gerilim
+sarkarsa (bkz. 22.6) servo aciya varmadan sonraki komut gelir. **Tetik yarim
+cekili kalirsa ilk bakilacak yer burasidir** — 0.24'e cikarilir.
+
+## 25. Yaw enkoder entegrasyonu — plan (`ENKODER_ENTEGRASYON.md`)
+
+**Sorun:** yaw eksenindeki 1:3 dislide asinmadan kaynakli **bosluk** var.
+Olcum: yaw kalinti **10.7 px RMS**, pitch **0.9 px**. Pitch'te direkt tahrik
++ 1:5 planet reduktor oldugu icin sorun yok; **pitch'e dokunulmayacak.**
+
+**Donanim:** Wachendorff **WDGA 36A** mutlak CANopen enkoder
+(CiA 301 / CiA 406 V3.2 class C2). Siparis kodundaki `12` = **12 bit
+singleturn** (4096 adim/tur), `00` = **multiturn YOK**. Donusturucu
+Waveshare **USB-CAN-A** (CH340, `/dev/ttyUSB0`). Baglanti M12 5-pin:
+`1 Vcc` · `2 GND` · `3 CAN_H` · `4 CAN_L` · `5 CAN_GND`. Enkoderde dahili
+120 ohm sonlandirma **yok** (siparis kodunda `AEO` yok), bu yuzden
+Waveshare uzerindeki anahtar **ON** olmali.
+
+| olcu | deger |
+|---|---|
+| enkoder adimi | 0.0879 der |
+| 1:3 disli ile taret | 0.0293 der |
+| kamera | 0.0143 der/piksel -> **enkoder 2 kat kaba** |
+| olculecek bosluk | ~0.153 der -> enkoder 5 adimda gorur |
+| taret araligi | +-90 der -> enkoder **+-270 der** -> **SARMA VAR** |
+
+**Iki kritik risk:**
+
+1. **Sarma takibi.** Multiturn olmadigi icin enkoder 360'ta sifirlanir;
+   taret +-90 derece donunce enkoder 1.5 tur doner. 180 derece esikli
+   unwrapping gerekir (pay 48 kat, guvenli). **Guc kesilince tur sayaci
+   sifirlanir** — bilinen konumda referans alma proseduru sart.
+2. **`HUNTER_DPP_YAW = 0.01430` GERI ALINACAK.** Bu deger su an boslugu
+   telafi etmek icin **kasten** pitch olceginden kaydirilmis durumda
+   (pitch -0.01360). Enkoder gercek aciyi verdiginde **cifte duzeltme**
+   yapar. Bu adim (`ENKODER_ENTEGRASYON.md` Faz 5.1) **atlanamaz**;
+   unutulursa sistem bozulur.
+
+**Yol haritasi 8 fazdir** ve tam sirali kontrol listesi
+`ENKODER_ENTEGRASYON.md` dosyasindadir: FAZ 0 donanim -> FAZ 1 CAN hatti
+dogrulama -> FAZ 2 enkoderi tani (`0x6501`, `0x6502`, 16 bit denemesi,
+PDO 10 ms) -> FAZ 3 **sadece oku ve goster** -> FAZ 4 boslugu olc ->
+FAZ 5 telafi -> FAZ 6 kapali dongu (opsiyonel) -> FAZ 7 saglamlastirma.
+
+**Tasarim karari — asamali gecis.** FAZ 3'un sonunda sistem **aynen eskisi
+gibi** calisir; enkoder yalnizca ekranda gorunur
+(`Yaw 12.3 der (enk 12.1, fark 0.2)`). Veriye guvenmeden once onu izlemek
+icin. `get_current_angles()` ancak FAZ 6'da enkodere baglanir ve o faz
+**opsiyoneldir**: FAZ 5'teki ileri besleme telafisi yeterliyse hic
+gerekmeyebilir. Sistemde zaten ~185 ms olu zaman ve 2.2-3.2 Hz rezonans var;
+enkoder gecikmesi eklenince kararlilik bozulabilir.
+
+**Guncel durum (2026-09-02):** enkodere **henuz guc verilmedi**, montaj
+yapilmadi. USB donusturucu takildi, `/dev/ttyUSB0` gorundu, `slcand` ile
+`can0` arayuzu **olustu** (`UP`, `ERROR-ACTIVE`) — ama hatta **gercek CAN
+trafigi henuz dogrulanmadi**. `bitrate 0` gorunmesi normaldir; slcan'de hizi
+`slcand`'in `-s6` parametresi belirler, cekirdek bilmez. Sonraki adim:
+**FAZ 0.1**.
+
+## 26. Guncel durum ozeti (2026-09-02)
+
+### Dallar
+
+| dal | icerik | durum |
+|---|---|---|
+| `main` | — | geride |
+| `motor-cs-d508-port` | onceki calisan surum | guvenli geri donus noktasi |
+| **`servo-tetik`** | servo tetik + saha hizlari + enkoder plani | **aktif** |
+| `enkoder-yaw` | enkoder isi burada yapilacak | **henuz acilmadi** |
+
+### Testler
+
+`tests_yeni_mimari.py` — **tum testler geciyor** (17 bolum). Enkoder icin
+yeni bolum FAZ 7.1'de eklenecek.
+
+### Acik konular
+
+1. **Servo beslemesi** — Pi 5V pininden besleniyor, ayri besleme onerilir
+   (bkz. 22.6). Tetik guvenilirligini dogrudan etkiler.
+2. **Enkoder** — guc/montaj bekliyor, CAN trafigi dogrulanmadi (bkz. 25).
+3. **`HUNTER_DPP_YAW` trimi** — enkoder devreye girerken geri alinmali.
+4. **`denemePro.py`** — depoya alinmadi, karar bekliyor.
+5. **`convert_to_engine.py` / `convert_to_onnx.py`** — model cozunurlugu
+   608x1056 -> **736x1280** guncellendi (yeni `yeniDATA1280` modeli) ama
+   dosyalarda **mutlak yerel yol** var; depoya alinmadan once yol
+   parametrelestirilmeli.
+6. Belgede **15. bolum yoktur** (numaralandirma atlamasi, icerik eksigi
+   degil).
+
+### Sahada yapilacak ilk uc is
+
+1. Servoya ayri besleme cek, tetigi 20-30 atis boyunca dogrula.
+2. Gorev kabiliyet gosterimi videosunu cek
+   (`VIDEO_KONUSMA_METNI.md` kontrol listesiyle).
+3. Enkoderi besle ve `ENKODER_ENTEGRASYON.md` FAZ 0 -> FAZ 1'i yurut.
