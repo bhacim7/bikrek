@@ -1,10 +1,10 @@
 # BUKREK Hava Savunma Sistemi — Proje Durumu ve Devir Belgesi
 
 > Bu belge, bir oturum boyunca yapılan tüm çalışmanın özetidir. Yeni bir
-> konuşmada bağlam olarak paylaşılabilir. **Son güncelleme: 2026-09-02.**
+> konuşmada bağlam olarak paylaşılabilir. **Son güncelleme: 2026-09-08.**
 >
-> **En güncel durum için önce en sondaki 26. bölümü ("Güncel durum özeti")
-> okuyun**, sonra 19-25. bölümleri. Belge kronolojik büyüyor; aşağıdaki eski
+> **En güncel durum için önce 27. bölümü (yaw enkoderi, dal `enkoder-yaw`) ve
+> 26. bölümü ("Güncel durum özeti") okuyun**, sonra 19-25. bölümleri. Belge kronolojik büyüyor; aşağıdaki eski
 > bölümlerde geçen bazı sayılar sonraki bölümlerde güncellendi. Özellikle
 > 17. bölüm HATALIDIR (18. bölüme bakın).
 >
@@ -2395,3 +2395,109 @@ yeni bolum FAZ 7.1'de eklenecek.
 2. Gorev kabiliyet gosterimi videosunu cek
    (`VIDEO_KONUSMA_METNI.md` kontrol listesiyle).
 3. Enkoderi besle ve `ENKODER_ENTEGRASYON.md` FAZ 0 -> FAZ 1'i yurut.
+
+
+## 27. Yaw enkoderi: FAZ 0'dan FAZ 5'e (2026-09-07 .. 2026-09-08, dal `enkoder-yaw`)
+
+Tam sirali kontrol listesi ve olculen degerler `ENKODER_ENTEGRASYON.md`'de;
+burasi ozet ve karar kaydidir.
+
+### 27.1 Donanim ve okuma yolu (FAZ 0-2)
+
+| | sonuc |
+|---|---|
+| enkoder | Wachendorff WDGA 36A CANopen, dugum 127, 12 V harici besleme |
+| donusturucu | Waveshare USB-CAN-A. **slcan CALISMIYOR** (arayuz kurulur, tele hicbir sey cikmaz); **python-can seeedstudio da cikmadi**. Calisan tek yol cihazin **kendi seri protokolu** (`encoder_module.py`) |
+| bit hizi | **250 k sabit** (500k'da hata; otomatik algilama yok). Kirmizi hizli titreme = "gecerli cerceve gormuyorum" |
+| cozunurluk | fiziksel **14 bit** (0x6501 = 16384; siparis kodundaki "12" cikis olcegiymis). 0x6001/0x6002 = 16384, preset 8192 yazilip `save` edildi, guc kesintisini atlatti |
+| PDO | TPDO1 (her degisimde) kapatildi, hatti boguyordu. Konum SYNC-tetiklemeli TPDO2'den, 100 Hz |
+| oran | kasnak ~1:2 (1:3 sanilmisti). **R = 2.0** -> 91.0 sayim/derece, 0.011 derece/sayim |
+| yon | yaw + komutunda sayim artiyor (`ENCODER_INVERT = False`) |
+| sarma | bir enkoder turu = 180 derece taret; taret +-90'da ham 0<->16383 sarar, kod cozer. Sunucu taret +-90 icindeyken baslamali |
+
+Yasanan tuzaklar: eski `slcand` sureci portu tutuyordu (`write: I/O error`);
+otomatik bit hizi icin bizim cerceve gondermemiz gerektigi sanildi, aslinda
+hiz sabitti; multimetre 100 us'lik CAN darbelerini goremez (adaptor
+testi icin anlamsiz).
+
+### 27.2 Mekanik olcum (FAZ 4) — asil bulgu
+
+`config.ENCODER_LOG` ile adim sayaci ve enkoder yan yana kaydedildi;
+`enkoder_analiz.py` duruslari bulup `enk = a x sayac + b_yon` modelini cozdu
+(0 -> +60 -> -62, 10'ar derece, 20 durus):
+
+| | deger | anlami |
+|---|---|---|
+| **olcek a** | **0.997** | R = 2 dogru; olcek sorunu yok |
+| **bosluk** | **1.49 derece** | yon degisiminde taret komutu gec izliyor |
+| **kacirma** | **0.46 derece RMS, max 1.0** | rastgele; olculup telafi EDILEMEZ |
+| sabit kayma | +1.2 derece | sifirlamadan sonraki ilk hareketle geliyor, kalici |
+
+Adim sayaci kosu boyunca gercegi **0.7-3.6 derece** yanlis biliyordu. Elle
+sallama testinde 105 sayim (4.8 derece) serbest oynama goruldu ama 5
+derecelik motor adimlarinda yon donusu kisa gelmedi -> o oynama motor->taret
+dislisinde degil; yeri bulunamadi (kapali govde). Kutup atlatma testi
+(taret elle 50-60 derece zorlandi) motor 1:3 oranini ve 21.8 sayim/dereceyi
+bagimsiz dogruladi; ayrica gosterdi ki elle zorlanan taret adim sayacinin
+gercegi kaybetmesine yol acar.
+
+### 27.3 Karar: "olc, ileri besle" yerine "durunca hizala" (FAZ 5')
+
+Rastgele 0.46 derecelik kisim ileri beslemeyle duzelmez; sadece gercek
+aciya kapanan bir dongu duzeltir. "Direkt enkoderden oku" ise zamanlama
+yuzunden reddedildi: servo 0.4-1.5 ms'de bir adim atiyor, enkoder 10 ms'de
+bir ornek veriyor; 47 derece/sn'de 0.5 derece bayat okuma = salinim. Ve 1.5
+derecelik boslukta hedef etrafinda kapali dongu geri donus limit cevrimi
+uretir.
+
+Uygulanan (`motor_fire_module.enkoder_hizala`, sunucudan 50 Hz):
+
+1. taret **duruyorken** (0.15 sn adim yok; servo/manuel/bloklayan hareket
+   yok) adim sayaci := enkoder. Fark < 0.05: dokunma. Fark > 10: supheli,
+   uygulanmaz, uyari.
+2. o an gecerli bir **otonom** hedef varsa ve kalan > 0.10 derece: servo
+   tekrar acilir, kucuk duzeltme hareketi; hedef basina en fazla 3.
+3. manuel surus / reset / stop hedefi gecersiz kilar: yalnizca sayac duzelir.
+4. hareket SIRASINDA hicbir sey degismez. Takipte taret nadiren durdugu icin
+   **takip davranisi aynidir**.
+5. `ENCODER_REST_SNAP = False` -> FAZ 3 (yalnizca goster).
+
+### 27.4 Etkileri
+
+| durum | onceki | simdiki |
+|---|---|---|
+| gozcuden hedefe yonelme | 1.5-3 derece eksik/fazla varir, PID toparlar | 0.1 derece icinde varir; +0.2-0.4 sn (bekleme + kucuk hareket), PID'nin isi azalir |
+| kara liste / atessiz bolge / ana konum | 3 dereceye kadar kayik acilarla | gercek aci |
+| gorsel kilit (PID) | piksel | piksel, degismedi |
+| kilitte yon degisimindeki 1.5 derece olu bolge | PID icinde saliniyor | **DEGISMEDI** — FAZ 6 |
+| enkoder yok / dustu | — | hicbir sey olmaz, `enk: YOK`, adim sayaciyla devam |
+
+`HUNTER_DPP_YAW = 0.01430` trimi bu fazda geri alinmadi: trim hareket
+halinde calisir, hizalama durusta; cifte duzeltme yok. FAZ 6'da geri
+alinacak.
+
+### 27.5 Sahada dogrulama (yapilacak)
+
+- ekrandaki delta taret her durdugunda 0.00'a cekilmeli
+- otonom yonelmede varistan sonra ufak "ikinci hareket" gorulmeli
+- kayit acik kalsin; `enkoder_analiz` ile bosluk/kacirma artiginin sifira
+  indigi gorulsun
+- kabloyu cek: `enk: YOK` + uyari, sistem bozulmadan devam; tak: geri gelsin
+
+### 27.6 Sonrasi (FAZ 6, yalnizca kilitteki salinim rahatsiz ediyorsa)
+
+Hareket halinde, son yaklasimda (kalan < 2-3 derece) enkodere kapali dongu.
+Sart: hedefe hep ayni yonden yaklas, asinca geri donme (boslukta geri donus
+limit cevrimi). Once `HUNTER_DPP_YAW` pitch olcegine geri alinacak (cifte
+duzeltme). Girdi olarak FAZ 5' kayitlari kullanilacak: delta artik her
+durusta, yon yon, konum konum olculuyor.
+
+### 27.7 Dosyalar
+
+`encoder_module.py` (yeni), `enkoder_analiz.py` (yeni), `motor_fire_module.py`
+(ENCODER_* sabitleri, `enkoder_hizala`), `rpi_motor_server.py`,
+`rpi_communicator.py`, `bukrek_main.py` (panelde `enk +12.10 (delta -0.20)`,
+CSV kaydi), `config.py` (`ENCODER_LOG`), testler 18-19. bolum (47 kontrol).
+Gecici Pi betikleri (`~/enk_ham.py`, `~/enk_sdo.py`, `~/enk_olc.py`,
+`~/enk_seg.py`, `~/enk_ayar.py`) depoda degil; islevleri `encoder_module`'e
+tasindi.
