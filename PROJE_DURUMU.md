@@ -1,7 +1,7 @@
 # BUKREK Hava Savunma Sistemi — Proje Durumu ve Devir Belgesi
 
 > Bu belge, bir oturum boyunca yapılan tüm çalışmanın özetidir. Yeni bir
-> konuşmada bağlam olarak paylaşılabilir. **Son güncelleme: 2026-09-08.**
+> konuşmada bağlam olarak paylaşılabilir. **Son güncelleme: 2026-09-09.**
 >
 > **En güncel durum için önce 27. bölümü (yaw enkoderi, dal `enkoder-yaw`) ve
 > 26. bölümü ("Güncel durum özeti") okuyun**, sonra 19-25. bölümleri. Belge kronolojik büyüyor; aşağıdaki eski
@@ -2472,9 +2472,9 @@ Uygulanan (`motor_fire_module.enkoder_hizala`, sunucudan 50 Hz):
 | kilitte yon degisimindeki 1.5 derece olu bolge | PID icinde saliniyor | **DEGISMEDI** — FAZ 6 |
 | enkoder yok / dustu | — | hicbir sey olmaz, `enk: YOK`, adim sayaciyla devam |
 
-`HUNTER_DPP_YAW = 0.01430` trimi bu fazda geri alinmadi: trim hareket
-halinde calisir, hizalama durusta; cifte duzeltme yok. FAZ 6'da geri
-alinacak.
+`HUNTER_DPP_YAW = 0.01430` trimi bu fazda geri alinmadi. **Bu karar 27.8'de
+duzeltildi:** trim tek atimlik komutlarda (tiklama, gozcuden yonelme) artik
+%5 fazlalik uretiyor; uzakta yeniden olculup pitch olcegine cekilecek.
 
 ### 27.5 Sahada dogrulama (yapilacak)
 
@@ -2501,3 +2501,75 @@ CSV kaydi), `config.py` (`ENCODER_LOG`), testler 18-19. bolum (47 kontrol).
 Gecici Pi betikleri (`~/enk_ham.py`, `~/enk_sdo.py`, `~/enk_olc.py`,
 `~/enk_seg.py`, `~/enk_ayar.py`) depoda degil; islevleri `encoder_module`'e
 tasindi.
+
+### 27.8 Saha dogrulamasi: tiklayarak nisan videosu (2026-09-08, `enkoderManuelDeneme.mp4`)
+
+23 saniyelik ekran kaydi kare kare cozumlendi (bilgi satirindaki Yaw/enk
+0.5 sn'de bir okundu; her tiklamada tiklanan noktanin sablonu alinip hareket
+sonrasi karede nereye dustugu olculdu). Hedef ~50 cm'deki priz.
+
+**Hizalama calisiyor.** 10 tiklamanin 8'inde taret komut edilen aciya
+0.05 derece icinde oturdu; "ikinci hareket" videoda net (delta once +0.2..0.4,
+yarim saniye sonra 0.00). Iki tiklamada (0.29 ve 0.16 derece kalinti)
+0.2-0.3 derecelik duzeltme hareketi (6-8 motor adimi) tareti hic oynatmadi:
+surtunme, motor disliyi gerdi ama taret kopmadi (FAZ 4'teki "1 derece
+adimlarin %40-80'i geciyor" bulgusuyla ayni). Uc denemeden sonra pes edildi.
+
+**Ama nisangah tiklanan delige oturmuyor — sebep enkoder DEGIL, mesafe.**
+Sekiz tiklamada, iki yonde de, goruntu tiklanan mesafenin **1.21-1.33 kati**
+kaydi (ort. 1.29): nisangah deligi gecip 60-90 px otede duruyor. Sistematik.
+Taret istenen aciya gitti (enkoder dogruluyor), yani istenen acinin kendisi
+%30 fazla. Iki bilesen:
+
+- **Paralaks (~%23):** kamera donus ekseninin ~10 cm disinda. Taret donerken
+  kamera yana da kayiyor; 50 cm'deki hedefte bu ek goruntu kaymasi acinin
+  dortte biri. 15 m'de ayni etki %0.7, yok sayilir. Piksel->derece donusumu
+  uzak hedef icin dogru; 50 cm'de yanlis olmasi normal. **Bu test yakin
+  mesafede yapilamaz.**
+- **`HUNTER_DPP_YAW` trimi (%5):** deger bosluk telafisi icin kasten pitch'ten
+  %5 buyuk tutuluyordu. Hizalama komut edilen aciya gercekten vardirdigi icin
+  bu %5 tek atimlik komutlarda fazlalik oldu. 27.4'teki "FAZ 6'ya kalsin"
+  karari yanlisti; uzakta `Derece/Piksel Olc` ile yeniden olculup (hizalama
+  sayesinde artik GERCEK derece/piksel cikar, pitch'in 0.0136'sina yakin
+  beklenir) config'e yazilacak.
+
+Kod degisikligi yapilmadi. Sonraki adimlar bu belgede degil, is listesinde
+(kullanici istegi).
+
+## 28. Dataset ve egitim: v16 analizi ve kararlar (2026-09-03 .. 09-08)
+
+Tam analiz `DATASET_ANALIZ.md`'de; burasi karar kaydi.
+
+**Analiz edilen:** Roboflow HSS v16 (12 890 goruntu), `yy2.py`, mevcut
+`.pt`/`.onnx` modellerin egitim argumanlari, `ultralytics 8.4.123` kaynak kodu.
+
+**Dogrulanan bulgular:**
+- `rect=True`, ultralytics'te mosaic/mixup'i ve DataLoader shuffle'ini
+  kapatiyor (`dataset.py:314`, `train.py:95`); `yeniDATA1280.pt` icindeki
+  `train_args` bunu gosteriyor (`mosaic: 0.0`). `copy_paste` kutu etiketiyle,
+  `erasing` detect gorevinde etkisiz. Betikteki yorumlar RoboBoat projesinden
+  kopya.
+- Balon kutu genisligi medyan 32 px / p10 21 px (1920'de). 1056 giriste
+  11.5 px'e iniyor (stride-8 siniri); 1280 ile deploy uyumu saglandi.
+- `data.yaml` 7 sinif (`dusman-Helikopter` eklendi); `config.CLASSES` 6.
+  **Yeni model deploy edilmeden `CLASSES`'a 7. sinif eklenmeli**, yoksa
+  dusman helikopter `Unknown` olarak sessizce duser.
+- ONNX cikisi `[1, 4+nc, N]` (YOLO26'nin ucta-uca basi export'ta kullanilmiyor);
+  `_postprocess` ile uyumlu, 7 sinifta `[1, 11, N]` olur, kod `4:` dilimlediginden
+  kendiliginden uyar.
+- Yaprak/bitki fotograflarindan olusan arka plan seti sahayla ilgisiz;
+  negatifler avci kamerasindan gelmeli.
+
+**Kullanicinin kararlari (uygulandi):**
+- `rect=True` **korunuyor** (16:9 tercih, mosaic'siz). Bilinen bedeli: mosaic
+  ve shuffle kapali, `mosaic`/`close_mosaic` satirlari etkisiz.
+- Split videoya gore kullanici tarafindan yapilmis; ayni dosya adli kareler
+  farkli arka planli (`masked-bg`) versiyonlar. Analizdeki "birebir ayni
+  dosya" ifadesi dosya adina bakilarak yazilmisti, **yanlisti**.
+- Roboflow x2 (x3 yerine), test seti train'e katildi: train 5 831 / valid
+  2 620 kaynak kare. Valid yuzdesinin x2 sonrasi kucuk gorunmesi kozmetik.
+- `imgsz=1280`; egitim baska PC'de (24 GB), 63. epoch'ta mAP50 0.98 /
+  mAP50-95 0.771, plato; kosinus kuyrugundan +1-3 puan bekleniyor.
+- Bekleyen: Roboflow'da `Resize 1280x720 Stretch` ve motion blur 10 -> 5 px
+  (yeni versiyonda), `hsv_s/v` acilmasi, `degrees=0`, `cache='ram'`
+  KULLANILMAYACAK (12k kare 1280'de ~33 GB RAM, PC kapandi).

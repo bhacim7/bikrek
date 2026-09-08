@@ -110,7 +110,7 @@ taret aralığı            ±90°  ->  enkoder ±270°  -> SARMA VAR, tur takib
 - [x] **3.5** PC tarafı `bukrek_main.py`: bilgi paneline enkoder açısını ve **farkı** yaz:
       `Yaw 12.3° (enk 12.1°, Δ0.2°)`
 - [x] **3.6** Enkoder düşerse durum çubuğunda uyar
-- [ ] **3.7** **Sahada doğrula:** tareti elle sağa-sola sür, iki açı birlikte hareket
+- [x] **3.7** (yön/ölçek doğrulandı, Δ duruşta 0.00) **Sahada doğrula:** tareti elle sağa-sola sür, iki açı birlikte hareket
       ediyor mu, yön doğru mu (`ENCODER_INVERT` gerekebilir), ölçek doğru mu
 
 ## FAZ 4 — BOŞLUĞU ÖLÇ — YAPILDI (2026-09-08)
@@ -149,9 +149,19 @@ düzelmediği için yerine **enkodere hizalama** kondu:
 Sunucu yanıtına `encoder_snap_n` / `encoder_snap_last` eklendi. Testler:
 19. bölüm (22 kontrol).
 
-**5.1 (`HUNTER_DPP_YAW` trimi) BU FAZDA GERİ ALINMADI.** Trim görsel kilit
-sırasında (hareket halinde) çalışıyor; hizalama ise yalnızca duruşta. Çifte
-düzeltme yok. Trim FAZ 6'da (hareket halinde kapalı döngü) geri alınacak.
+**5.1 (`HUNTER_DPP_YAW` trimi) — KARAR DEĞİŞTİ (2026-09-09).** İlk karar
+"FAZ 6'ya kalsın" idi. Saha videosu gösterdi ki trim tek atımlık komutlarda
+(tıklama, gözcüden yönelme) %5 fazlalık üretiyor: hizalama komut edilen açıya
+gerçekten vardırıyor, trim ise artık olmayan bir eksikliği telafi ediyor.
+Uzakta (≥5 m) `Derece/Piksel Ölç` tekrarlanıp çıkan değer yazılacak (pitch'in
+0.0136'sına yakın beklenir).
+
+**Saha doğrulaması (2026-09-08, tıklayarak nişan, 10 tıklama, ~50 cm):**
+8/10 tıklamada taret komut edilen açıya 0.05° içinde oturdu, ikinci hareket
+görüldü. 2 tıklamada 0.2–0.3°'lik düzeltme hareketi tareti kımıldatamadı
+(sürtünme), kalıntı 0.16 / 0.29°. Nişangahın tıklanan noktayı ~%30 geçmesi
+**paralaks** (kamera eksen dışı, 50 cm'de %23) + trim (%5); 15 m'de paralaks
+%0.7. Ayrıntı: `PROJE_DURUMU.md` 27.8.
 
 **Etkisi:** yönelme sonunda taret gözcünün verdiği açıya 0.1° içinde oturur
 (eskiden 1.5–3° eksik/fazla); kara liste, ateşsiz bölge, ana konum gerçek
@@ -169,6 +179,7 @@ kalsın, `enkoder_analiz` ile boşluk/kaçırma artığının sıfıra indiği g
 > hiç gerek olmayabilir.
 
 - [ ] **6.0** `HUNTER_DPP_YAW = 0.01430` → pitch ölçeğine GERİ AL (FAZ 5.1 buraya taşındı; kapalı döngüyle çifte düzeltme olur)
+- [ ] **5''** düzeltme hareketi enkoderde hareket üretmezse: 2° geri çekil, aynı yönden tekrar yaklaş (sürtünme + boşluk tek yönden alınır)
 - [ ] **6.1** son yaklaşımda (kalan < 2–3°) enkodere kapalı döngü; **hedefe hep aynı yönden yaklaş, aşınca geri dönme** (1.5° boşlukta geri dönüş limit çevrimi üretir)
 - [ ] **6.2** PID geri beslemesini gerçek açıya bağla
 - [ ] **6.3** **Gecikme kontrolü:** sistemde zaten ~185 ms ölü zaman var ve
