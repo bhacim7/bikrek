@@ -161,6 +161,26 @@ ENCODER_INVERT = False         # yaw + komutunda sayım ARTIYOR (sahada ölçül
 ENCODER_SYNC_MS = 10           # SYNC periyodu -> TPDO2 100 Hz
 ENCODER_TIMEOUT_SEC = 0.25     # bu süre veri gelmezse "sağlıksız"
 
+# --- FAZ 5': DURUNCA HİZALA ---
+# Sahada ölçüldü (enkoder_analiz, 2026-09-08): ölçek 0.997 (R=2 doğru), yön
+# değişiminde 1.5° boşluk, +0.46° RMS rastgele kaçırma; adım sayacı koşu
+# boyunca gerçeği 0.7-3.6° yanlış biliyordu. Ölçülüp telafi edilemeyen
+# rastgele kısım yüzünden ileri besleme yerine şu yol seçildi:
+#   taret DURUYORKEN adım sayacı enkoder değerine eşitlenir; o an geçerli bir
+#   otonom hedef varsa ve hâlâ uzaksa servo tekrar açılır, küçük bir düzeltme
+#   hareketi yapar (en fazla ENCODER_REENGAGE_MAX tur).
+# Hareket SIRASINDA hiçbir şey değişmez (10 ms'lik enkoder gecikmesi hareket
+# halinde servoyu şaşırtmasın); takipte taret nadiren durduğu için takip
+# davranışı da değişmez. Kilit sırasındaki 1.5°'lik ölü bölge bu adımın
+# konusu DEĞİL; o FAZ 6 (hareket halinde kapalı döngü).
+ENCODER_REST_SNAP = True       # kapatınca: enkoder yalnızca raporlanır (FAZ 3 davranışı)
+ENCODER_REST_SEC = 0.15        # bu süre adım atılmadıysa "duruyor"
+ENCODER_SNAP_MIN_DEG = 0.05    # bundan küçük fark görmezden gelinir (~4.5 sayım)
+ENCODER_SNAP_MAX_DEG = 10.0    # bundan büyük fark şüpheli (sarma/açılış hatası): uygulanmaz, uyarılır
+ENCODER_REENGAGE = True        # hizalama sonrası hedef uzaksa servoyu tekrar aç
+ENCODER_REENGAGE_TOL_DEG = 0.10  # bu kadar yakınsa yeniden yaklaşma yok (~9 sayım)
+ENCODER_REENGAGE_MAX = 3       # hedef başına en fazla bu kadar düzeltme hareketi
+
 # GPIO'nun başarıyla başlatılıp başlatılmadığını gösteren bayrak
 _gpio_initialized = False
 
@@ -171,6 +191,15 @@ _simulated_pitch = 0.0
 
 # Manuel hareket için yön değişkenleri (rpi_motor_server tarafından ayarlanır)
 _yaw_moving_direction = 0  # -1: sol, 0: dur, 1: sağ
+
+# FAZ 5' durumu (bkz. enkoder_hizala)
+_son_adim_zamani = 0.0         # time.monotonic(); son adım darbesi
+_bloklayan_hareket = False     # set_motor_angles / test hareketi sürüyor
+_servo_hedef_gecerli = False   # set_target_angles ile True; manuel/reset/stop ile False
+_yeniden_yaklasma = 0          # bu hedef için yapılan düzeltme hareketi sayısı
+_hizalama_sayisi = 0
+_son_hizalama_farki = 0.0
+_hizalama_uyari_zamani = 0.0
 _pitch_moving_direction = 0  # -1: aşağı, 0: dur, 1: yukarı
 _manual_degrees_to_move = 0.0 # Manuel hareket için her adımda hareket edilecek derece miktarı
 
@@ -600,6 +629,15 @@ def _ramped_step_loop(max_steps, abs_steps_yaw, abs_steps_pitch):
 
 
 def move_steppers_simultaneous(steps_yaw, steps_pitch):
+    # FAZ 5': bloklayan hareket boyunca enkoder hizalamasi askida.
+    _bloklayan_hareket_basla()
+    try:
+        return _move_steppers_simultaneous_ham(steps_yaw, steps_pitch)
+    finally:
+        _bloklayan_hareket_bitti()
+
+
+def _move_steppers_simultaneous_ham(steps_yaw, steps_pitch):
     """
     İki step motoru aynı anda, belirtilen adım sayısı kadar döndürür.
     Bu fonksiyon, control1.py'deki eşzamanlı hareket mantığını kullanır.
@@ -726,6 +764,7 @@ def set_manual_move_direction(yaw_direction, pitch_direction, degrees_to_move):
     # dönmeye çalışır. Servo yalnızca yeni bir hedef komutuyla tekrar devreye girer.
     if yaw_direction != 0 or pitch_direction != 0:
         _servo_active = False
+        _hedefi_gecersiz_kil()
 
     # Yalnızca yön DEĞİŞTİĞİNDE yazdır. Arayüz canlılık komutu gönderdiği için
     # her komutta yazdırmak (üstelik flush ile) SSH üzerinde ciddi yük yaratır.
@@ -778,6 +817,7 @@ def perform_manual_move_step():
         if pitch_aktif:
             _simulated_pitch += _pitch_moving_direction / STEPS_PER_DEGREE_PITCH
             _simulated_pitch = (_simulated_pitch + 180) % 360 - 180
+        _adim_atildi()
         return True
 
     # Yön pinlerini ayarla (yalnızca aktif eksenler için)
@@ -807,6 +847,8 @@ def perform_manual_move_step():
         _simulated_pitch += _pitch_moving_direction / STEPS_PER_DEGREE_PITCH
         _simulated_pitch = (_simulated_pitch + 180) % 360 - 180
 
+    _adim_atildi()
+
     return True
 
 
@@ -820,10 +862,12 @@ def set_target_angles(yaw_angle, pitch_angle):
     hareketi perform_servo_step() ayrı bir döngüde yürütür. Yeni hedef eskisinin
     yerine geçtiği için komut kuyruğu oluşamaz.
     """
-    global _target_yaw, _target_pitch, _servo_active
+    global _target_yaw, _target_pitch, _servo_active, _servo_hedef_gecerli, _yeniden_yaklasma
     _target_yaw = (float(yaw_angle) + 180) % 360 - 180
     _target_pitch = (float(pitch_angle) + 180) % 360 - 180
     _servo_active = True
+    _servo_hedef_gecerli = True
+    _yeniden_yaklasma = 0
 
 
 def perform_servo_step():
@@ -904,6 +948,7 @@ def perform_servo_step():
             _simulated_yaw = (_simulated_yaw + yon_yaw / STEPS_PER_DEGREE_YAW + 180) % 360 - 180
         if pitch_aktif:
             _simulated_pitch = (_simulated_pitch + yon_pitch / STEPS_PER_DEGREE_PITCH + 180) % 360 - 180
+        _adim_atildi()
         return True
 
     if yaw_aktif:
@@ -927,6 +972,8 @@ def perform_servo_step():
         _simulated_yaw = (_simulated_yaw + yon_yaw / STEPS_PER_DEGREE_YAW + 180) % 360 - 180
     if pitch_aktif:
         _simulated_pitch = (_simulated_pitch + yon_pitch / STEPS_PER_DEGREE_PITCH + 180) % 360 - 180
+
+    _adim_atildi()
 
     return True
 
@@ -1084,6 +1131,84 @@ def fire_weapon():
         traceback.print_exc()
 
 
+def _adim_atildi():
+    global _son_adim_zamani
+    _son_adim_zamani = time.monotonic()
+
+
+def _bloklayan_hareket_basla():
+    global _bloklayan_hareket
+    _bloklayan_hareket = True
+
+
+def _bloklayan_hareket_bitti():
+    global _bloklayan_hareket
+    _bloklayan_hareket = False
+    _adim_atildi()
+
+
+def _hedefi_gecersiz_kil():
+    """Manuel sürüş, sıfırlama, durdurma: eski otonom hedefe geri dönülmesin."""
+    global _servo_hedef_gecerli, _yeniden_yaklasma
+    _servo_hedef_gecerli = False
+    _yeniden_yaklasma = 0
+
+
+def taret_duruyor_mu(simdi=None):
+    simdi = time.monotonic() if simdi is None else simdi
+    if _servo_active or _bloklayan_hareket:
+        return False
+    if _yaw_moving_direction != 0 or _pitch_moving_direction != 0:
+        return False
+    return (simdi - _son_adim_zamani) >= ENCODER_REST_SEC
+
+
+def enkoder_hizala(enk_yaw, simdi=None):
+    """
+    FAZ 5': taret duruyorken adım sayacını (yaw) enkoder değerine eşitler.
+    Sunucunun açı döngüsünden (50 Hz) çağrılır; hızlı, bloklamaz.
+
+    Döner: uygulanan fark (derece), 0.0 (fark eşik altı), None (uygulanmadı:
+    hareket var / enkoder yok / fark şüpheli / özellik kapalı).
+
+    Yeniden yaklaşma: hizalama sonrası geçerli otonom hedef hâlâ
+    ENCODER_REENGAGE_TOL_DEG'den uzaksa servo tekrar açılır. Manuel modda
+    hedef geçersiz olduğu için hareket üretmez, yalnızca sayaç düzelir.
+    """
+    global _simulated_yaw, _servo_active, _yeniden_yaklasma
+    global _hizalama_sayisi, _son_hizalama_farki, _hizalama_uyari_zamani
+    if not ENCODER_REST_SNAP or enk_yaw is None:
+        return None
+    simdi = time.monotonic() if simdi is None else simdi
+    if not taret_duruyor_mu(simdi):
+        return None
+    enk = (float(enk_yaw) + 180) % 360 - 180
+    fark = (enk - _simulated_yaw + 180) % 360 - 180
+    if abs(fark) < ENCODER_SNAP_MIN_DEG:
+        return 0.0
+    if abs(fark) > ENCODER_SNAP_MAX_DEG:
+        if simdi - _hizalama_uyari_zamani > 5.0:
+            _hizalama_uyari_zamani = simdi
+            print(f"UYARI (motor_fire_module): enkoder ile adım sayacı arasında {fark:+.1f}° fark; "
+                  f"şüpheli, hizalama YAPILMADI (sarma / açılış konumu?). 'Açıları Sıfırla' gerekebilir.")
+            sys.stdout.flush()
+        return None
+    _simulated_yaw = enk
+    _hizalama_sayisi += 1
+    _son_hizalama_farki = fark
+    if ENCODER_REENGAGE and _servo_hedef_gecerli and _yeniden_yaklasma < ENCODER_REENGAGE_MAX:
+        kalan = (_target_yaw - _simulated_yaw + 180) % 360 - 180
+        if abs(kalan) > ENCODER_REENGAGE_TOL_DEG:
+            _yeniden_yaklasma += 1
+            _servo_active = True
+    return fark
+
+
+def hizalama_durumu():
+    return {"encoder_snap_n": _hizalama_sayisi,
+            "encoder_snap_last": round(_son_hizalama_farki, 3)}
+
+
 def get_current_angles():
     """
     Taretin mevcut yatay (yaw) ve dikey (pitch) açılarını döndürür.
@@ -1111,6 +1236,7 @@ def reset_current_angles():
     _target_yaw = 0.0
     _target_pitch = 0.0
     _servo_active = False
+    _hedefi_gecersiz_kil()
 
     print("DEBUG (motor_fire_module): Taret açıları ve servo hedefi 0.0 olarak sıfırlandı.")
     sys.stdout.flush()
@@ -1320,6 +1446,7 @@ def stop_all_motors():
     Tüm motor hareketlerini durdurur ve motorları devre dışı bırakır.
     Bu fonksiyon acil durdurma durumlarında veya motorların tamamen durdurulması istendiğinde çağrılmalıdır.
     """
+    _hedefi_gecersiz_kil()
     # Step pinlerini LOW yaparak motor adımlarını durdur
     if LGpio and lgh is not None and _gpio_initialized:
         try:
@@ -1339,6 +1466,15 @@ def stop_all_motors():
 
 # YENİ: Doğrudan Yaw motoru testi için fonksiyon
 def test_direct_yaw_movement_steps(steps, direction):
+    # FAZ 5': bloklayan hareket boyunca enkoder hizalamasi askida.
+    _bloklayan_hareket_basla()
+    try:
+        return _test_direct_yaw_movement_steps_ham(steps, direction)
+    finally:
+        _bloklayan_hareket_bitti()
+
+
+def _test_direct_yaw_movement_steps_ham(steps, direction):
     """
     Yaw motorunu doğrudan belirli adım sayısı ve yönde hareket ettirir.
     Bu fonksiyon, kalibrasyon testinden daha temel bir seviyede motoru test etmek içindir.

@@ -113,34 +113,63 @@ taret aralığı            ±90°  ->  enkoder ±270°  -> SARMA VAR, tur takib
 - [ ] **3.7** **Sahada doğrula:** tareti elle sağa-sola sür, iki açı birlikte hareket
       ediyor mu, yön doğru mu (`ENCODER_INVERT` gerekebilir), ölçek doğru mu
 
-## FAZ 4 — BOŞLUĞU ÖLÇ (hâlâ kontrol değişmiyor)
+## FAZ 4 — BOŞLUĞU ÖLÇ — YAPILDI (2026-09-08)
 
-- [ ] **4.1** Ölçüm koşumu: tareti bir yöne sür, durdur, ters yöne sür.
-      Motor komutu ile enkoder açısı arasındaki **gecikme farkı** = boşluk
-- [ ] **4.2** Sağ→sol ve sol→sağ **ayrı ayrı** ölç — simetrik olmayabilir
-- [ ] **4.3** Farklı hızlarda tekrarla (yavaş/hızlı) — boşluk hıza bağlı değişmemeli,
-      değişiyorsa kayma (adım kaçırma) var demektir
-- [ ] **4.4** Ölçüm sonucunu `config.py`'ye yaz: `YAW_BACKLASH_DEG = ___`
-- [ ] **4.5** Kayıt al: video + sayısal log. Karşılaştırma için gerekecek
+Kayıt: `config.ENCODER_LOG=True` → `enkoder_kayit/*.csv`; çözümleme
+`python enkoder_analiz.py <csv>`. Saha koşusu 0 → +60 → −62, 10°'lik adımlar,
+20 duruş:
 
-## FAZ 5 — TELAFİ (ilk gerçek kontrol değişikliği)
+```
+ÖLÇEK    a = 0.997      -> R = 2.0 DOĞRU, ölçek sorunu yok
+BOŞLUK   1.49 derece    -> + yönden gelince Δ ≈ +1.2, − yönden gelince Δ ≈ +2.7
+KAÇIRMA  0.46 derece RMS, max 1.0  -> rastgele, ölçülüp telafi EDİLEMEZ
+sabit    +1.2 derece    -> sıfırlamadan sonraki ilk hareketle geldi, kalıcı
+```
+Adım sayacı koşu boyunca gerçeği 0.7–3.6° yanlış biliyordu.
 
-- [ ] **5.1** `HUNTER_DPP_YAW = 0.01430` **GERİ ALINACAK** → pitch ile aynı ölçeğe.
-      Bu değer şu an boşluğu telafi için kasten kaydırılmış; enkoder gerçek açıyı
-      verince **çifte düzeltme** yapar. **Bu adım unutulursa sistem bozulur.**
-- [ ] **5.2** Yön değişiminde `YAW_BACKLASH_DEG` kadar fazladan adım at
-      (ileri besleme telafisi — basit, düşük riskli)
-- [ ] **5.3** Sahada ölç: kilit salınımı azaldı mı, yaw kalıntısı (10.7 px) düştü mü
-- [ ] **5.4** `Derece/Piksel Ölç` kalibrasyonunu enkoderle tekrarla — artık komut
-      edilen değil **gerçek** açı farkı kullanılabilir, ölçüm çok daha doğru olur
+- [x] 4.1–4.3 ölçüm (tek koşu; hız değişimi denenmedi, gerekirse tekrar)
+- [x] 4.4 sonuç `motor_fire_module` FAZ 5' yorumuna yazıldı
+- [x] 4.5 kayıt `enkoder_kayit/enkoder_20260908_203459.csv` (git dışı)
+
+## FAZ 5' — DURUNCA HİZALA — YAPILDI (2026-09-08)
+
+Plan "ölç, ileri besle" idi; rastgele 0.46°'lik kısım ileri beslemeyle
+düzelmediği için yerine **enkodere hizalama** kondu:
+
+- taret **duruyorken** (ENCODER_REST_SEC = 0.15 sn adım yok, servo/manuel/
+  bloklayan hareket yok) `_simulated_yaw := enkoder`
+- fark < 0.05° → dokunma; fark > 10° → şüpheli, uygulanmaz, uyarı
+- o an geçerli bir **otonom** hedef varsa ve kalan > 0.10° → servo tekrar
+  açılır, düzeltme hareketi; hedef başına en fazla 3
+- manuel sürüş / reset / stop hedefi geçersiz kılar → yalnızca sayaç düzelir
+- hareket SIRASINDA hiçbir şey değişmez; takipte taret nadiren durduğu için
+  takip davranışı aynı
+- `ENCODER_REST_SNAP = False` ile FAZ 3 davranışına dönülür
+
+Sunucu yanıtına `encoder_snap_n` / `encoder_snap_last` eklendi. Testler:
+19. bölüm (22 kontrol).
+
+**5.1 (`HUNTER_DPP_YAW` trimi) BU FAZDA GERİ ALINMADI.** Trim görsel kilit
+sırasında (hareket halinde) çalışıyor; hizalama ise yalnızca duruşta. Çifte
+düzeltme yok. Trim FAZ 6'da (hareket halinde kapalı döngü) geri alınacak.
+
+**Etkisi:** yönelme sonunda taret gözcünün verdiği açıya 0.1° içinde oturur
+(eskiden 1.5–3° eksik/fazla); kara liste, ateşsiz bölge, ana konum gerçek
+açıyla çalışır. Yönelme başına +0.2–0.4 sn (150 ms bekleme + küçük hareket),
+karşılığında PID'nin toparlama süresi düşer. Kilitteki 1.5° ölü bölge
+DEĞİŞMEDİ.
+
+**Sahada doğrulama:** ekrandaki Δ taret her durduğunda 0.00'a çekilmeli;
+otonom yönelmede varıştan sonra ufak ikinci hareket görülmeli; kayıt açık
+kalsın, `enkoder_analiz` ile boşluk/kaçırma artığının sıfıra indiği görülsün.
 
 ## FAZ 6 — KAPALI DÖNGÜ (opsiyonel, riskli)
 
 > **Bu faza geçmeden önce Faz 5'in sonucunu ölç.** Telafi yeterliyse buraya
 > hiç gerek olmayabilir.
 
-- [ ] **6.1** `get_current_angles()` yaw'ı enkoderden döndürsün
-      (sağlıksızsa adım sayımına geri düş + uyar)
+- [ ] **6.0** `HUNTER_DPP_YAW = 0.01430` → pitch ölçeğine GERİ AL (FAZ 5.1 buraya taşındı; kapalı döngüyle çifte düzeltme olur)
+- [ ] **6.1** son yaklaşımda (kalan < 2–3°) enkodere kapalı döngü; **hedefe hep aynı yönden yaklaş, aşınca geri dönme** (1.5° boşlukta geri dönüş limit çevrimi üretir)
 - [ ] **6.2** PID geri beslemesini gerçek açıya bağla
 - [ ] **6.3** **Gecikme kontrolü:** sistemde zaten ~185 ms ölü zaman var ve
       2.2–3.2 Hz'de rezonans ölçüldü. Enkoder gecikmesi eklenince kararlılık

@@ -1070,6 +1070,62 @@ kontrol("rapor(): encoder_ok / encoder_yaw / encoder_raw", set(_r) == {"encoder_
 kontrol("sabitler motor_fire_module'de: CPR 16384, merkez 8192, oran 2.0, 250k",
         (mfm.ENCODER_CPR, mfm.ENCODER_CENTER, mfm.ENCODER_GEAR_RATIO, mfm.ENCODER_BITRATE) == (16384, 8192, 2.0, 250000))
 
+# --- 19. FAZ 5': DURUNCA HIZALA (enkoder_hizala) ---
+print()
+print("=" * 70)
+print("19. FAZ 5' — durunca hizala, yeniden yaklasma, manuel/reset korumasi")
+print("=" * 70)
+mfm._simulated_yaw = 10.0; mfm._simulated_pitch = 0.0
+mfm._servo_active = False; mfm._bloklayan_hareket = False
+mfm._yaw_moving_direction = mfm._pitch_moving_direction = 0
+mfm._son_adim_zamani = 0.0; mfm._servo_hedef_gecerli = False; mfm._yeniden_yaklasma = 0
+kontrol("duruyor: 0.15 sn adim yok", mfm.taret_duruyor_mu(simdi=1.0))
+kontrol("adim 0.1 sn once atildiysa durmuyor", not mfm.taret_duruyor_mu(simdi=0.1))
+_f = mfm.enkoder_hizala(11.5, simdi=1.0)
+kontrol("hizalama: sayac 10.0 -> 11.5, fark +1.5", abs(_f - 1.5) < 1e-9 and abs(mfm._simulated_yaw - 11.5) < 1e-9, f"{_f} {mfm._simulated_yaw}")
+kontrol("hizalama sayaci artti", mfm.hizalama_durumu()["encoder_snap_n"] >= 1)
+kontrol("esik alti fark (0.03) uygulanmaz, 0.0 doner", mfm.enkoder_hizala(11.53, simdi=1.0) == 0.0 and abs(mfm._simulated_yaw - 11.5) < 1e-9)
+kontrol("supheli fark (25 derece) uygulanmaz, None", mfm.enkoder_hizala(36.5, simdi=1.0) is None and abs(mfm._simulated_yaw - 11.5) < 1e-9)
+mfm._son_adim_zamani = 0.95
+kontrol("son adim 50 ms once: hizalama yok", mfm.enkoder_hizala(12.0, simdi=1.0) is None)
+mfm._son_adim_zamani = 0.0; mfm._servo_active = True
+kontrol("servo aktifken hizalama yok", mfm.enkoder_hizala(12.0, simdi=1.0) is None)
+mfm._servo_active = False; mfm._yaw_moving_direction = 1
+kontrol("manuel hareket varken hizalama yok", mfm.enkoder_hizala(12.0, simdi=1.0) is None)
+mfm._yaw_moving_direction = 0; mfm._bloklayan_hareket = True
+kontrol("bloklayan hareket sirasinda hizalama yok", mfm.enkoder_hizala(12.0, simdi=1.0) is None)
+mfm._bloklayan_hareket = False
+kontrol("enkoder None ise hizalama yok", mfm.enkoder_hizala(None, simdi=1.0) is None)
+# yeniden yaklasma: hedef 20, servo 'vardi' (sayac 20), enkoder 18.5 diyor
+mfm.set_target_angles(20.0, 0.0)
+kontrol("set_target_angles: hedef gecerli, servo aktif", mfm._servo_hedef_gecerli and mfm._servo_active)
+mfm._servo_active = False; mfm._simulated_yaw = 20.0; mfm._son_adim_zamani = 0.0
+_f = mfm.enkoder_hizala(18.5, simdi=5.0)
+kontrol("varista 1.5 eksik: sayac 18.5, servo TEKRAR ACILDI", abs(_f + 1.5) < 1e-9 and mfm._servo_active and mfm._yeniden_yaklasma == 1, f"{_f} {mfm._servo_active}")
+mfm._servo_active = False; mfm._simulated_yaw = 19.95; mfm._son_adim_zamani = 0.0
+_f = mfm.enkoder_hizala(19.96, simdi=6.0)
+kontrol("kalan 0.04 < tolerans: yeniden yaklasma YOK", not mfm._servo_active and mfm._yeniden_yaklasma == 1)
+mfm._simulated_yaw = 20.0
+for _k in range(3):
+    mfm._servo_active = False; mfm._son_adim_zamani = 0.0
+    mfm.enkoder_hizala(18.0, simdi=10.0 + _k); mfm._simulated_yaw = 20.0
+kontrol("hedef basina en fazla 3 duzeltme; 4.'de servo acilmiyor", not mfm._servo_active and mfm._yeniden_yaklasma == 3, f"{mfm._yeniden_yaklasma}")
+mfm.set_target_angles(20.0, 0.0)
+kontrol("yeni hedef sayaci sifirlar", mfm._yeniden_yaklasma == 0)
+mfm.set_manual_move_direction(1, 0, 0.5); mfm.set_manual_move_direction(0, 0, 0.5)
+mfm._servo_active = False; mfm._simulated_yaw = 20.0; mfm._son_adim_zamani = 0.0
+_f = mfm.enkoder_hizala(18.5, simdi=20.0)
+kontrol("manuel surusten sonra hedef GECERSIZ: sayac duzelir, servo ACILMAZ", abs(_f + 1.5) < 1e-9 and not mfm._servo_active and not mfm._servo_hedef_gecerli)
+mfm.set_target_angles(20.0, 0.0); mfm.reset_current_angles()
+kontrol("reset sonrasi hedef gecersiz", not mfm._servo_hedef_gecerli and not mfm._servo_active)
+mfm.set_target_angles(5.0, 0.0); mfm.stop_all_motors()
+kontrol("stop_all_motors sonrasi hedef gecersiz", not mfm._servo_hedef_gecerli)
+_eski = mfm.ENCODER_REST_SNAP; mfm.ENCODER_REST_SNAP = False
+mfm._servo_active = False; mfm._simulated_yaw = 0.0; mfm._son_adim_zamani = 0.0
+kontrol("ENCODER_REST_SNAP=False: hicbir sey yapmaz", mfm.enkoder_hizala(3.0, simdi=30.0) is None and mfm._simulated_yaw == 0.0)
+mfm.ENCODER_REST_SNAP = _eski
+mfm.reset_current_angles()
+
 print()
 print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")

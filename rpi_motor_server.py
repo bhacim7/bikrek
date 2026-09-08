@@ -101,7 +101,12 @@ def angle_sender_loop():
             # Enkoder alanları: encoder_ok / encoder_yaw / encoder_raw.
             # current_yaw DEĞİŞMİYOR — hâlâ adım sayacı (FAZ 3).
             if encoder_module is not None:
-                response.update(encoder_module.rapor())
+                rap = encoder_module.rapor()
+                # FAZ 5': taret duruyorsa adım sayacını enkodere hizala.
+                # get_current_angles bir sonraki turda düzeltilmiş değeri verir.
+                motor_fire_module.enkoder_hizala(rap.get("encoder_yaw"))
+                response.update(rap)
+                response.update(motor_fire_module.hizalama_durumu())
             if conn:
                 conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
             # 50 Hz. Bu oran sadece arayüzdeki göstergeyi değil, PC'deki ölü
