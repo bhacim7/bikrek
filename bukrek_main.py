@@ -7,6 +7,7 @@ from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QFont
 from PyQt5.QtCore import QTimer, Qt, QCoreApplication, QThread, pyqtSignal
 
 import time
+import os
 import math
 import numpy as np
 import traceback
@@ -230,6 +231,8 @@ class HavaSavunmaArayuz(QWidget):
         # Yaw enkoderi (FAZ 3: yalnızca gösterim). None = Pi hiç raporlamadı.
         # {"ok": bool, "yaw": float|None, "raw": int|None}
         self._enkoder = None
+        self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
+        self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
         self._ff_onceki_yaw = 0.0
         self._ff_onceki_pitch = 0.0
@@ -1309,10 +1312,42 @@ class HavaSavunmaArayuz(QWidget):
         sağlık değişince durum çubuğunda bir kez uyarır."""
         onceki = self._enkoder
         self._enkoder = d
+        self._enkoder_kaydet(d)
         if onceki is not None and onceki.get("ok") and not d.get("ok"):
             self._update_status_label("Uyarı: yaw ENKODERİ veri vermiyor (kablo/güç?). Sistem adım sayacıyla devam ediyor.")
         elif (onceki is None or not onceki.get("ok")) and d.get("ok"):
             self._update_status_label("Durum: yaw enkoderi bağlandı.")
+
+    def _enkoder_kaydet(self, d):
+        """FAZ 4 kaydı: adım sayacı ve enkoder yan yana, her raporda bir satır.
+        Dosya ilk raporda açılır; hata olursa kayıt sessizce kapanır, arayüz
+        etkilenmez."""
+        if not getattr(config, "ENCODER_LOG", False) or self._enkoder_kayit is False:
+            return
+        try:
+            if self._enkoder_kayit is None:
+                os.makedirs(config.ENCODER_LOG_DIR, exist_ok=True)
+                yol = os.path.join(config.ENCODER_LOG_DIR,
+                                   time.strftime("enkoder_%Y%m%d_%H%M%S.csv"))
+                self._enkoder_kayit = open(yol, "w", encoding="utf-8")
+                self._enkoder_kayit.write("t,sayac_yaw,sayac_pitch,enk_yaw,enk_ok,enk_ham\n")
+                print(f"Enkoder kaydı: {yol}")
+            ey = d.get("yaw")
+            ham = d.get("raw")
+            self._enkoder_kayit.write(
+                f"{time.time():.3f},{self.current_yaw_angle:.3f},{self.current_pitch_angle:.3f},"
+                f"{'' if ey is None else format(float(ey), '.3f')},{int(bool(d.get('ok')))},"
+                f"{'' if ham is None else ham}\n")
+            self._enkoder_kayit_n += 1
+            if self._enkoder_kayit_n % 50 == 0:
+                self._enkoder_kayit.flush()
+        except Exception as e:
+            print(f"Enkoder kaydı durdu: {e}")
+            try:
+                self._enkoder_kayit.close()
+            except Exception:
+                pass
+            self._enkoder_kayit = False
 
     def _process_rpi_response(self, response_data):
         if response_data.get("status") == "ok":

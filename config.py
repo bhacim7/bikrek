@@ -78,6 +78,16 @@ MODEL_RESIZE_INTERPOLATION = "AREA"   # "AREA" veya "LINEAR"
 HUNTER_CROP_TO_MODEL_ASPECT = True
 
 # --- RPi Bağlantısı ---
+# --- Yaw enkoder kaydı (FAZ 4: ölçek / boşluk / kaçırma ayrımı) ---
+# True iken arayüz, Pi'den gelen her açı raporunu CSV'ye yazar:
+#   zaman, adım sayacı yaw, pitch, enkoder yaw, enkoder ok, ham sayım
+# Dosya: ENCODER_LOG_DIR/enkoder_YYYYmmdd_HHMMSS.csv (arayüz her açılışta yeni).
+# Çözümleme: `python enkoder_analiz.py <csv>` (duruşları bulur, ölçek ve
+# boşluğu ayırır). Ölçüm bitince False yapılabilir; yük ihmal edilebilir
+# (50 satır/sn).
+ENCODER_LOG = True
+ENCODER_LOG_DIR = os.path.join(_BURASI, "enkoder_kayit")
+
 RPI_IP = '192.168.137.229'
 RPI_PORT = 12345
 
