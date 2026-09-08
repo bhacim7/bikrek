@@ -143,6 +143,24 @@ FIRE_SERVO_RELEASE_SEC = 0.56  # tetiği bırakma (geri dönüş) + dayanma pay�
 # rpi_motor_server.py'den alınan acil durdurma pini
 EMERGENCY_STOP_PIN = 18
 
+# --- YAW ENKODERİ (Wachendorff WDGA 36A CANopen + Waveshare USB-CAN-A) ---
+# FAZ 3: yalnızca okunup PC'ye raporlanır; kontrol HÂLÂ adım sayacında.
+# Okuma/çerçeveleme encoder_module.py'de; buradakiler yalnızca sabitler.
+# Sahada ölçülen değerler (2026-09-08), ENKODER_ENTEGRASYON.md bölüm 7.
+ENCODER_ENABLED = True
+ENCODER_PORT = '/dev/ttyUSB0'
+ENCODER_BITRATE = 250000       # 500k'da hata, 250k'da kilitleniyor (otomatik algılama YOK)
+ENCODER_NODE_ID = 127
+ENCODER_CPR = 16384            # 0x6001 = 16384 (14 bit); enkodere yazılıp 'save' edildi
+ENCODER_CENTER = 8192          # 0x6003 preset: mekanik merkezde ham değer
+# Enkoder turu / taret turu. Ölçülen ~1.92-2.0, kasnak çapları 1:2. Komut
+# edilen açıdan kesinleştirilemez (komutun tarette karşılığı ±%10 oynuyor);
+# kamera kalibrasyonuyla kesinleşecek (pitch ekseni gerçek ölçek referansı).
+ENCODER_GEAR_RATIO = 2.0       # -> 91.0 sayım / taret derecesi, 0.011° / sayım
+ENCODER_INVERT = False         # yaw + komutunda sayım ARTIYOR (sahada ölçüldü)
+ENCODER_SYNC_MS = 10           # SYNC periyodu -> TPDO2 100 Hz
+ENCODER_TIMEOUT_SEC = 0.25     # bu süre veri gelmezse "sağlıksız"
+
 # GPIO'nun başarıyla başlatılıp başlatılmadığını gösteren bayrak
 _gpio_initialized = False
 

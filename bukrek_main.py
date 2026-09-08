@@ -227,6 +227,9 @@ class HavaSavunmaArayuz(QWidget):
         # milisaniye geriye bakar, bu fazlasıyla yeterli.
         self._angle_history = deque(maxlen=200)
         self._son_aci_etiketi = 0.0
+        # Yaw enkoderi (FAZ 3: yalnızca gösterim). None = Pi hiç raporlamadı.
+        # {"ok": bool, "yaw": float|None, "raw": int|None}
+        self._enkoder = None
         # Feedforward degisim hizi siniri icin onceki degerler
         self._ff_onceki_yaw = 0.0
         self._ff_onceki_pitch = 0.0
@@ -289,6 +292,7 @@ class HavaSavunmaArayuz(QWidget):
         self.rpi_thread.status_update_signal.connect(self._update_status_label)
         self.rpi_thread.connection_status_signal.connect(self._update_rpi_connection_status)
         self.rpi_thread.angles_update_signal.connect(self._update_current_angles)
+        self.rpi_thread.encoder_update_signal.connect(self._update_encoder_state)
         self.rpi_thread.response_received_signal.connect(self._process_rpi_response)
         self.rpi_thread.start()
         print("HATA AYIKLAMA: RPiCommunicator başlatıldı.")
@@ -1300,6 +1304,16 @@ class HavaSavunmaArayuz(QWidget):
             self._son_aci_etiketi = simdi
             self._bilgi_panelini_yenile()
 
+    def _update_encoder_state(self, d):
+        """Pi'den gelen enkoder raporu. Kontrole karışmaz; panelde gösterilir,
+        sağlık değişince durum çubuğunda bir kez uyarır."""
+        onceki = self._enkoder
+        self._enkoder = d
+        if onceki is not None and onceki.get("ok") and not d.get("ok"):
+            self._update_status_label("Uyarı: yaw ENKODERİ veri vermiyor (kablo/güç?). Sistem adım sayacıyla devam ediyor.")
+        elif (onceki is None or not onceki.get("ok")) and d.get("ok"):
+            self._update_status_label("Durum: yaw enkoderi bağlandı.")
+
     def _process_rpi_response(self, response_data):
         if response_data.get("status") == "ok":
             if response_data.get("action") == "fire":
@@ -1787,9 +1801,20 @@ class HavaSavunmaArayuz(QWidget):
         olarak görüldü. Artık ikisi de bu fonksiyonu çağırıyor, dolayısıyla
         içerik her zaman aynı.
         """
+        # Enkoder: adım sayacının yanında GERÇEK yaw ve ikisinin farkı.
+        # Fark büyüyorsa adım sayacı gerçeği kaybetmiştir (kaçırılan adım,
+        # dişli boşluğu, elle zorlanmış taret). FAZ 3'te yalnızca izlenir.
+        if self._enkoder is None:
+            enk = ""
+        elif not self._enkoder.get("ok") or self._enkoder.get("yaw") is None:
+            enk = "  |  enk: YOK"
+        else:
+            ey = float(self._enkoder["yaw"])
+            fark = (ey - self.current_yaw_angle + 180) % 360 - 180
+            enk = f"  |  enk {ey:+.2f}° (Δ{fark:+.2f}°)"
         self.update_info_panel(
             f"Mevcut Yaw: {self.current_yaw_angle:.1f}°, "
-            f"Pitch: {self.current_pitch_angle:.1f}°  |  "
+            f"Pitch: {self.current_pitch_angle:.1f}°{enk}  |  "
             f"kare {self._tani['sonuc']} / çizim {self._tani['ciz']}")
 
     def update_info_panel(self, text):

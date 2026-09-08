@@ -1003,6 +1003,73 @@ kontrol("gozcu: olculen balon dolgunlugu (0.50) artik gecer",
 kontrol("gozcu kapisi 34 px / 0.53 dolgunluk balonu GECIRIYOR",
         sp.balon_kapisi(34, 8, 8) is None)
 
+# --- 18. YAW ENKODERI (encoder_module): cerceveleme, sarma, olcek, saglik ---
+print()
+print("=" * 70)
+print("18. YAW ENKODERI — Waveshare cerceveleme, sarma cozumu, olcek, saglik")
+print("=" * 70)
+import encoder_module as em
+
+# Cerceveleme: ayar cercevesi 20 bayt, 250k kodu 5, saglama toplami dogru
+_a = em.ayar_cercevesi(250000)
+kontrol("ayar cercevesi 20 bayt, AA 55 12 05 ile basliyor",
+        len(_a) == 20 and _a[:4] == bytes([0xAA, 0x55, 0x12, 0x05]), _a.hex(' '))
+kontrol("ayar cercevesi saglama toplami", _a[19] == (sum(_a[2:19]) & 0xFF))
+_v = em.veri_cercevesi(0x67F, [0x40, 0x01, 0x65, 0, 0, 0, 0, 0])
+kontrol("veri cercevesi: AA C8 7F 06 ... 55",
+        _v == bytes.fromhex("aa c8 7f 06 40 01 65 00 00 00 00 00 55"), _v.hex(' '))
+_buf = bytearray(em.veri_cercevesi(0x2FF, [0x00, 0x20, 0, 0]) + em.ayar_cercevesi(250000)
+                 + em.veri_cercevesi(0x0FF, [0, 0x81, 0x11, 6, 0, 0, 0, 0]) + b'\xaa\xc4\xff')
+_c = em.cozumle(_buf)
+kontrol("cozumle: iki cerceve cikti, ayar yankisi atlandi, yarim cerceve tamponda kaldi",
+        [x[0] for x in _c] == [0x2FF, 0x0FF] and bytes(_buf) == b'\xaa\xc4\xff', str(_c))
+_buf.extend(b'\x02\x00\x20\x00\x00\x55')
+kontrol("cozumle: yarim cerceve tamamlaninca cikiyor",
+        em.cozumle(_buf) == [(0x2FF, bytes([0, 0x20, 0, 0]))] and len(_buf) == 0)
+
+# Sarma: 16380 -> 3 ileri sarma, geri donus
+_t, _top = em.sarma_coz(3, 16380, 0, 16384)
+kontrol("sarma ileri: 16380 -> 3 tur +1, toplam 16387", (_t, _top) == (1, 16387), f"{_t} {_top}")
+_t, _top = em.sarma_coz(16380, 3, _t, 16384)
+kontrol("sarma geri: 3 -> 16380 tur 0, toplam 16380", (_t, _top) == (0, 16380), f"{_t} {_top}")
+kontrol("sarma yok: 100 -> 150 toplam 150", em.sarma_coz(150, 100, 0, 16384) == (0, 150))
+kontrol("acilis: merkez yakini oldugu gibi", em.baslangic_toplam(8300, 8192, 16384) == 8300)
+kontrol("acilis: ham 16000 (merkezden +7808) ayni turda", em.baslangic_toplam(16000, 8192, 16384) == 16000)
+kontrol("acilis: ham 100 (merkezden -8092) ayni turda", em.baslangic_toplam(100, 8192, 16384) == 100)
+
+# Olcek: R=2, CPR 16384 -> 91.02 sayim/derece; 5 derece = 455 sayim (sahada 467-491 olculdu)
+_k = em.sayim_per_derece(16384, 2.0)
+kontrol("R=2: 91.0 sayim/derece", abs(_k - 91.02) < 0.05, f"{_k:.2f}")
+kontrol("merkezde 0 derece", em.sayim_to_derece(8192, 16384, 2.0, 8192) == 0.0)
+kontrol("merkez+455 sayim = 5.0 derece", abs(em.sayim_to_derece(8192 + 455, 16384, 2.0, 8192) - 5.0) < 0.01)
+kontrol("ters bayragi isareti cevirir", em.sayim_to_derece(8192 + 455, 16384, 2.0, 8192, ters=True) < 0)
+kontrol("ofset: sifirlama sonrasi 0", em.sayim_to_derece(9000, 16384, 2.0, 8192, ofset=9000 - 8192) == 0.0)
+kontrol("taret +90 = enkoder tam yarim tur (8192 sayim)",
+        abs(em.sayim_to_derece(8192 + 8192, 16384, 2.0, 8192) - 90.0) < 0.01)
+
+# Nesne, donanimsiz: _isle ile besle, saglik ve aci
+_e = em.Enkoder(port="yok", bitrate=250000, cpr=16384, oran=2.0, merkez=8192, ters=False,
+                sync_ms=10, zaman_asimi=0.25, node_id=127)
+kontrol("veri gelmeden sagliksiz ve aci None", not _e.saglikli_mi(0.0) and _e.taret_acisi(0.0) is None)
+_e._isle(0x2FF, (8192).to_bytes(4, 'little'), simdi=1.00)
+kontrol("ilk TPDO2: saglikli, 0.00 derece", _e.saglikli_mi(1.05) and abs(_e.taret_acisi(1.05)) < 1e-9,
+        str(_e.taret_acisi(1.05)))
+_e._isle(0x2FF, (8192 + 455).to_bytes(4, 'little'), simdi=1.01)
+kontrol("+455 sayim -> +5.0 derece", abs(_e.taret_acisi(1.02) - 5.0) < 0.01, f"{_e.taret_acisi(1.02)}")
+kontrol("0.3 sn veri gelmezse sagliksiz, aci None", not _e.saglikli_mi(1.35) and _e.taret_acisi(1.35) is None)
+_e._isle(0x0FF, bytes(8), simdi=1.40)
+kontrol("EMCY sayiliyor, aciyi degistirmiyor", _e.durum()['emcy'] == 1 and _e.durum()['toplam'] == 8192 + 455)
+_e._isle(0x2FF, (16380).to_bytes(4, 'little'), simdi=2.00)
+_e._isle(0x2FF, (3).to_bytes(4, 'little'), simdi=2.01)
+kontrol("nesne icinde sarma: 16380 -> 3, aci ~ +90.1",
+        abs(_e.taret_acisi(2.02) - (16387 - 8192) / _k) < 0.01, f"{_e.taret_acisi(2.02):.2f}")
+_e.sifirla()
+kontrol("sifirla(): mevcut konum 0 derece", abs(_e.taret_acisi(2.03)) < 1e-9)
+_r = _e.rapor(simdi=2.04)
+kontrol("rapor(): encoder_ok / encoder_yaw / encoder_raw", set(_r) == {"encoder_ok", "encoder_yaw", "encoder_raw"} and _r["encoder_ok"])
+kontrol("sabitler motor_fire_module'de: CPR 16384, merkez 8192, oran 2.0, 250k",
+        (mfm.ENCODER_CPR, mfm.ENCODER_CENTER, mfm.ENCODER_GEAR_RATIO, mfm.ENCODER_BITRATE) == (16384, 8192, 2.0, 250000))
+
 print()
 print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")

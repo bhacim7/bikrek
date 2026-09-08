@@ -10,6 +10,7 @@ class RPiCommunicator(QThread):
     status_update_signal = pyqtSignal(str)
     connection_status_signal = pyqtSignal(bool)
     angles_update_signal = pyqtSignal(float, float)  # yaw, pitch
+    encoder_update_signal = pyqtSignal(dict)  # {"ok": bool, "yaw": float|None, "raw": int|None}
     response_received_signal = pyqtSignal(dict)  # Genel yanıtlar için
 
     def __init__(self, rpi_ip, rpi_port):
@@ -42,8 +43,13 @@ class RPiCommunicator(QThread):
             # Yanıtları dinle: bir okumada birden fazla mesaj gelebilir.
             responses = self._receive_response_non_blocking()
             latest_angles = None
+            latest_encoder = None
             for response in responses:
                 self.response_received_signal.emit(response)
+                if "encoder_ok" in response:
+                    latest_encoder = {"ok": bool(response.get("encoder_ok")),
+                                      "yaw": response.get("encoder_yaw"),
+                                      "raw": response.get("encoder_raw")}
                 # Eğer bir açı güncellemesi ise, en sonuncusunu sakla
                 if response.get("action") in ["get_angles", "set_angles", "move_by_direction",
                                               "set_proportional_angles_delta"] and response.get("status") == "ok":
@@ -54,6 +60,8 @@ class RPiCommunicator(QThread):
             # yaymak arayüzü gereksiz yere meşgul eder, en güncel olan yeterli.
             if latest_angles is not None:
                 self.angles_update_signal.emit(latest_angles[0], latest_angles[1])
+            if latest_encoder is not None:
+                self.encoder_update_signal.emit(latest_encoder)
 
             # CPU kullanımını azaltmak için küçük bir gecikme
             time.sleep(0.001)

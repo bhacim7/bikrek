@@ -20,6 +20,16 @@ import motor_fire_module
 print("DEBUG (Satır 17 - motor_fire_module import edildi.)")
 sys.stdout.flush()
 
+# Yaw enkoderi (FAZ 3: yalnızca oku ve raporla). Yüklenemezse sunucu
+# enkodersiz çalışmaya devam eder; PC "enk: YOK" görür.
+try:
+    import encoder_module
+    print("DEBUG (rpi_motor_server): encoder_module import edildi.")
+except Exception as _e:
+    encoder_module = None
+    print(f"UYARI (rpi_motor_server): encoder_module yüklenemedi, enkodersiz devam: {_e}")
+sys.stdout.flush()
+
 # Raspberry Pi GPIO kütüphanesini içeri aktar (eğer Linux'ta çalışıyorsa)
 # Bu LGpio nesnesi sadece emergency_stop_handler için kullanılır.
 # Motor ve ateşleme kontrolü motor_fire_module içinde yönetilir.
@@ -88,6 +98,10 @@ def angle_sender_loop():
                 "current_yaw": current_yaw,
                 "current_pitch": current_pitch
             }
+            # Enkoder alanları: encoder_ok / encoder_yaw / encoder_raw.
+            # current_yaw DEĞİŞMİYOR — hâlâ adım sayacı (FAZ 3).
+            if encoder_module is not None:
+                response.update(encoder_module.rapor())
             if conn:
                 conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
             # 50 Hz. Bu oran sadece arayüzdeki göstergeyi değil, PC'deki ölü
@@ -148,6 +162,15 @@ def run_server():
         print("KRİTİK HATA: GPIO başlatılamadı, sunucu başlatılamıyor.")
         sys.stdout.flush()
         return
+
+    # Yaw enkoderi. Açılamazsa (USB takılı değil, güç yok) sunucu yine
+    # çalışır; kontrol enkodere bağlı değil.
+    if encoder_module is not None:
+        try:
+            encoder_module.baslat()
+        except Exception as e:
+            print(f"UYARI (rpi_motor_server): enkoder başlatılamadı: {e}")
+            sys.stdout.flush()
 
     # Acil durdurma butonu dinleyicisini ayarla
     if LGpio:
@@ -301,6 +324,9 @@ def process_command(command):
         sys.stdout.flush()
     elif action == "reset_angles":
         motor_fire_module.reset_current_angles()
+        # Enkoder de aynı noktayı 0° saysın; yoksa ekranda anlamsız bir fark kalır.
+        if encoder_module is not None:
+            encoder_module.sifirla()
         response = {"action": "reset_angles", "status": "ok", "message": "Açılar sıfırlandı."}
         print("DEBUG (rpi_motor_server): 'reset_angles' komutu işlendi.")
         sys.stdout.flush()
@@ -368,6 +394,8 @@ def cleanup_on_exit():
         sys.stdout.flush()
 
     motor_fire_module.stop_all_motors()  # Tüm motorları durdur ve devre dışı bırak
+    if encoder_module is not None:
+        encoder_module.kapat()
     motor_fire_module.cleanup_gpio()
     print("DEBUG (rpi_motor_server): motor_fire_module.cleanup_gpio() çağrıldı.")
     sys.stdout.flush()
