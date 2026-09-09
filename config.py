@@ -225,6 +225,11 @@ KAMERA_KONTROLLERI = {
     "hunter": {
         "autofocus": None,       # 12 mm sabit lens, odak halkadan
         "focus": None,
+        # 4600 K "tipik floresan" varsayımıydı; salondaki LED panel altında
+        # siyah perde BORDO, zemin pembe görünüyordu (2026-09-09). Doğru
+        # sıcaklık `python kamera_renk.py` ile bulunur ('o' tuşu: 3 sn
+        # otomatik, oturan değeri kilitle) ve buraya yazılır. Sürücü
+        # sıcaklığı TUTMUYORSA (konsolda "TUTMADI") HUNTER_WB_GAINS kullanılır.
         "auto_wb": 0,
         "wb_temperature": 4600,
         "auto_exposure": None,
@@ -246,6 +251,15 @@ KAMERA_AYARLARI = {
     "hunter":  {"indices": HUNTER_CAMERA_INDICES, "width": HUNTER_WIDTH,
                 "height": HUNTER_HEIGHT, "mjpg": HUNTER_USE_MJPG},
 }
+
+# --- YAZILIM BEYAZ DENGESİ (avcı) ---
+# Sürücü beyaz dengesi sıcaklığını kabul etmiyorsa (DirectShow'da bazı
+# Arducam modüllerinde CAP_PROP_WB_TEMPERATURE "TUTMADI" döner) kanal
+# kazançları burada uygulanır: kare = kare * (B, G, R). `kamera_renk.py`
+# 'k' tuşu ortadaki gri kâğıttan hesaplar. None = kapalı. Kazanç, kare
+# kameradan çıkar çıkmaz uygulanır; YOLO ve arayüz aynı düzeltilmiş kareyi
+# görür (model nötr renkli kaynaktan eğitildi, düzeltme lehine).
+HUNTER_WB_GAINS = None      # örn. (0.95, 1.0, 0.78)
 
 # Pozlama süresi üst sınırı (saniye). Hareket bulanıklığı =
 # taret_hızı x pozlama / derece_piksel.

@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 import time
 import queue
 
@@ -47,6 +48,24 @@ def _model_oranina_kirp(frame, kamera_adi):
         return frame                      # zaten yeterince dar veya daha dar
     ust = (yuk - hedef_yuk) // 2
     return frame[ust:ust + hedef_yuk, :, :]
+
+
+def _yazilim_beyaz_dengesi(frame, kamera_adi):
+    """config.HUNTER_WB_GAINS tanımlıysa kanal kazançlarını uygular (yalnızca avcı)."""
+    kazanc = getattr(config, "HUNTER_WB_GAINS", None)
+    if kamera_adi != "hunter" or not kazanc:
+        return frame
+    tablo = getattr(_yazilim_beyaz_dengesi, "_tablo", None)
+    if tablo is None or _yazilim_beyaz_dengesi._kazanc != tuple(kazanc):
+        # 3 x 256'lık arama tablosu: kare başına çarpma yerine tek LUT.
+        x = np.arange(256, dtype=np.float32)
+        tablo = np.stack([np.clip(x * k, 0, 255) for k in kazanc], axis=1).astype(np.uint8)
+        _yazilim_beyaz_dengesi._tablo = tablo
+        _yazilim_beyaz_dengesi._kazanc = tuple(kazanc)
+    out = np.empty_like(frame)
+    for c in range(3):
+        out[:, :, c] = tablo[:, c][frame[:, :, c]]
+    return out
 
 
 def _fourcc_metni(capture):
@@ -205,6 +224,7 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
             ret, frame = capture.read()
             if ret and frame is not None and frame.size > 0:
                 frame = _model_oranina_kirp(frame, kamera_adi)
+                frame = _yazilim_beyaz_dengesi(frame, kamera_adi)
                 ardisik_hata = 0
                 # Discard old frames if queue is full (keep it real-time)
                 if frame_queue.full():
