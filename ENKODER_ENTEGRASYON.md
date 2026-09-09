@@ -178,7 +178,7 @@ kalsın, `enkoder_analiz` ile boşluk/kaçırma artığının sıfıra indiği g
 > **Bu faza geçmeden önce Faz 5'in sonucunu ölç.** Telafi yeterliyse buraya
 > hiç gerek olmayabilir.
 
-- [ ] **6.0** `HUNTER_DPP_YAW = 0.01430` → pitch ölçeğine GERİ AL (FAZ 5.1 buraya taşındı; kapalı döngüyle çifte düzeltme olur)
+- [x] **6.0** `HUNTER_DPP_YAW` → 2026-09-09 uzakta yeniden ölçüldü: 0.01411 / −0.01413, yaw = pitch (0.999). Trim kendiliğinden kayboldu, config'e yazıldı.
 - [ ] **5''** düzeltme hareketi enkoderde hareket üretmezse: 2° geri çekil, aynı yönden tekrar yaklaş (sürtünme + boşluk tek yönden alınır)
 - [ ] **6.1** son yaklaşımda (kalan < 2–3°) enkodere kapalı döngü; **hedefe hep aynı yönden yaklaş, aşınca geri dönme** (1.5° boşlukta geri dönüş limit çevrimi üretir)
 - [ ] **6.2** PID geri beslemesini gerçek açıya bağla

@@ -409,8 +409,19 @@ SPOTTER_DPP_PITCH = -0.05547
 # YAW ÖLÇÜMÜNÜ 2-3 KEZ TEKRARLAYIN. Sürekli pitch'ten yüksek çıkıyorsa
 # fark dişli boşluğudur ve ayrıca ölçülmesi gerekir (yön değiştirirken
 # kaç derece kayboluyor).
-HUNTER_DPP_YAW = 0.01430
-HUNTER_DPP_PITCH = -0.01360
+#
+# 2026-09-09, ENKODER HİZALAMASI AÇIKKEN yeniden ölçüldü:
+#     yaw  : 0.01415, 0.01408   tutarlı
+#     pitch: 0.01405, 0.01420   tutarlı
+#     görüş açısı 27 x 16 derece (12 mm lensle birebir)
+# Yaw ile pitch artık binde 1 içinde EŞİT (0.999). Eski %5'lik fark
+# (0.01430 / 0.01360) boşluğun iziydi: komut edilen yaw tarette eksik
+# gerçekleşiyor, kalibrasyon o eksikliği "derece/piksel" sanıyordu. FAZ 5'
+# hizalaması komut = gerçek yapınca iz kayboldu. Eski yaw değeri tek
+# atımlık komutlarda (tıklama, gözcüden yönelme) %1.3 fazlalık üretiyordu;
+# bu değerle o da gitti. Boşluk artık burada değil, enkoderde ele alınıyor.
+HUNTER_DPP_YAW = 0.01411
+HUNTER_DPP_PITCH = -0.01413
 
 # Geriye uyumluluk: denetim döngüsü avcı kamerayı kullanır.
 DEGREES_PER_PIXEL_YAW = HUNTER_DPP_YAW
