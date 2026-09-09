@@ -225,13 +225,14 @@ KAMERA_KONTROLLERI = {
     "hunter": {
         "autofocus": None,       # 12 mm sabit lens, odak halkadan
         "focus": None,
-        # 4600 K "tipik floresan" varsayımıydı; salondaki LED panel altında
-        # siyah perde BORDO, zemin pembe görünüyordu (2026-09-09). Doğru
-        # sıcaklık `python kamera_renk.py` ile bulunur ('o' tuşu: 3 sn
-        # otomatik, oturan değeri kilitle) ve buraya yazılır. Sürücü
-        # sıcaklığı TUTMUYORSA (konsolda "TUTMADI") HUNTER_WB_GAINS kullanılır.
-        "auto_wb": 0,
-        "wb_temperature": 4600,
+        # 2026-09-09 ölçümü (kamera_renk.py): bu modül DirectShow'dan
+        # beyaz dengesi sıcaklığı KABUL ETMİYOR (okuma -1), yani eski 4600
+        # hiç uygulanmamıştı; auto_wb=0 kamerayı yanlış bir iç dengede
+        # kilitliyordu (her şey kırmızı). auto_wb=1 ile beyaz kâğıt R/G 1.12,
+        # B/G 1.00. Otomatik denge sahneye göre biraz kayar; avcı renk eşiği
+        # kullanmadığı (YOLO) için kabul edilebilir.
+        "auto_wb": 1,
+        "wb_temperature": None,
         "auto_exposure": None,
         "exposure": None,
         "gain": None,
@@ -260,6 +261,18 @@ KAMERA_AYARLARI = {
 # kameradan çıkar çıkmaz uygulanır; YOLO ve arayüz aynı düzeltilmiş kareyi
 # görür (model nötr renkli kaynaktan eğitildi, düzeltme lehine).
 HUNTER_WB_GAINS = None      # örn. (0.95, 1.0, 0.78)
+
+# --- KARANLIKTA DOYGUNLUK KIRMA (avcı, IR sızıntısına karşı geçici) ---
+# 12 mm lenste IR-cut filtre yok: siyah kumaş kızılötesini yansıtıyor,
+# sensörün R ve B filtreleri kızılötesini geçiriyor -> siyah perde MOR
+# (ölçüm: perdede R/G 2.65, B/G 1.95; beyaz kâğıtta 1.12 / 1.00 — tek bir
+# beyaz dengesi kazancı ikisini birden düzeltemez). Kalıcı çözüm lense
+# 650 nm IR-cut filtre. O gelene kadar: parlaklığı (Y) alt eşiğin altındaki
+# pikseller griye çekilir, üst eşiğin üstündekilere dokunulmaz, arası
+# doğrusal. Balonlar/maketler parlak (Y > 60) olduğu için etkilenmez.
+# (alt, ust) Y eşikleri, 0-255. None = kapalı. `kamera_renk.py` 'd' tuşu
+# ile önizlenir. Bedeli: 1920x1200'de ~10 ms CPU/kare (kamera sürecinde).
+HUNTER_DARK_DESAT = None    # örn. (35, 80)
 
 # Pozlama süresi üst sınırı (saniye). Hareket bulanıklığı =
 # taret_hızı x pozlama / derece_piksel.

@@ -24,6 +24,8 @@ Pencerede tuşlar:
     k       yazılım beyaz dengesi: ortadaki kareyi GRİ kabul et, kanal
             kazançlarını hesapla (HUNTER_WB_GAINS) — sürücü sıcaklığı
             tutmuyorsa (TUTMADI) tek çare budur
+    d       karanlıkta doygunluk kırma AÇ/KAPA (IR sızıntısı: mor perde)
+    , / .   kırma alt eşiği ±5   (üst eşik = alt + 45)
     s       kareyi PNG kaydet      w  config'e yazılacak satırları bas
     q       çık
 
@@ -38,6 +40,7 @@ import cv2
 import numpy as np
 
 import config
+from camera_module import karanlik_doygunluk_kir
 
 OZELLIK = {
     "auto_wb": cv2.CAP_PROP_AUTO_WB, "wb": cv2.CAP_PROP_WB_TEMPERATURE,
@@ -87,6 +90,7 @@ def main():
           "arayüz açılınca config'teki auto_wb=0 / 4600 uygulanıyor.)")
 
     kazanc = None          # yazılım beyaz dengesi (b, g, r)
+    desat = None           # (alt, ust) Y eşikleri; None = kapalı
     son_yazi = ""
     cv2.namedWindow("kamera_renk", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("kamera_renk", 1280, 800)
@@ -99,12 +103,15 @@ def main():
         goster = kare
         if kazanc is not None:
             goster = np.clip(kare.astype(np.float32) * np.array(kazanc, np.float32), 0, 255).astype(np.uint8)
+        if desat is not None:
+            goster = karanlik_doygunluk_kir(goster, desat[0], desat[1])
         b, g, r = gri_dunya(goster, kutu)
         d = oku(cap)
         satir1 = (f"auto_wb {d['auto_wb']:g}  wb {d['wb']:g}K  auto_exp {d['auto_exp']:g}  exp {d['exp']:g}  "
                   f"gain {d['gain']:g}  sat {d['sat']:g}")
         satir2 = (f"ORTA: B {b:5.1f} G {g:5.1f} R {r:5.1f}   R/G {r / max(g, 1):.2f}  B/G {b / max(g, 1):.2f}"
-                  f"   yazilim WB {'AÇIK ' + str(tuple(round(k, 3) for k in kazanc)) if kazanc else 'kapali'}")
+                  f"   yazilim WB {'AÇIK ' + str(tuple(round(k, 3) for k in kazanc)) if kazanc else 'kapali'}"
+                  f"   karanlik kirma {desat if desat else 'kapali'}")
         ekran = goster.copy()
         cv2.rectangle(ekran, kutu[:2], kutu[2:], (0, 255, 0), 2)
         for i, s in enumerate((satir1, satir2, son_yazi)):
@@ -127,9 +134,12 @@ def main():
             while time.time() - t0 < 3.0:
                 cap.read()
             oturan = cap.get(OZELLIK["wb"])
-            ayarla(cap, "auto_wb", 0)
-            ayarla(cap, "wb", oturan)
-            son_yazi = f"otomatik {oturan:g} K'de oturdu ve kilitlendi -> config: wb_temperature={oturan:g}"
+            if oturan < 0:
+                son_yazi = "sürücü sıcaklık vermiyor (wb=-1): kilitlenemez, auto_wb=1 bırakıldı"
+            else:
+                ayarla(cap, "auto_wb", 0)
+                ayarla(cap, "wb", oturan)
+                son_yazi = f"otomatik {oturan:g} K'de oturdu ve kilitlendi -> config: wb_temperature={oturan:g}"
             print(son_yazi)
         elif k == ord("e"):
             ayarla(cap, "auto_exp", 0.25 if d["auto_exp"] > 0.5 else 0.75)
@@ -152,6 +162,12 @@ def main():
             kazanc = (g0 / max(b0, 1), 1.0, g0 / max(r0, 1))
             son_yazi = f"yazilim WB kazanclari (B,G,R) = ({kazanc[0]:.3f}, 1.000, {kazanc[2]:.3f})"
             print(son_yazi)
+        elif k == ord("d"):
+            desat = None if desat else (35, 80)
+            son_yazi = f"karanlik kirma {desat if desat else 'kapali'}"
+        elif k in (ord(","), ord(".")) and desat:
+            alt = max(0, min(150, desat[0] + (5 if k == ord(".") else -5)))
+            desat = (alt, alt + 45); son_yazi = f"karanlik kirma {desat}"
         elif k == ord("s"):
             ad = time.strftime("kamera_renk_%H%M%S.png")
             cv2.imencode(".png", goster)[1].tofile(ad); print("kaydedildi:", ad)
@@ -161,6 +177,8 @@ def main():
             print(f"    'auto_exposure': {d['auto_exp']:g},  'exposure': {d['exp']:g},  'gain': {d['gain']:g},  'saturation': {d['sat']:g},")
             if kazanc:
                 print(f"config.HUNTER_WB_GAINS = ({kazanc[0]:.3f}, 1.000, {kazanc[2]:.3f})   # yazilim beyaz dengesi")
+            if desat:
+                print(f"config.HUNTER_DARK_DESAT = {desat}   # karanlikta doygunluk kirma")
     cap.release(); cv2.destroyAllWindows()
     return 0
 

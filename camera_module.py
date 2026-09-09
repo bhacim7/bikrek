@@ -68,6 +68,25 @@ def _yazilim_beyaz_dengesi(frame, kamera_adi):
     return out
 
 
+def karanlik_doygunluk_kir(frame, alt, ust):
+    """Y < alt olan pikselleri griye çeker, Y > ust'e dokunmaz, arası doğrusal.
+    IR sızıntısının mor siyahını siyah yapar; parlak nesnelere etkisi yok."""
+    ycc = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+    y = ycc[:, :, 0].astype(np.float32)
+    w = np.clip((y - float(alt)) / max(float(ust - alt), 1.0), 0.0, 1.0)
+    for c in (1, 2):
+        ch = ycc[:, :, c].astype(np.float32)
+        ycc[:, :, c] = np.clip(128.0 + (ch - 128.0) * w, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(ycc, cv2.COLOR_YCrCb2BGR)
+
+
+def _karanlik_doygunluk(frame, kamera_adi):
+    esik = getattr(config, "HUNTER_DARK_DESAT", None)
+    if kamera_adi != "hunter" or not esik:
+        return frame
+    return karanlik_doygunluk_kir(frame, esik[0], esik[1])
+
+
 def _fourcc_metni(capture):
     """Sürücüyle müzakere edilen görüntü formatını okunur hale getirir."""
     try:
@@ -225,6 +244,7 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
             if ret and frame is not None and frame.size > 0:
                 frame = _model_oranina_kirp(frame, kamera_adi)
                 frame = _yazilim_beyaz_dengesi(frame, kamera_adi)
+                frame = _karanlik_doygunluk(frame, kamera_adi)
                 ardisik_hata = 0
                 # Discard old frames if queue is full (keep it real-time)
                 if frame_queue.full():
