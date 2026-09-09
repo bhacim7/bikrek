@@ -272,7 +272,8 @@ HUNTER_WB_GAINS = None      # örn. (0.95, 1.0, 0.78)
 # doğrusal. Balonlar/maketler parlak (Y > 60) olduğu için etkilenmez.
 # (alt, ust) Y eşikleri, 0-255. None = kapalı. `kamera_renk.py` 'd' tuşu
 # ile önizlenir. Bedeli: 1920x1200'de ~6-8 ms CPU/kare (kamera sürecinde).
-HUNTER_DARK_DESAT = None    # örn. (35, 80)
+HUNTER_DARK_DESAT = (5, 50)    # sahada secildi (2026-09-09): daha yuksek esik balonun
+                               # golgeli kenarini griye cekiyordu; IR-cut filtre gelince None
 
 # Pozlama süresi üst sınırı (saniye). Hareket bulanıklığı =
 # taret_hızı x pozlama / derece_piksel.
