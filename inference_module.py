@@ -335,8 +335,9 @@ class YoloModel:
         if len(sekil) == 3 and sekil[2] == 6 and sekil[1] > 6:
             # YOLO26 uçtan uca çıkış: [1, max_det, (x1,y1,x2,y2,güven,sınıf)].
             # Sınıf sayısı çıkıştan okunamaz; config'e güvenilir.
-            print(f"inference: uçtan uca çıkış {sekil} (NMS'siz, en fazla {sekil[1]} tespit); "
-                  f"config.CLASSES {n_cfg} sınıf — sınıf sayısı bu düzende doğrulanamaz.")
+            print(f"inference: model hazır tespit listesi veriyor {sekil} (NMS modelin içinde, "
+                  f"en fazla {sekil[1]} tespit/kare). config.CLASSES {n_cfg} sınıf; bu düzende "
+                  f"çıkıştan sınıf sayısı okunamadığı için liste data.yaml ile elle tutarlı olmalı.")
             sys.stdout.flush()
             return
         nc = sekil[1] - 4 if len(sekil) == 3 else None
