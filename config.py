@@ -272,6 +272,20 @@ HUNTER_WB_GAINS = None      # örn. (0.95, 1.0, 0.78)
 # doğrusal. Balonlar/maketler parlak (Y > 60) olduğu için etkilenmez.
 # (alt, ust) Y eşikleri, 0-255. None = kapalı. `kamera_renk.py` 'd' tuşu
 # ile önizlenir. Bedeli: 1920x1200'de ~6-8 ms CPU/kare (kamera sürecinde).
+# --- MACENTA KIRMA (avcı, IR sızıntısına karşı; gün ışığında ŞART) ---
+# Kızılötesi R ve B kanallarını birlikte yükseltir, G'yi yükseltmez
+# (ölçüm: perdede R/G 2.65, B/G 1.95). Gün ışığında siyah perde PARLAK
+# PEMBE olur; karanlıkta doygunluk kırma parlak pikseli görmez.
+# Burada: m = max(0, min(R, B) - G) ; R -= m·güç ; B -= m·güç.
+# m yalnızca R ve B'nin İKİSİ de G'den yüksekken sıfırdan büyük, yani:
+#   kırmızı balon (B < G)  -> m = 0, DOKUNULMAZ
+#   mavi maket   (R < G)   -> m = 0, DOKUNULMAZ (mor kayması varsa azalır)
+#   ten, zemin   (B < G)   -> DOKUNULMAZ
+#   pembe perde  (R,B > G) -> griye çekilir
+# Güç 0..1; 1.0 = ortak fazlalığın tamamı. None/0 = kapalı. ~4 ms/kare.
+# IR-cut filtre takılınca None. `kamera_renk.py` 'm' ile önizlenir.
+HUNTER_MAGENTA_KIR = 1.0
+
 HUNTER_DARK_DESAT = (5, 50)    # sahada secildi (2026-09-09): daha yuksek esik balonun
                                # golgeli kenarini griye cekiyordu; IR-cut filtre gelince None
 

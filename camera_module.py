@@ -89,6 +89,24 @@ def karanlik_doygunluk_kir(frame, alt, ust):
     return cv2.blendLinear(gri3, frame, 1.0 - w, w)
 
 
+def macenta_kir(frame, guc=1.0):
+    """IR sızıntısının imzası olan ortak R+B fazlalığını çıkarır.
+    m = max(0, min(R,B) - G); R -= m·güç; B -= m·güç. B<G veya R<G olan
+    piksellerde (kırmızı, mavi, ten, zemin) m = 0, dokunulmaz."""
+    b, g, r = cv2.split(frame)
+    m = cv2.subtract(cv2.min(r, b), g)                 # doygun çıkarma: negatif -> 0
+    if guc != 1.0:
+        m = cv2.convertScaleAbs(m, alpha=float(guc))
+    return cv2.merge([cv2.subtract(b, m), g, cv2.subtract(r, m)])
+
+
+def _macenta(frame, kamera_adi):
+    guc = getattr(config, "HUNTER_MAGENTA_KIR", None)
+    if kamera_adi != "hunter" or not guc:
+        return frame
+    return macenta_kir(frame, guc)
+
+
 def _karanlik_doygunluk(frame, kamera_adi):
     esik = getattr(config, "HUNTER_DARK_DESAT", None)
     if kamera_adi != "hunter" or not esik:
@@ -253,6 +271,7 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
             if ret and frame is not None and frame.size > 0:
                 frame = _model_oranina_kirp(frame, kamera_adi)
                 frame = _yazilim_beyaz_dengesi(frame, kamera_adi)
+                frame = _macenta(frame, kamera_adi)
                 frame = _karanlik_doygunluk(frame, kamera_adi)
                 ardisik_hata = 0
                 # Discard old frames if queue is full (keep it real-time)
