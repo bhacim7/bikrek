@@ -328,12 +328,20 @@ class YoloModel:
         """Model çıkışı [1, 4+nc, N]; nc, config.CLASSES uzunluğuyla eşleşmeli.
         Eşleşmezse sınıf adları sessizce kayar — bağır."""
         try:
-            nc = int(output_shape[1]) - 4 if len(output_shape) == 3 else None
+            sekil = tuple(int(x) for x in output_shape)
         except Exception:
             return
         n_cfg = len(config.CLASSES)
+        if len(sekil) == 3 and sekil[2] == 6 and sekil[1] > 6:
+            # YOLO26 uçtan uca çıkış: [1, max_det, (x1,y1,x2,y2,güven,sınıf)].
+            # Sınıf sayısı çıkıştan okunamaz; config'e güvenilir.
+            print(f"inference: uçtan uca çıkış {sekil} (NMS'siz, en fazla {sekil[1]} tespit); "
+                  f"config.CLASSES {n_cfg} sınıf — sınıf sayısı bu düzende doğrulanamaz.")
+            sys.stdout.flush()
+            return
+        nc = sekil[1] - 4 if len(sekil) == 3 else None
         if nc is None:
-            print(f"UYARI (inference): beklenmeyen çıkış şekli {tuple(output_shape)}; [1, 4+nc, N] bekleniyordu.")
+            print(f"UYARI (inference): beklenmeyen çıkış şekli {sekil}; [1, 4+nc, N] veya [1, N, 6] bekleniyordu.")
         elif nc != n_cfg:
             print("=" * 70)
             print(f"!!! SINIF SAYISI UYUŞMUYOR: model {nc} sınıf üretiyor, config.CLASSES {n_cfg} isim taşıyor.")
@@ -344,12 +352,36 @@ class YoloModel:
             print(f"inference: model {nc} sınıf, config.CLASSES {n_cfg} — uyumlu.")
         sys.stdout.flush()
 
+    def _postprocess_uctan_uca(self, satirlar, orig_width, orig_height, classes_list):
+        """YOLO26 uçtan uca çıkış: her satır (x1, y1, x2, y2, güven, sınıf), model
+        giriş pikselinde, NMS uygulanmış. Yeni ultralytics ile eğitilen .pt'ler
+        (v23+) bu düzende export oluyor; eskiler [1, 4+nc, N] veriyordu. Bu düzen
+        eski koda girince koordinat skor sanılıyor ("Unknown (600.50)")."""
+        sx = orig_width / float(self.img_width)
+        sy = orig_height / float(self.img_height)
+        detections = []
+        for x1, y1, x2, y2, conf, cls in satirlar:
+            if conf < config.CONF_THRESHOLD:
+                continue
+            ci = int(round(float(cls)))
+            detections.append({
+                'bbox': (int(x1 * sx), int(y1 * sy), int((x2 - x1) * sx), int((y2 - y1) * sy)),
+                'score': float(conf),
+                'class_name': classes_list[ci] if 0 <= ci < len(classes_list) else "Unknown",
+            })
+        return detections
+
     def _postprocess(self, output, orig_width, orig_height, classes_list):
         boxes = []
         confidences = []
         class_ids = []
 
-        predictions = np.squeeze(output).T
+        ham = np.squeeze(output)
+        # Düzen ayrımı: [N, 6] (N > 6) = uçtan uca; [4+nc, N] = klasik.
+        if ham.ndim == 2 and ham.shape[1] == 6 and ham.shape[0] > 6:
+            return self._postprocess_uctan_uca(ham, orig_width, orig_height, classes_list)
+
+        predictions = ham.T
         scores = np.max(predictions[:, 4:], axis=1)
         valid_predictions = predictions[scores > config.CONF_THRESHOLD]
         valid_scores = scores[scores > config.CONF_THRESHOLD]

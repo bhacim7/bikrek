@@ -1136,6 +1136,31 @@ kontrol("config.CLASSES v23 data.yaml ile birebir ayni (7 sinif, ayni sira)", li
 kontrol("balon sinifi listede ve BALLOON_CLASS ile ayni", config.BALLOON_CLASS in config.CLASSES)
 kontrol("dusman-Helikopter 'dusman-' on ekiyle dusman sayiliyor", config.CLASSES[6].startswith('dusman-'))
 
+# --- 21. CIKARIM CIKIS DUZENLERI: klasik [1,4+nc,N] ve uctan uca [1,N,6] ---
+print()
+print("=" * 70)
+print("21. CIKARIM CIKIS DUZENLERI — klasik ve uctan uca (v23)")
+print("=" * 70)
+import inference_module as im
+_m = im.YoloModel.__new__(im.YoloModel)          # model yuklemeden
+_m.img_width, _m.img_height = 1056, 608
+_S = ['balon', 'dost-F16', 'dost-Helikopter', 'dusman-Drone', 'dusman-F16', 'dusman-Fuze', 'dusman-Helikopter']
+# uctan uca: 300 satir, ilki dusman-Helikopter 0.9 guvenle (100,50)-(200,150), ikincisi dusuk guven
+_e = np.zeros((1, 300, 6), np.float32)
+_e[0, 0] = (100, 50, 200, 150, 0.90, 6)
+_e[0, 1] = (300, 60, 340, 100, 0.10, 0)
+_d = _m._postprocess(_e, 1920, 1105, _S)      # 1920/1056 = 1.818 olcek
+kontrol("uctan uca: 1 tespit (dusuk guven elendi)", len(_d) == 1, str(_d))
+kontrol("uctan uca: sinif adi 'dusman-Helikopter' (indeks 6)", _d and _d[0]['class_name'] == 'dusman-Helikopter')
+kontrol("uctan uca: skor 0.90, koordinat skor sanilmiyor", _d and abs(_d[0]['score'] - 0.90) < 1e-6)
+kontrol("uctan uca: kutu ham kareye olceklendi (x 181, w 181)", _d and _d[0]['bbox'][0] == 181 and _d[0]['bbox'][2] == 181, str(_d and _d[0]['bbox']))
+# klasik: [1, 11, N] — bir hucrede balon 0.95
+_k = np.zeros((1, 11, 50), np.float32)
+_k[0, :4, 7] = (150, 100, 40, 40)              # cx, cy, w, h
+_k[0, 4 + 0, 7] = 0.95                         # balon
+_d2 = _m._postprocess(_k, 1920, 1105, _S)
+kontrol("klasik duzen hala calisiyor: 1 balon, skor 0.95", len(_d2) == 1 and _d2[0]['class_name'] == 'balon' and abs(_d2[0]['score'] - 0.95) < 1e-6, str(_d2))
+
 print()
 print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
