@@ -20,6 +20,16 @@ import motor_fire_module
 print("DEBUG (Satır 17 - motor_fire_module import edildi.)")
 sys.stdout.flush()
 
+# Yaw enkoderi (FAZ 3: yalnızca oku ve raporla). Yüklenemezse sunucu
+# enkodersiz çalışmaya devam eder; PC "enk: YOK" görür.
+try:
+    import encoder_module
+    print("DEBUG (rpi_motor_server): encoder_module import edildi.")
+except Exception as _e:
+    encoder_module = None
+    print(f"UYARI (rpi_motor_server): encoder_module yüklenemedi, enkodersiz devam: {_e}")
+sys.stdout.flush()
+
 # Raspberry Pi GPIO kütüphanesini içeri aktar (eğer Linux'ta çalışıyorsa)
 # Bu LGpio nesnesi sadece emergency_stop_handler için kullanılır.
 # Motor ve ateşleme kontrolü motor_fire_module içinde yönetilir.
@@ -51,6 +61,10 @@ PORT = 12345  # PC uygulamasındaki port ile aynı olmalı
 # Bağlantı durumu bayrakları
 client_connected = threading.Event()
 client_connected.clear()
+
+# Saniyede onlarca kez gelen komutlar; her birini yazdırmak (flush ile) SSH
+# üzerinde işlemeyi yavaşlatır ve komut kuyruğunun birikmesine yol açar.
+_SESSIZ_KOMUTLAR = ("move_by_direction", "set_proportional_angles_delta")
 
 # Global bağlantı değişkenleri
 conn = None
@@ -84,9 +98,27 @@ def angle_sender_loop():
                 "current_yaw": current_yaw,
                 "current_pitch": current_pitch
             }
+            # Enkoder alanları: encoder_ok / encoder_yaw / encoder_raw.
+            # current_yaw DEĞİŞMİYOR — hâlâ adım sayacı (FAZ 3).
+            if encoder_module is not None:
+                rap = encoder_module.rapor()
+                # FAZ 5': taret duruyorsa adım sayacını enkodere hizala.
+                # get_current_angles bir sonraki turda düzeltilmiş değeri verir.
+                motor_fire_module.enkoder_hizala(rap.get("encoder_yaw"))
+                response.update(rap)
+                response.update(motor_fire_module.hizalama_durumu())
             if conn:
                 conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
-            time.sleep(0.07)  # Her 100ms'de bir açıları gönder
+            # 50 Hz. Bu oran sadece arayüzdeki göstergeyi değil, PC'deki ölü
+            # zaman telafisini besleyen AÇI GEÇMİŞİNİ belirliyor. Kare çekildiği
+            # andaki taret açısı bu geçmişten aradeğerlenerek okunuyor; örnekler
+            # seyrek olduğunda okunan açı gerçeğinden sapıyor ve sapma taret
+            # hızıyla orantılı olduğu için hedefin dünya açısında sahte bir
+            # hareket üretiyor. 20 Hz'de bu sahte hız 8-15 derece/sn ölçüldü —
+            # elde gezdirilen balonun gerçek hızı kadar. 50 Hz + aradeğerleme
+            # bunu ~1 derece/sn'ye indiriyor.
+            # Yük ihmal edilebilir: saniyede 50 küçük JSON satırı.
+            time.sleep(0.02)
         except BrokenPipeError:
             print("UYARI (rpi_motor_server): Açı gönderilirken bağlantı kesildi (BrokenPipeError).")
             sys.stdout.flush()
@@ -103,23 +135,23 @@ def angle_sender_loop():
 
 
 # Manuel hareket döngüsü (rpi_motor_server'da kalır, ancak motor_fire_module'den komutları alır)
-def manual_move_loop():
-    while client_connected.is_set():
-        # motor_fire_module'deki global değişkenleri kullanarak hareket et
-        # Bu değerler set_manual_move_direction tarafından ayarlanır
-        yaw_dir = motor_fire_module._yaw_moving_direction
-        pitch_dir = motor_fire_module._pitch_moving_direction
-        degrees_to_move = motor_fire_module._manual_degrees_to_move
+def motion_loop():
+    """
+    Tüm motor hareketini sürekli bir akış olarak yürütür: hem manuel hem otonom.
 
-        if (yaw_dir != 0 or pitch_dir != 0) and degrees_to_move > 0:
-            # Bu fonksiyon artık motor_fire_module içinde adım hesaplamasını yapıyor
-            motor_fire_module.perform_manual_move_step()  # Artık parametre almıyor
-            # Manuel hareket komutları arasındaki gecikme.
-            # PC tarafı 30ms'de bir komut gönderiyorsa, burası da ona yakın olmalı.
-            time.sleep(0.03)  # 30ms gecikme
-        else:
-            time.sleep(0.01)  # Hareket yoksa kısa bir bekleme
-    print("DEBUG (rpi_motor_server): Manuel hareket döngüsü sonlandı.")
+    perform_motion_step() tek bir adım darbesi üretir ve adım zamanlamasını
+    kendi içinde yapar; rampa çağrılar arasında korunduğu için hız kademeli
+    olarak tepe hıza çıkar. Buraya ek bir bekleme KOYULMAMALIDIR, aksi halde
+    adım frekansı düşer ve hareket yavaşlar.
+
+    Hareketin bu döngüde yürümesi, komut işlemeyi bloklamamasını sağlar:
+    soket döngüsü motor dönerken de yeni komut okuyabilir.
+    """
+    while client_connected.is_set():
+        if not motor_fire_module.perform_motion_step():
+            # Hareket yok; boşta CPU yakmamak için kısa bekleme.
+            time.sleep(0.005)
+    print("DEBUG (rpi_motor_server): Hareket döngüsü sonlandı.")
     sys.stdout.flush()
 
 
@@ -135,6 +167,15 @@ def run_server():
         print("KRİTİK HATA: GPIO başlatılamadı, sunucu başlatılamıyor.")
         sys.stdout.flush()
         return
+
+    # Yaw enkoderi. Açılamazsa (USB takılı değil, güç yok) sunucu yine
+    # çalışır; kontrol enkodere bağlı değil.
+    if encoder_module is not None:
+        try:
+            encoder_module.baslat()
+        except Exception as e:
+            print(f"UYARI (rpi_motor_server): enkoder başlatılamadı: {e}")
+            sys.stdout.flush()
 
     # Acil durdurma butonu dinleyicisini ayarla
     if LGpio:
@@ -181,15 +222,15 @@ def run_server():
     angle_sender_thread.daemon = True  # Ana program kapanınca bu thread de kapanır
 
     # Manuel hareket iş parçacığını başlat
-    manual_move_thread = threading.Thread(target=manual_move_loop)
+    manual_move_thread = threading.Thread(target=motion_loop)
     manual_move_thread.daemon = True
 
     try:
         conn, addr = server_socket.accept()
-        
+
         # NAGLE ALGORİTMASI DEVRE DIŞI BIRAKMA
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        
+
         conn.settimeout(0.01)  # Engellemeyen okuma için kısa zaman aşımı
         client_connected.set()
         print(f"DEBUG (rpi_motor_server): Bağlantı kabul edildi: {addr}")
@@ -211,8 +252,12 @@ def run_server():
                     line, buffer = buffer.split('\n', 1)
                     try:
                         command = json.loads(line)
-                        print(f"DEBUG (rpi_motor_server): Komut alındı: {command}")
-                        sys.stdout.flush()
+                        # Yüksek frekanslı komutlar (manuel hareket, PID) yazdırılmaz:
+                        # her satırda flush yapmak SSH üzerinde komut işlemeyi
+                        # yavaşlatıp kuyruk birikmesine yol açıyordu.
+                        if command.get("action") not in _SESSIZ_KOMUTLAR:
+                            print(f"DEBUG (rpi_motor_server): Komut alındı: {command}")
+                            sys.stdout.flush()
                         process_command(command)
                     except json.JSONDecodeError:
                         print(f"HATA (rpi_motor_server): Geçersiz JSON alındı: {line}")
@@ -263,7 +308,8 @@ def process_command(command):
         yaw = command.get("yaw", motor_fire_module.get_current_angles()[0])
         pitch = command.get("pitch", motor_fire_module.get_current_angles()[1])
 
-        motor_fire_module.set_motor_angles(yaw, pitch)
+        # Bloklamaz: yalnızca hedefi ayarlar, hareketi motion_loop yürütür.
+        motor_fire_module.set_target_angles(yaw, pitch)
 
         response = {"action": "set_angles", "status": "ok", "current_yaw": motor_fire_module.get_current_angles()[0],
                     "current_pitch": motor_fire_module.get_current_angles()[1]}
@@ -283,6 +329,9 @@ def process_command(command):
         sys.stdout.flush()
     elif action == "reset_angles":
         motor_fire_module.reset_current_angles()
+        # Enkoder de aynı noktayı 0° saysın; yoksa ekranda anlamsız bir fark kalır.
+        if encoder_module is not None:
+            encoder_module.sifirla()
         response = {"action": "reset_angles", "status": "ok", "message": "Açılar sıfırlandı."}
         print("DEBUG (rpi_motor_server): 'reset_angles' komutu işlendi.")
         sys.stdout.flush()
@@ -296,9 +345,7 @@ def process_command(command):
         current_yaw, current_pitch = motor_fire_module.get_current_angles()
         response = {"action": "move_by_direction", "status": "ok", "current_yaw": current_yaw,
                     "current_pitch": current_pitch}
-        print(
-            f"DEBUG (rpi_motor_server): 'move_by_direction' komutu işlendi. Yaw Yön: {yaw_dir}, Pitch Yön: {pitch_dir}, Derece: {degrees_to_move}")
-        sys.stdout.flush()
+        # Yazdırılmıyor: yön değişimini motor_fire_module zaten bir kez raporluyor.
     elif action == "set_proportional_angles_delta":
         delta_yaw = command.get("delta_yaw", 0.0)
         delta_pitch = command.get("delta_pitch", 0.0)
@@ -307,14 +354,14 @@ def process_command(command):
         target_yaw = current_yaw + delta_yaw
         target_pitch = current_pitch + delta_pitch
 
-        motor_fire_module.set_motor_angles(target_yaw, target_pitch)
+        # Bloklamaz. Yeni hedef eskisinin yerine geçtiği için PC saniyede
+        # onlarca komut gönderse bile kuyruk birikmesi olamaz.
+        motor_fire_module.set_target_angles(target_yaw, target_pitch)
 
         current_yaw, current_pitch = motor_fire_module.get_current_angles()
         response = {"action": "set_proportional_angles_delta", "status": "ok", "current_yaw": current_yaw,
                     "current_pitch": current_pitch}
-        print(
-            f"DEBUG (rpi_motor_server): 'set_proportional_angles_delta' komutu işlendi. Delta Yaw: {delta_yaw:.2f}, Delta Pitch: {delta_pitch:.2f}")
-        sys.stdout.flush()
+        # Yazdırılmıyor: PID saniyede onlarca kez bu komutu gönderiyor.
     else:
         print(f"UYARI (rpi_motor_server): Bilinmeyen komut alındı: {command}")
         sys.stdout.flush()
@@ -352,6 +399,8 @@ def cleanup_on_exit():
         sys.stdout.flush()
 
     motor_fire_module.stop_all_motors()  # Tüm motorları durdur ve devre dışı bırak
+    if encoder_module is not None:
+        encoder_module.kapat()
     motor_fire_module.cleanup_gpio()
     print("DEBUG (rpi_motor_server): motor_fire_module.cleanup_gpio() çağrıldı.")
     sys.stdout.flush()

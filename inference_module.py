@@ -1,13 +1,154 @@
 import cv2
+import math
 import time
 import queue
 import numpy as np
+import sys
 import traceback
 import json
 import config
 
 # UI'a gönderilen karenin genişliği. Yükseklik en-boy oranından hesaplanır.
-DISPLAY_WIDTH = 810
+# Saha ayarı olduğu için config.py'a taşındı (gerekçe orada).
+DISPLAY_WIDTH = config.DISPLAY_WIDTH
+
+# --- Sınıf adından renk çıkarımı (hayalet filtresi için) ---
+# Anahtar: sınıf adında aranacak parça. Değer: HSV aralıkları listesi.
+# OpenCV HSV'de H 0-179 aralığındadır; kırmızı iki uçta olduğu için iki aralık.
+# NOT: Kırmızı aralık sahada ölçülmüş veriyle doğrulandı. Mavi ve yeşil
+# aralıklar tipik değerlerdir, sahada doğrulanmadı; bu yüzden eşik gevşek
+# tutuldu (yanlışlıkla gerçek tespit elemekten kaçınmak için).
+# Mavi doygunluk eşiği kasıtlı olarak yüksek (140): sahadaki soluk camgöbeği
+# duvar (H=95, S=77) S>100 ile mavi oranını %5.63'e çıkarıp eşiği kıl payı
+# aşıyordu ve karenin %85'ini kaplayan sahte bir 'blue_balloon' filtreden
+# geçmişti. S>140 ile duvarın katkısı %0.16'ya düşüyor; gerçek bir mavi balon
+# bu doygunluğu rahatça aşar.
+_KIRMIZI = [((0, 120, 70), (10, 255, 255)), ((170, 120, 70), (179, 255, 255))]
+# GOZCU ILE AYNI DEGERDE OLMALI (config.SPOTTER_BLUE_RANGES).
+# Eski ((100,140,60),(130,255,255)) sahada olculdu ve cok katiydi: mavi
+# maketin doygunlugu S medyan 32 cikiyor. Burada kati kalirsa YOLO'nun
+# dost-* tespitleri renk tutarlilik kontrolunden ELENIR ve dost hic
+# taninmaz. Gozcudeki esikle BIRLIKTE gevsetildi.
+_MAVI = [((90, 80, 45), (135, 255, 255))]
+
+
+def _sinif_rengi(class_name):
+    """
+    Sınıf adından beklenen rengi çıkarır; bilinmiyorsa None.
+
+    Yeni sınıf şeması: 'balon' (kırmızı), 'dost-*' (mavi), 'dusman-*'
+    (kırmızı). Bu eşleme YENİ MİMARİDE KRİTİK: dost-F16 ile dusman-F16 aynı
+    geometriye sahip ve YOLO'nun onları ayırdığı tek şey renk. Bu filtre,
+    modelin renk kararını bağımsız olarak çapraz doğrular.
+    """
+    ad = (class_name or '').lower()
+    if ad.startswith(config.FRIEND_PREFIX.lower()):
+        return _MAVI
+    if ad.startswith(config.ENEMY_PREFIX.lower()):
+        return _KIRMIZI
+    if ad == config.BALLOON_CLASS.lower():
+        return _KIRMIZI
+    return None
+
+
+def _renk_tutarli_mi(frame, bbox, renk):
+    """
+    Kutunun içinde sınıfın ima ettiği renk gerçekten var mı?
+
+    YOLO bu sahnede düz tavanda 'red_balloon' üretiyor (sahada güven 0.66'ya
+    kadar çıktı). Sınıfın adı rengi söylediğine göre, kutuda o renkten eser
+    olmaması tespitin sahte olduğunun güçlü göstergesidir. Ölçümde gerçek
+    balon kutuları ortalama %77, hayaletler %0.1 renk içeriyordu.
+    """
+    x, y, w, h = [int(v) for v in bbox]
+    yuk, gen = frame.shape[:2]
+    # Kenar payı bırak: kutu sınırları arka planı kapsayabilir
+    pay_x, pay_y = max(1, w // 8), max(1, h // 8)
+    x0, y0 = max(0, x + pay_x), max(0, y + pay_y)
+    x1, y1 = min(gen, x + w - pay_x), min(yuk, y + h - pay_y)
+    if x1 <= x0 or y1 <= y0:
+        return True  # Ölçemiyorsak elemeyiz
+
+    kirp = frame[y0:y1, x0:x1]
+    hsv = cv2.cvtColor(kirp, cv2.COLOR_BGR2HSV)
+    maske = None
+    for alt, ust in renk:
+        m = cv2.inRange(hsv, np.array(alt, np.uint8), np.array(ust, np.uint8))
+        maske = m if maske is None else cv2.bitwise_or(maske, m)
+    oran = float(np.count_nonzero(maske)) / maske.size
+    return oran >= config.DETECTION_COLOR_MIN_RATIO
+
+
+def _boyut_makul_mu(frame, bbox):
+    """
+    Kutu karenin makul bir oranından büyük mü?
+
+    Renk kontrolünden bağımsız ikinci savunma hattı. Sahada karenin %85'ini
+    kaplayan sahte bir tespit üretildi; balon hangi mesafede olursa olsun
+    kareyi bu kadar dolduramaz.
+    """
+    _, _, w, h = bbox
+    yuk, gen = frame.shape[:2]
+    if gen <= 0 or yuk <= 0:
+        return True
+    return (float(w) * float(h)) / (gen * yuk) <= config.DETECTION_MAX_AREA_RATIO
+
+
+def _acisal_boyut_siniri(class_name):
+    """
+    Bu sınıf için fiziksel olarak mümkün piksel boyut aralığı.
+
+    Hedeflerin gerçek boyutu ve mesafe aralığı biliniyor, yani bir tespitin
+    piksel boyutu keyfi olamaz. Alan oranı kapısı bu iş için çok gevşek:
+    1920x1105'te 728x728'e kadar her kutu geçiyor ve 50 cm'lik bir maket bu
+    boyuta ancak 2.7 metrede ulaşır — yani pratikte hiçbir hayaleti kesmiyor.
+
+    Kapı `DEGREES_PER_PIXEL` üzerinden tanımlı olduğu için çözünürlük veya
+    lens değişince kendiliğinden ölçekleniyor.
+    """
+    ad = (class_name or '').lower()
+    if ad == config.BALLOON_CLASS.lower():
+        boy = config.GERCEK_BOYUTLAR_M.get('balon')
+    elif (ad.startswith(config.FRIEND_PREFIX.lower())
+          or ad.startswith(config.ENEMY_PREFIX.lower())):
+        boy = config.GERCEK_BOYUTLAR_M.get('maket')
+    else:
+        return None
+    dpp = abs(config.DEGREES_PER_PIXEL_YAW)
+    if not boy or dpp <= 0:
+        return None
+    uzak = 2 * math.degrees(math.atan(boy / 2 / config.TARGET_MAX_RANGE_M)) / dpp
+    yakin = 2 * math.degrees(math.atan(boy / 2 / config.TARGET_MIN_RANGE_M)) / dpp
+    return (uzak * config.DETECTION_SIZE_MIN_MARGIN,
+            yakin * config.DETECTION_SIZE_MAX_MARGIN)
+
+
+def _acisal_boyut_makul_mu(bbox, class_name):
+    """Tespitin en büyük kenarı fiziksel olarak mümkün aralıkta mı?"""
+    if not config.DETECTION_SIZE_CHECK:
+        return True
+    sinir = _acisal_boyut_siniri(class_name)
+    if sinir is None:
+        return True
+    _, _, w, h = bbox
+    enb = max(float(w), float(h))
+    return sinir[0] <= enb <= sinir[1]
+
+
+def renk_filtresi(frame, detections):
+    """Saçma boyutlu ve sınıfının rengini içermeyen tespitleri eler."""
+    if not config.DETECTION_COLOR_CHECK or frame is None:
+        return detections
+    kalan = []
+    for det in detections:
+        if not _boyut_makul_mu(frame, det['bbox']):
+            continue
+        if not _acisal_boyut_makul_mu(det['bbox'], det['class_name']):
+            continue
+        renk = _sinif_rengi(det['class_name'])
+        if renk is None or _renk_tutarli_mi(frame, det['bbox'], renk):
+            kalan.append(det)
+    return kalan
 
 
 class YoloModel:
@@ -50,7 +191,25 @@ class YoloModel:
         except Exception:
             TRT_AVAILABLE = False
 
-        import onnxruntime as ort
+        # onnxruntime import'u BİLEREK tembel: yalnızca ONNX yoluna
+        # girildiğinde yapılır.
+        #
+        # Eskiden burada koşulsuz `import onnxruntime as ort` vardı ve model
+        # bir .engine olsa, TensorRT sorunsuz hazır olsa bile bu satır önce
+        # çalışıyordu. Arayüzden başlatılan çıkarım sürecinde bu satır
+        # ImportError (DLL yüklenemedi) atıyor ve load_model TensorRT dalına
+        # HİÇ ULAŞAMADAN ölüyordu.
+        #
+        # Sebebi ölçüldü: Windows'ta multiprocessing "spawn" kullanır ve çocuk
+        # süreç ana modülü (bukrek_main) yeniden import eder; bukrek_main de
+        # PyQt5 import eder. PyQt5 kendi Qt DLL'lerini arama yoluna eklediği
+        # için onnxruntime'ın yerel DLL'i yüklenemez hale geliyor. Kontrollü
+        # deney (aynı çocuk süreç, tek fark ana modülde PyQt5 olup olmaması):
+        #     PyQt5 YOK : tensorrt OK, onnxruntime OK, model OK
+        #     PyQt5 VAR : tensorrt OK, onnxruntime DLL HATASI, model HATA
+        # Görüldüğü gibi TensorRT bundan etkilenmiyor; sorun yalnızca gereksiz
+        # yere yapılan onnxruntime import'uydu.
+        ort = None
 
         if self.model_path.endswith(".engine") and TRT_AVAILABLE:
             try:
@@ -98,6 +257,8 @@ class YoloModel:
 
                 self.model_type = "tensorrt"
                 print("TensorRT engine loaded successfully.")
+                self._sinif_sayisi_kontrol(self.trt_engine.get_tensor_shape(
+                    self.trt_engine.get_tensor_name(self.trt_output_binding_idx)))
                 return
             except Exception as e:
                 print(f"Error loading TensorRT engine: {e}")
@@ -108,6 +269,8 @@ class YoloModel:
 
         if self.model_path.endswith(".onnx"):
             try:
+                if ort is None:
+                    import onnxruntime as ort
                 providers = []
                 if 'CUDAExecutionProvider' in ort.get_available_providers():
                     providers.append('CUDAExecutionProvider')
@@ -136,25 +299,90 @@ class YoloModel:
                     self.img_height = input_shape[2]
                     self.img_width = input_shape[3]
                 self.model_type = "onnx"
+                self._sinif_sayisi_kontrol(self.session.get_outputs()[0].shape)
             except Exception as e:
                 print(f"Error loading ONNX model: {e}")
                 self.model_type = None
         else:
             print("Unsupported model format.")
 
+    # Küçültme süzgeci. `yolo_kalite.py` bunu örnek üzerinden değiştirip
+    # iki seçeneği aynı sahnede karşılaştırabiliyor.
+    INTERPOLASYONLAR = {"AREA": cv2.INTER_AREA, "LINEAR": cv2.INTER_LINEAR}
+
     def _preprocess(self, frame):
-        img = cv2.resize(frame, (self.img_width, self.img_height))
+        # 1920 -> 1056 küçültmesi 1.82 kat; INTER_LINEAR bu oranda piksel
+        # atlar (aliasing + gürültü geçirir), INTER_AREA alanın tamamını
+        # ortalar. Gerekçe ve ölçüm: config.MODEL_RESIZE_INTERPOLATION.
+        yontem = self.INTERPOLASYONLAR.get(
+            getattr(self, "interpolasyon", config.MODEL_RESIZE_INTERPOLATION),
+            cv2.INTER_AREA)
+        img = cv2.resize(frame, (self.img_width, self.img_height),
+                         interpolation=yontem)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
         img = np.expand_dims(img, axis=0)
         return img
+
+    def _sinif_sayisi_kontrol(self, output_shape):
+        """Model çıkışı [1, 4+nc, N]; nc, config.CLASSES uzunluğuyla eşleşmeli.
+        Eşleşmezse sınıf adları sessizce kayar — bağır."""
+        try:
+            sekil = tuple(int(x) for x in output_shape)
+        except Exception:
+            return
+        n_cfg = len(config.CLASSES)
+        if len(sekil) == 3 and sekil[2] == 6 and sekil[1] > 6:
+            # YOLO26 uçtan uca çıkış: [1, max_det, (x1,y1,x2,y2,güven,sınıf)].
+            # Sınıf sayısı çıkıştan okunamaz; config'e güvenilir.
+            print(f"inference: model hazır tespit listesi veriyor {sekil} (NMS modelin içinde, "
+                  f"en fazla {sekil[1]} tespit/kare). config.CLASSES {n_cfg} sınıf; bu düzende "
+                  f"çıkıştan sınıf sayısı okunamadığı için liste data.yaml ile elle tutarlı olmalı.")
+            sys.stdout.flush()
+            return
+        nc = sekil[1] - 4 if len(sekil) == 3 else None
+        if nc is None:
+            print(f"UYARI (inference): beklenmeyen çıkış şekli {sekil}; [1, 4+nc, N] veya [1, N, 6] bekleniyordu.")
+        elif nc != n_cfg:
+            print("=" * 70)
+            print(f"!!! SINIF SAYISI UYUŞMUYOR: model {nc} sınıf üretiyor, config.CLASSES {n_cfg} isim taşıyor.")
+            print("!!! config.CLASSES'ı modelin data.yaml sırasıyla birebir güncelleyin; aksi halde")
+            print("!!! sınıflar yanlış ada bağlanır veya 'Unknown' düşer (dost/düşman kararı bozulur).")
+            print("=" * 70)
+        else:
+            print(f"inference: model {nc} sınıf, config.CLASSES {n_cfg} — uyumlu.")
+        sys.stdout.flush()
+
+    def _postprocess_uctan_uca(self, satirlar, orig_width, orig_height, classes_list):
+        """YOLO26 uçtan uca çıkış: her satır (x1, y1, x2, y2, güven, sınıf), model
+        giriş pikselinde, NMS uygulanmış. Yeni ultralytics ile eğitilen .pt'ler
+        (v23+) bu düzende export oluyor; eskiler [1, 4+nc, N] veriyordu. Bu düzen
+        eski koda girince koordinat skor sanılıyor ("Unknown (600.50)")."""
+        sx = orig_width / float(self.img_width)
+        sy = orig_height / float(self.img_height)
+        detections = []
+        for x1, y1, x2, y2, conf, cls in satirlar:
+            if conf < config.CONF_THRESHOLD:
+                continue
+            ci = int(round(float(cls)))
+            detections.append({
+                'bbox': (int(x1 * sx), int(y1 * sy), int((x2 - x1) * sx), int((y2 - y1) * sy)),
+                'score': float(conf),
+                'class_name': classes_list[ci] if 0 <= ci < len(classes_list) else "Unknown",
+            })
+        return detections
 
     def _postprocess(self, output, orig_width, orig_height, classes_list):
         boxes = []
         confidences = []
         class_ids = []
 
-        predictions = np.squeeze(output).T
+        ham = np.squeeze(output)
+        # Düzen ayrımı: [N, 6] (N > 6) = uçtan uca; [4+nc, N] = klasik.
+        if ham.ndim == 2 and ham.shape[1] == 6 and ham.shape[0] > 6:
+            return self._postprocess_uctan_uca(ham, orig_width, orig_height, classes_list)
+
+        predictions = ham.T
         scores = np.max(predictions[:, 4:], axis=1)
         valid_predictions = predictions[scores > config.CONF_THRESHOLD]
         valid_scores = scores[scores > config.CONF_THRESHOLD]
@@ -219,17 +447,34 @@ class YoloModel:
 
         return self._postprocess(output, orig_width, orig_height, classes_list)
 
+# Çıkarım hatası tekrar tekrar yazdırılmasın diye tek seferlik bayrak.
+_cikarim_hatasi_yazildi = [False]
+
+
 def inference_worker(command_queue, frame_queue, result_queue):
     """
     Multiprocessing worker to run AI inference on frames.
     """
     print("Inference worker started.")
+    sys.stdout.flush()
 
-    # Load models
-    model_task12 = YoloModel(config.YOLO_MODEL_PATH, config.IMG_WIDTH, config.IMG_HEIGHT)
-    model_task3 = None # Lazy load model 3
-
-    qr_detector = cv2.QRCodeDetector()
+    # ÜÇ AŞAMA DA TEK MODELİ KULLANIR. Eskiden Aşama 3 ayrı bir ağırlık
+    # yüklüyordu; artık görev değişiminde model yeniden yükleme gecikmesi yok.
+    #
+    # Model yüklemesi HATA VERİRSE süreç ölmemeli. Eskiden ölüyordu ve sonuç
+    # kuyruğuna hiçbir şey gelmediği için arayüzde görüntü tamamen kayboluyordu
+    # — kamera sapasağlam çalışırken ekran siyah kalıyordu ve sebebi
+    # arayüzden hiç anlaşılmıyordu. Artık model yoksa tespit yapılmaz ama
+    # KARELER AKMAYA DEVAM EDER; en azından görüntü görülür ve hata bellidir.
+    model = None
+    try:
+        model = YoloModel(config.YOLO_MODEL_PATH, config.IMG_WIDTH, config.IMG_HEIGHT)
+        print("Cikarim: model hazir.")
+    except Exception:
+        print("!!! CIKARIM: MODEL YUKLENEMEDI — tespit calismayacak, "
+              "goruntu akmaya devam edecek !!!")
+        traceback.print_exc()
+    sys.stdout.flush()
 
     current_task = None
     is_running = False
@@ -275,17 +520,24 @@ def inference_worker(command_queue, frame_queue, result_queue):
             qr_data = None
             qr_bbox = None
 
-            if is_running and current_task is not None:
-                if current_task in ['task1', 'task2']:
-                    detections = model_task12.infer(frame, config.CLASSES)
-                elif current_task == 'task3':
-                    if model_task3 is None:
-                        print("Lazy loading task 3 model...")
-                        model_task3 = YoloModel(config.YOLO_MODEL_PATH_TASK3, config.IMG_WIDTH, config.IMG_HEIGHT)
-                    detections = model_task3.infer(frame, config.CLASSES_TASK3)
+            if is_running and current_task is not None and model is not None:
+                # Tek bir çıkarım hatası da süreci öldürmemeli: kare akışı
+                # tespitten daha önceliklidir, operatör hiç değilse görüntüyü
+                # görebilmeli.
+                try:
+                    detections = model.infer(frame, config.CLASSES)
+                except Exception:
+                    if not _cikarim_hatasi_yazildi[0]:
+                        _cikarim_hatasi_yazildi[0] = True
+                        print("!!! CIKARIM HATASI (bir kez yazdirilir) !!!")
+                        traceback.print_exc()
+                        sys.stdout.flush()
+                    detections = []
 
-                    # Detect QR for task 3
-                    qr_data, qr_bbox, _ = qr_detector.detectAndDecode(frame)
+                # Hayalet eleme: sınıfının rengini içermeyen tespitleri at.
+                # Burada yapılıyor çünkü ham çözünürlüklü kare yalnızca bu
+                # süreçte mevcut ve kutu koordinatları da bu kareye göre.
+                detections = renk_filtresi(frame, detections)
 
             # Kareyi IPC yükünü azaltmak için küçült. Tespit kutuları HAM çözünürlükte
             # kalır; kilitli hedefin rengini yalnızca UI bildiği için çizimi UI yapar.
