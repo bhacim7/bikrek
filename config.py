@@ -286,6 +286,17 @@ HUNTER_WB_GAINS = None      # örn. (0.95, 1.0, 0.78)
 # IR-cut filtre takılınca None. `kamera_renk.py` 'm' ile önizlenir.
 HUNTER_MAGENTA_KIR = 1.0
 
+# Nötr-macenta KARARTMA: kızılötesi G'ye de giriyor, bu yüzden macenta
+# kırma sonrası siyah perde GRİ kalıyor (kalan G düzeyi de IR). R ≈ B olan
+# (renksiz nesne üstünde IR) piksellerde üç kanal da  m · KARART · nötrlük
+# kadar düşürülür; nötrlük = 1 − |R−B| / NOTR_ESIK (0'a kırpılır). Kırmızı
+# balon ve mavi maket |R−B| büyük olduğu için nötrlük 0, DOKUNULMAZ.
+#   perde (175,130,190) -> macenta kırma (130,130,145) -> karartma (46,46,61)
+# 0 = kapalı. Sınır: pembeleşmiş KIRMIZI nesne (füze) bu formülle kurtulmaz,
+# |R−B| büyük olduğu için; onu ancak IR-cut filtre düzeltir.
+HUNTER_MAGENTA_KARART = 2.5
+HUNTER_MAGENTA_NOTR_ESIK = 60
+
 HUNTER_DARK_DESAT = (5, 50)    # sahada secildi (2026-09-09): daha yuksek esik balonun
                                # golgeli kenarini griye cekiyordu; IR-cut filtre gelince None
 

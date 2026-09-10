@@ -89,22 +89,34 @@ def karanlik_doygunluk_kir(frame, alt, ust):
     return cv2.blendLinear(gri3, frame, 1.0 - w, w)
 
 
-def macenta_kir(frame, guc=1.0):
+def macenta_kir(frame, guc=1.0, karart=0.0, notr_esik=60):
     """IR sızıntısının imzası olan ortak R+B fazlalığını çıkarır.
     m = max(0, min(R,B) - G); R -= m·güç; B -= m·güç. B<G veya R<G olan
-    piksellerde (kırmızı, mavi, ten, zemin) m = 0, dokunulmaz."""
+    piksellerde (kırmızı, mavi, ten, zemin) m = 0, dokunulmaz.
+
+    karart > 0: nötr-macenta piksellerde (R ≈ B) parlaklık da düşürülür:
+    üç kanal -= m · karart · max(0, 1 - |R-B|/notr_esik). Siyah perdenin
+    IR ile grileşen kalıntısını siyaha çeker; renkli nesnelere dokunmaz."""
     b, g, r = cv2.split(frame)
     m = cv2.subtract(cv2.min(r, b), g)                 # doygun çıkarma: negatif -> 0
     if guc != 1.0:
         m = cv2.convertScaleAbs(m, alpha=float(guc))
-    return cv2.merge([cv2.subtract(b, m), g, cv2.subtract(r, m)])
+    b2, r2 = cv2.subtract(b, m), cv2.subtract(r, m)
+    if not karart:
+        return cv2.merge([b2, g, r2])
+    T = max(int(notr_esik), 1)
+    notr = cv2.subtract(np.full_like(m, T), cv2.absdiff(r, b))   # T - |R-B|, negatif -> 0
+    ekstra = cv2.multiply(m, notr, scale=float(karart) / T)      # m * karart * notr/T, doygun
+    return cv2.merge([cv2.subtract(b2, ekstra), cv2.subtract(g, ekstra), cv2.subtract(r2, ekstra)])
 
 
 def _macenta(frame, kamera_adi):
     guc = getattr(config, "HUNTER_MAGENTA_KIR", None)
     if kamera_adi != "hunter" or not guc:
         return frame
-    return macenta_kir(frame, guc)
+    return macenta_kir(frame, guc,
+                       getattr(config, "HUNTER_MAGENTA_KARART", 0.0),
+                       getattr(config, "HUNTER_MAGENTA_NOTR_ESIK", 60))
 
 
 def _karanlik_doygunluk(frame, kamera_adi):
