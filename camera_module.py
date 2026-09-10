@@ -318,8 +318,11 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
             if ret and frame is not None and frame.size > 0:
                 frame = _model_oranina_kirp(frame, kamera_adi)
                 frame = _yazilim_beyaz_dengesi(frame, kamera_adi)
-                frame = _macenta(frame, kamera_adi)
+                # Sira onemli: once kirmizi kurtarma (pembe hedef -> kirmizi), sonra
+                # macenta kirma. Ters sirada macenta adimi fuzenin R'sini de
+                # tirtikliyordu (240 -> 210); bu sirada fuzede m = 0, dokunulmuyor.
                 frame = _kirmizi(frame, kamera_adi)
+                frame = _macenta(frame, kamera_adi)
                 frame = _karanlik_doygunluk(frame, kamera_adi)
                 ardisik_hata = 0
                 # Discard old frames if queue is full (keep it real-time)

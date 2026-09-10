@@ -311,8 +311,8 @@ HUNTER_MAGENTA_NOTR_ESIK = 60
 HUNTER_KIRMIZI_ESIK = 80
 HUNTER_KIRMIZI_GUC = 0.3
 
-HUNTER_DARK_DESAT = (5, 50)    # sahada secildi (2026-09-09): daha yuksek esik balonun
-                               # golgeli kenarini griye cekiyordu; IR-cut filtre gelince None
+HUNTER_DARK_DESAT = None       # 2026-09-10: macenta kirma karanlik mor perdeyi de griye
+                               # cektigi icin gereksiz kaldi; 6 ms/kare tasarruf. (5, 50) idi.
 
 # Pozlama süresi üst sınırı (saniye). Hareket bulanıklığı =
 # taret_hızı x pozlama / derece_piksel.
