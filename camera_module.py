@@ -99,6 +99,7 @@ def macenta_kir(frame, guc=1.0, karart=0.0, notr_esik=60):
     IR ile grileşen kalıntısını siyaha çeker; renkli nesnelere dokunmaz."""
     b, g, r = cv2.split(frame)
     m = cv2.subtract(cv2.min(r, b), g)                 # doygun çıkarma: negatif -> 0
+    m = cv2.blur(m, (5, 5))                            # piksel gürültüsü kroma beneği yapmasın
     if guc != 1.0:
         m = cv2.convertScaleAbs(m, alpha=float(guc))
     b2, r2 = cv2.subtract(b, m), cv2.subtract(r, m)
@@ -124,6 +125,33 @@ def _macenta(frame, kamera_adi):
     return macenta_kir(frame, guc,
                        getattr(config, "HUNTER_MAGENTA_KARART", 0.0),
                        getattr(config, "HUNTER_MAGENTA_NOTR_ESIK", 60))
+
+
+def kirmizi_kurtar(frame, esik=80, guc=0.3):
+    """Baskın kırmızı piksellerde (R-G >= esik, R > B) IR'nin eklediği sahte
+    maviyi atar (B := min(B,G)) ve G,B'yi (1-guc) ile kısar. Pembeye kaymış
+    kırmızı hedef doygun kırmızıya döner; başka hiçbir piksele dokunmaz."""
+    b, g, r = cv2.split(frame)
+    maske = cv2.inRange(cv2.subtract(r, g), int(esik), 255)      # R-G >= esik (doygun cikarma)
+    maske = cv2.bitwise_and(maske, cv2.inRange(cv2.subtract(r, b), 1, 255))   # ve R > B
+    b_k = cv2.min(b, g)
+    k = float(max(0.0, 1.0 - guc))
+    if k != 1.0:
+        b_k = cv2.convertScaleAbs(b_k, alpha=k)
+        g_k = cv2.convertScaleAbs(g, alpha=k)
+    else:
+        g_k = g
+    b2 = b.copy(); g2 = g.copy()
+    cv2.copyTo(b_k, maske, b2)
+    cv2.copyTo(g_k, maske, g2)
+    return cv2.merge([b2, g2, r])
+
+
+def _kirmizi(frame, kamera_adi):
+    esik = getattr(config, "HUNTER_KIRMIZI_ESIK", None)
+    if kamera_adi != "hunter" or not esik:
+        return frame
+    return kirmizi_kurtar(frame, esik, getattr(config, "HUNTER_KIRMIZI_GUC", 0.3))
 
 
 def _karanlik_doygunluk(frame, kamera_adi):
@@ -291,6 +319,7 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
                 frame = _model_oranina_kirp(frame, kamera_adi)
                 frame = _yazilim_beyaz_dengesi(frame, kamera_adi)
                 frame = _macenta(frame, kamera_adi)
+                frame = _kirmizi(frame, kamera_adi)
                 frame = _karanlik_doygunluk(frame, kamera_adi)
                 ardisik_hata = 0
                 # Discard old frames if queue is full (keep it real-time)

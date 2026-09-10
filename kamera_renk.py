@@ -27,6 +27,8 @@ Pencerede tuşlar:
     d       karanlıkta doygunluk kırma AÇ/KAPA (IR sızıntısı: mor perde)
     m       macenta kırma AÇ/KAPA (gün ışığında PEMBE perde; balon/mavi/ten etkilenmez)
     n / b   nötr-macenta KARARTMA ±0.5 (perdeyi siyaha çeker; 0 = kapalı)
+    x       KIRMIZI KURTARMA AÇ/KAPA (pembeleşmiş füze/balon -> kırmızı)
+    c / v   kırmızı kurtarma eşiği ±10
     , / .   kırma alt eşiği ±5   (üst eşik = alt + 45)
     s       kareyi PNG kaydet      w  config'e yazılacak satırları bas
     q       çık
@@ -42,7 +44,7 @@ import cv2
 import numpy as np
 
 import config
-from camera_module import karanlik_doygunluk_kir, macenta_kir
+from camera_module import karanlik_doygunluk_kir, macenta_kir, kirmizi_kurtar
 
 OZELLIK = {
     "auto_wb": cv2.CAP_PROP_AUTO_WB, "wb": cv2.CAP_PROP_WB_TEMPERATURE,
@@ -94,7 +96,9 @@ def main():
     kazanc = None          # yazılım beyaz dengesi (b, g, r)
     desat = None           # (alt, ust) Y eşikleri; None = kapalı
     macenta = None         # güç 0..1; None = kapalı
-    karart = config.HUNTER_MAGENTA_KARART if getattr(config, "HUNTER_MAGENTA_KARART", 0) else 2.5
+    karart = config.HUNTER_MAGENTA_KARART if getattr(config, "HUNTER_MAGENTA_KARART", 0) else 1.0
+    kirmizi = None         # eşik; None = kapalı
+    kguc = getattr(config, "HUNTER_KIRMIZI_GUC", 0.3)
     son_yazi = ""
     cv2.namedWindow("kamera_renk", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("kamera_renk", 1280, 800)
@@ -109,6 +113,8 @@ def main():
             goster = np.clip(kare.astype(np.float32) * np.array(kazanc, np.float32), 0, 255).astype(np.uint8)
         if macenta:
             goster = macenta_kir(goster, macenta, karart, getattr(config, "HUNTER_MAGENTA_NOTR_ESIK", 60))
+        if kirmizi:
+            goster = kirmizi_kurtar(goster, kirmizi, kguc)
         if desat is not None:
             goster = karanlik_doygunluk_kir(goster, desat[0], desat[1])
         b, g, r = gri_dunya(goster, kutu)
@@ -118,7 +124,8 @@ def main():
         satir2 = (f"ORTA: B {b:5.1f} G {g:5.1f} R {r:5.1f}   R/G {r / max(g, 1):.2f}  B/G {b / max(g, 1):.2f}"
                   f"   yazilim WB {'AÇIK ' + str(tuple(round(k, 3) for k in kazanc)) if kazanc else 'kapali'}"
                   f"   karanlik kirma {desat if desat else 'kapali'}"
-                  f"   macenta {('%.1f karart %.1f' % (macenta, karart)) if macenta else 'kapali'}")
+                  f"   macenta {('%.1f karart %.1f' % (macenta, karart)) if macenta else 'kapali'}"
+                  f"   kirmizi {('esik %d' % kirmizi) if kirmizi else 'kapali'}")
         ekran = goster.copy()
         cv2.rectangle(ekran, kutu[:2], kutu[2:], (0, 255, 0), 2)
         for i, s in enumerate((satir1, satir2, son_yazi)):
@@ -175,6 +182,12 @@ def main():
         elif k in (ord("n"), ord("b")) and macenta:
             karart = max(0.0, min(6.0, karart + (0.5 if k == ord("n") else -0.5)))
             son_yazi = f"macenta kirma {macenta:.1f}, karartma {karart:.1f}"
+        elif k == ord("x"):
+            kirmizi = None if kirmizi else (getattr(config, "HUNTER_KIRMIZI_ESIK", None) or 80)
+            son_yazi = f"kirmizi kurtarma {('esik %d' % kirmizi) if kirmizi else 'kapali'}"
+        elif k in (ord("c"), ord("v")) and kirmizi:
+            kirmizi = max(30, min(200, kirmizi + (10 if k == ord("c") else -10)))
+            son_yazi = f"kirmizi kurtarma esik {kirmizi}"
         elif k == ord("d"):
             desat = None if desat else (35, 80)
             son_yazi = f"karanlik kirma {desat if desat else 'kapali'}"
@@ -195,6 +208,7 @@ def main():
             print(f"config.HUNTER_MAGENTA_KIR = {macenta if macenta else None}   # macenta kirma")
             if macenta:
                 print(f"config.HUNTER_MAGENTA_KARART = {karart}   # notr-macenta karartma")
+            print(f"config.HUNTER_KIRMIZI_ESIK = {kirmizi if kirmizi else None}   # kirmizi kurtarma")
     cap.release(); cv2.destroyAllWindows()
     return 0
 

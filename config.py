@@ -294,8 +294,22 @@ HUNTER_MAGENTA_KIR = 1.0
 #   perde (175,130,190) -> macenta kırma (130,130,145) -> karartma (46,46,61)
 # 0 = kapalı. Sınır: pembeleşmiş KIRMIZI nesne (füze) bu formülle kurtulmaz,
 # |R−B| büyük olduğu için; onu ancak IR-cut filtre düzeltir.
-HUNTER_MAGENTA_KARART = None
-HUNTER_MAGENTA_NOTR_ESIK = None
+# 2026-09-10: 2.5 sahada perdeyi BENEK BENEK yaptı (gain 168 gürültüsü
+# katsayıyla büyüdü). Yumuşatma eklendi ama varsayılan KAPALI; gri perde
+# benekli perdeden iyidir. Denemek için kamera_renk.py 'n' ile 1.0-1.5.
+HUNTER_MAGENTA_KARART = 0
+HUNTER_MAGENTA_NOTR_ESIK = 60
+
+# --- KIRMIZI KURTARMA (avcı, IR sızıntısına karşı; gün ışığında füze/balon) ---
+# Kızılötesi kırmızı nesnede B'yi G'nin ÜSTÜNE çıkarır: kırmızı + sahte mavi
+# = PEMBE; YOLO kırmızı öğrendi, pembeyi kaçırıyor (2026-09-10 saha).
+# Baskın kırmızı piksellerde (R − G ≥ ESIK ve R > B):
+#     B := min(B, G)                 (sahte maviyi at)
+#     G, B *= (1 − GUC)              (dataset'teki doygun kırmızıya yaklaş)
+# Eşik 80: füze/balon R−G 120–190 -> girer; ten ~50, zemin ~20, pembe perde
+# ~60 -> girmez. Kırmızı olmayan hiçbir piksele dokunmaz. None/0 = kapalı.
+HUNTER_KIRMIZI_ESIK = 80
+HUNTER_KIRMIZI_GUC = 0.3
 
 HUNTER_DARK_DESAT = (5, 50)    # sahada secildi (2026-09-09): daha yuksek esik balonun
                                # golgeli kenarini griye cekiyordu; IR-cut filtre gelince None
