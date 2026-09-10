@@ -105,8 +105,15 @@ def macenta_kir(frame, guc=1.0, karart=0.0, notr_esik=60):
     if not karart:
         return cv2.merge([b2, g, r2])
     T = max(int(notr_esik), 1)
-    notr = cv2.subtract(np.full_like(m, T), cv2.absdiff(r, b))   # T - |R-B|, negatif -> 0
-    ekstra = cv2.multiply(m, notr, scale=float(karart) / T)      # m * karart * notr/T, doygun
+    # GURULTU: m ve |R-B| piksel piksel ziplar (gain 168'de +-20). Karartma
+    # bunu 2.5 ile carpinca perde benek benek oluyordu (kimi piksel 0, kimi
+    # pembe). IR uzayda yumusak degisir; tahmin de yumusatilir. Nesne
+    # kenarlarinda en fazla 1-2 px tasma: balon/mavi kendi pikselinde
+    # R>>B oldugu icin notr ~ 0, dokunulmaz.
+    m_y = cv2.blur(m, (9, 9))
+    fark_y = cv2.blur(cv2.absdiff(r, b), (5, 5))
+    notr = cv2.subtract(np.full_like(m, T), fark_y)              # T - |R-B|, negatif -> 0
+    ekstra = cv2.multiply(m_y, notr, scale=float(karart) / T)    # m * karart * notr/T, doygun
     return cv2.merge([cv2.subtract(b2, ekstra), cv2.subtract(g, ekstra), cv2.subtract(r2, ekstra)])
 
 
