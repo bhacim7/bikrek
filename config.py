@@ -294,8 +294,8 @@ HUNTER_MAGENTA_KIR = 1.0
 #   perde (175,130,190) -> macenta kırma (130,130,145) -> karartma (46,46,61)
 # 0 = kapalı. Sınır: pembeleşmiş KIRMIZI nesne (füze) bu formülle kurtulmaz,
 # |R−B| büyük olduğu için; onu ancak IR-cut filtre düzeltir.
-HUNTER_MAGENTA_KARART = 2.5
-HUNTER_MAGENTA_NOTR_ESIK = 60
+HUNTER_MAGENTA_KARART = None
+HUNTER_MAGENTA_NOTR_ESIK = None
 
 HUNTER_DARK_DESAT = (5, 50)    # sahada secildi (2026-09-09): daha yuksek esik balonun
                                # golgeli kenarini griye cekiyordu; IR-cut filtre gelince None
