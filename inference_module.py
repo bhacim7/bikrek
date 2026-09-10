@@ -257,6 +257,8 @@ class YoloModel:
 
                 self.model_type = "tensorrt"
                 print("TensorRT engine loaded successfully.")
+                self._sinif_sayisi_kontrol(self.trt_engine.get_tensor_shape(
+                    self.trt_engine.get_tensor_name(self.trt_output_binding_idx)))
                 return
             except Exception as e:
                 print(f"Error loading TensorRT engine: {e}")
@@ -297,6 +299,7 @@ class YoloModel:
                     self.img_height = input_shape[2]
                     self.img_width = input_shape[3]
                 self.model_type = "onnx"
+                self._sinif_sayisi_kontrol(self.session.get_outputs()[0].shape)
             except Exception as e:
                 print(f"Error loading ONNX model: {e}")
                 self.model_type = None
@@ -320,6 +323,26 @@ class YoloModel:
         img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
         img = np.expand_dims(img, axis=0)
         return img
+
+    def _sinif_sayisi_kontrol(self, output_shape):
+        """Model çıkışı [1, 4+nc, N]; nc, config.CLASSES uzunluğuyla eşleşmeli.
+        Eşleşmezse sınıf adları sessizce kayar — bağır."""
+        try:
+            nc = int(output_shape[1]) - 4 if len(output_shape) == 3 else None
+        except Exception:
+            return
+        n_cfg = len(config.CLASSES)
+        if nc is None:
+            print(f"UYARI (inference): beklenmeyen çıkış şekli {tuple(output_shape)}; [1, 4+nc, N] bekleniyordu.")
+        elif nc != n_cfg:
+            print("=" * 70)
+            print(f"!!! SINIF SAYISI UYUŞMUYOR: model {nc} sınıf üretiyor, config.CLASSES {n_cfg} isim taşıyor.")
+            print("!!! config.CLASSES'ı modelin data.yaml sırasıyla birebir güncelleyin; aksi halde")
+            print("!!! sınıflar yanlış ada bağlanır veya 'Unknown' düşer (dost/düşman kararı bozulur).")
+            print("=" * 70)
+        else:
+            print(f"inference: model {nc} sınıf, config.CLASSES {n_cfg} — uyumlu.")
+        sys.stdout.flush()
 
     def _postprocess(self, output, orig_width, orig_height, classes_list):
         boxes = []

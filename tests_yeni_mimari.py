@@ -1126,6 +1126,16 @@ kontrol("ENCODER_REST_SNAP=False: hicbir sey yapmaz", mfm.enkoder_hizala(3.0, si
 mfm.ENCODER_REST_SNAP = _eski
 mfm.reset_current_angles()
 
+# --- 20. SINIF LISTESI (v23 data.yaml ile birebir) ---
+print()
+print("=" * 70)
+print("20. SINIF LISTESI — config.CLASSES, v23 data.yaml sirasi")
+print("=" * 70)
+_v23 = ['balon', 'dost-F16', 'dost-Helikopter', 'dusman-Drone', 'dusman-F16', 'dusman-Fuze', 'dusman-Helikopter']
+kontrol("config.CLASSES v23 data.yaml ile birebir ayni (7 sinif, ayni sira)", list(config.CLASSES) == _v23, str(config.CLASSES))
+kontrol("balon sinifi listede ve BALLOON_CLASS ile ayni", config.BALLOON_CLASS in config.CLASSES)
+kontrol("dusman-Helikopter 'dusman-' on ekiyle dusman sayiliyor", config.CLASSES[6].startswith('dusman-'))
+
 print()
 print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")

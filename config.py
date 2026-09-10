@@ -30,7 +30,12 @@ NMS_THRESHOLD = 0.4
 
 # data.yaml ile BİREBİR aynı sıra olmalı — sınıf indeksleri buradan çözülüyor.
 CLASSES = ['balon', 'dost-F16', 'dost-Helikopter',
-           'dusman-Drone', 'dusman-F16', 'dusman-Fuze']
+           'dusman-Drone', 'dusman-F16', 'dusman-Fuze', 'dusman-Helikopter']
+# v23 (2026-09-10) ile 7 sinif: 'dusman-Helikopter' indeks 6 olarak eklendi.
+# Bu liste data.yaml'daki `names` ile BIREBIR AYNI SIRADA olmali; model
+# indeks uretir, ad buradan okunur. Eksik/kayik olursa inference_module
+# 'Unknown' dusurur ya da yanlis ada baglar. convert_to_onnx.py ve
+# inference_module acilista sinif sayisini modelle karsilastirip uyarir.
 
 # Balon sınıfının adı. Nişan noktası budur; dost/düşman bilgisi TAŞIMAZ,
 # karar her zaman üstündeki maketten gelir.
