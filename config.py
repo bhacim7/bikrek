@@ -21,7 +21,7 @@ _BURASI = os.path.dirname(os.path.abspath(__file__))
 # --- Model ---
 # Ağırlık dosyası bu dosyayla aynı klasörde. Mutlak yol yazmıyoruz ki proje
 # başka bir makineye taşındığında bozulmasın.
-YOLO_MODEL_PATH = os.path.join(_BURASI, "best.engine")
+YOLO_MODEL_PATH = os.path.join(_BURASI, "v23m1056.engine")
 
 # Üç aşamanın ÜÇÜ de bu tek modeli kullanır; aşamalar arasında fark yalnızca
 # görev mantığındadır. (Eskiden Aşama 3 ayrı bir model yüklüyordu.)
