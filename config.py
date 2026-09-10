@@ -309,10 +309,10 @@ HUNTER_MAGENTA_NOTR_ESIK = 60
 # Eşik 80: füze/balon R−G 120–190 -> girer; ten ~50, zemin ~20, pembe perde
 # ~60 -> girmez. Kırmızı olmayan hiçbir piksele dokunmaz. None/0 = kapalı.
 HUNTER_KIRMIZI_ESIK = 80
-HUNTER_KIRMIZI_GUC = 0.3
+HUNTER_KIRMIZI_GUC = 0.6       # sahada secildi (2026-09-10); 0.3 ile fuze soluk kaliyordu
 
-HUNTER_DARK_DESAT = None       # 2026-09-10: macenta kirma karanlik mor perdeyi de griye
-                               # cektigi icin gereksiz kaldi; 6 ms/kare tasarruf. (5, 50) idi.
+HUNTER_DARK_DESAT = (5, 50)    # sahada acik birakildi (2026-09-10): macenta kirmayla birlikte
+                               # perde daha koyu; 6 ms/kare bedeli kabul edildi.
 
 # Pozlama süresi üst sınırı (saniye). Hareket bulanıklığı =
 # taret_hızı x pozlama / derece_piksel.

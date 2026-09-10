@@ -132,8 +132,14 @@ def kirmizi_kurtar(frame, esik=80, guc=0.3):
     maviyi atar (B := min(B,G)) ve G,B'yi (1-guc) ile kısar. Pembeye kaymış
     kırmızı hedef doygun kırmızıya döner; başka hiçbir piksele dokunmaz."""
     b, g, r = cv2.split(frame)
-    maske = cv2.inRange(cv2.subtract(r, g), int(esik), 255)      # R-G >= esik (doygun cikarma)
+    # Gurultu: gain 168'de R-G piksel basina +-28 oynar; pembe perdede taban
+    # ~60 iken tek tek pikseller esigi asip kirmizi BENEK oluyordu. Fark
+    # 5x5 ortalamadan gecirilir (gurultu 1/5), maske 3x3 acma ile izole piksellerden
+    # arindirilir. Gercek hedef >= 20 px, etkilenmez.
+    fark = cv2.blur(cv2.subtract(r, g), (5, 5))
+    maske = cv2.inRange(fark, int(esik), 255)                     # R-G >= esik (doygun cikarma)
     maske = cv2.bitwise_and(maske, cv2.inRange(cv2.subtract(r, b), 1, 255))   # ve R > B
+    maske = cv2.morphologyEx(maske, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     b_k = cv2.min(b, g)
     k = float(max(0.0, 1.0 - guc))
     if k != 1.0:
