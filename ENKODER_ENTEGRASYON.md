@@ -412,3 +412,30 @@ inhibit verilecek; konum SYNC-tetiklemeli TPDO2'den okunacak.
 - **FAZ 5'' karari:** yon degisiminde bosluk kadar adimi saymadan atmak
   (klasik telafi), enkoderle kalibre. Olcut: CSV'de her yon degisiminden
   sonra durusta fark < 0.2.
+
+
+## FAZ DURUM OZETI (2026-09-16 gece, PROJE_DURUMU 29.8.7)
+
+| faz | konu | durum |
+|---|---|---|
+| FAZ 0 | donanim, kablolama | YAPILDI |
+| FAZ 1 | hat kurulumu (Waveshare ham protokol, 250 kbit/s) | YAPILDI |
+| FAZ 2 | enkoderi tani, kalici ayar (TPDO2/SYNC, preset 8192) | YAPILDI |
+| FAZ 3 | sadece oku ve goster | YAPILDI |
+| FAZ 4 | boslugu ve olcegi olc (a=0.997, bosluk 1.49 derece) | YAPILDI |
+| FAZ 5' | durunca hizala (rest-snap) | YAPILDI |
+| ates kapisi | enkoder hiziyla ates kilidi (FIRE_MAX_TURRET_RATE_DEG_S) | YAPILDI |
+| FAZ 5'' | Pi'de bosluk telafisi | YAPILMADI |
+| FAZ 6 | kapali dongu: kontrol enkoder acisini kullansin | YAPILMADI |
+| FAZ 7 | saglamlastirma | kismen (yeniden baglanma var) |
+
+Kalan iki faz ayni koke bagli: kontrol dongusu hala ADIM SAYACINI gercek aci
+saniyor, kamera FIZIKSEL aciyi goruyor, aradaki 1.5 derecelik bosluk her yon
+degisiminde sahte hata uretiyor.
+
+**FAZ 6 tercih edilmeli** (daha temiz, daha az riskli): PC tarafinda
+`current_yaw_angle` ve `_angle_at()` enkoder acisini kullanir, komut yine
+delta olarak gider, bosluk hata hesabindan tamamen cikar. FAZ 5'' ayni sorunu
+acik dongu telafiyle dolayli cozer ve kalibrasyon gerektirir.
+Kapali dongu simulasyonu (29.6 B15): yalnizca boslugu kaldirmak nisan hatasi
+RMS'ini 1.01 -> 0.37 dereceye indiriyor.

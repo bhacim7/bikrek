@@ -3170,3 +3170,180 @@ Test: 213 kontrol, TUM TESTLER GECTI. Yeni bolumler 22 (ates kapisi) ve
    bulanikligi, karton kutu negatifleri.
 4. **FAZ 6 (29.6 B15):** kontrol dongusu adim sayaci yerine enkoder acisini
    kullansin. Simulasyona gore nisan hatasi RMS'ini yariya indiriyor.
+
+### 29.8 `aşama3HedefImha2.mp4` — sabit hedefte nisan, hareketli hedefte imha (2026-09-16 gece)
+
+31.2 saniye, 3 fps'de 94 kare tek tek okundu. Model **v25** (kullanici dataseti
+gelistirdi). Iki bolum: t=1.3-11.7 sabit hedefe "Hedef Takip" (atessiz olcum
+modu), t=14.5-30.7 hareketli hedefte Asama 3.
+
+**Sonuc: hedef imha edildi.** Dort atis yapildi, dorduncusu tuttu. Asama 3'e
+basildiktan imhaya kadar 14.3 saniye; hedef 15 metreden 10 metreye geldi.
+
+#### 29.8.1 B21 — ONCEKI COMMIT'TE GETIRDIGIM OLU BOLGE (duzeltildi)
+
+29.7'de eklenen sarma onleme (anti-windup) MIN_OUTPUT esigine de
+uygulanmisti: cikis "cok kucuk" diye sifirlanınca suzgec hafizasi da
+sifirlaniyordu. Bu, suzgecin birkac karede gonderilebilir bir komuta RAMPA
+yapmasini imkansiz kildi ve ilk karede komut uretmek icin gereken hatayi
+KALICI bir esige cevirdi:
+
+    gereken hata = MIN_OUTPUT / (a x KP)
+                 = 0.0564 / (0.30 x 0.70) = 0.269 derece = 19 piksel  (yaw)
+                 = 0.0564 / (0.30 x 0.60) = 0.314 derece = 22 piksel  (pitch)
+
+Nisan toleransi o sirada 14 pikseldi. Yani sistem toleransa **matematiksel
+olarak giremiyordu**.
+
+Sahada tam olarak boyle goruldu — sabit hedef, hic ruzgar yok:
+
+| t | hata | taret yaw | enkoder |
+|---|---|---|---|
+| 3.0 | 16 px (yaw -7, pitch -14) | -4.4 | -4.37 |
+| 3.3 | 16 px | -4.4 | -4.37 |
+| 3.7 | 16 px | -4.4 | -4.37 |
+| 4.0 | 17 px (yaw -7, pitch -15) | -4.4 | -4.37 |
+| 4.3 | 16 px | -4.4 | -4.37 |
+| 4.7 | 17 px | -4.4 | -4.37 |
+
+Taret 1.7 saniye boyunca **hic kimildamadi**. Yaw hatasi 7 piksel (olu bandin
+tam sinirinda, dogru davranis), pitch hatasi 14 piksel — olu bandin ustunde,
+ama suzgec esiginin altinda. Kullanicinin "kusursuz nisan alinmadigini
+gorebilirsin" dedigi sey birebir bu.
+
+**Duzeltme:** sarma onleme artik YALNIZCA MAX doygunlugunda uygulanıyor.
+Ayrim su: `MAX_OUTPUT_DEGREE` gercek bir doygunluktur (motor daha hizli
+donemez), orada hafizayi kirpmak dogru. `MIN_OUTPUT` ise "cok kucuk komut
+gonderme" kuralidir, doygunluk degil; hafizayi bozmamali.
+Duzeltmeden sonra 14 piksellik pitch hatasi iki karede gonderilebilir komuta
+ulasiyor ve olu banda kadar iniyor.
+
+**Kalici test eklendi (24. bolum):** olu bandin hemen ustundeki her hata 8
+kare icinde komut uretmeli; nisan toleransi kadar hata da komut uretmeli;
+nisan toleransi olu banttan buyuk olmali; sarma onleme yalnizca MAX'ta olmali.
+Bu dort kontrol ayni hatanin geri gelmesini engeller.
+
+#### 29.8.2 B22 — ISKALAR: nisan toleransi cok genisti
+
+Dort atisin nisan hatalari (ham piksel, ekrandan okundu):
+
+| atis | t | yaw hatasi | pitch hatasi | sonuc |
+|---|---|---|---|---|
+| 1 | 18.0 | **+19** | -5 | iska |
+| 2 | 23.3 | **+21** | -5 | iska |
+| 3 | 25.0 | **-12** | -5 | iska |
+| 4 | 27.7 | **+2** | -11 | **ISABET** |
+
+Tek belirleyici degisken yaw hatasi. 12-21 piksel iska, 2 piksel isabet.
+
+Sayisal karsiligi: 12 metrede 19 piksel = 0.27 derece = **5.6 santim**. Balon
+yaricapi ~7.5 santim. Yani nisan hatasi TEK BASINA payin dortte ucunu yiyor;
+uzerine namlu sapmasi ve merminin kendi dagilimi eklenince iska kaciniImaz
+oluyor. 2 piksel = 0.6 santim ise bol bol yer birakiyor.
+
+Sebep: `AIM_TOLERANCE_RATIO = 0.6` (29.5'te 0.35'ten yukseltilmisti) ve
+`AIM_TOLERANCE_MIN_PIXELS = 14`. Hedef yaklastikca balonun piksel yaricapi
+buyudugu icin tolerans da buyuyor — 12 metrede 21 piksele kadar cikiyordu ve
+atis 19-21 piksel hatayla serbest kaliyordu.
+
+O yukseltme O ZAMAN dogruydu: 29.3 B6'da sistem hic ates edemiyordu ve
+tolerans darligi sebeplerden biriydi. Ama simdi B21 duzeldigi icin taret
+gercekten dar bir toleransa oturabiliyor. **Geri cekildi:**
+`AIM_TOLERANCE_RATIO` 0.6 -> **0.4**, `AIM_TOLERANCE_MIN_PIXELS` 14 -> **10**.
+12 metrede tolerans 10 piksel = 3.4 santim. Olu bant eksen basina 7 piksel
+oldugu icin taretin dogal durus hatasi bu bandin ICINDE kaliyor — yani hedef
+ulasilabilir.
+
+#### 29.8.3 B23 — Zaman nereye gitti (14.3 saniye)
+
+| aralik | sure | ne oluyordu |
+|---|---|---|
+| 14.5-17.0 | 2.5 sn | maketin kendisi `balon` etiketi aliyor; cift kurulamiyor, kimlik yok |
+| 17.0-18.0 | 1.0 sn | dogrulama + kilit (hizli, sorun yok) |
+| 18.0-18.7 | 0.7 sn | 1. atis + imha dogrulama penceresi |
+| 18.7-20.7 | 2.0 sn | "Ates engellendi" (nisan tolerans disinda / cifte balon eslesmemis) 22 kare dolana kadar |
+| 20.7-22.3 | 1.6 sn | atis butcesi doldu -> kara liste |
+| 22.3-23.3 | 1.0 sn | yeniden dogrulama + kilit |
+| 23.3-25.0 | 1.7 sn | 2. atis + pencere + engellenen denemeler |
+| 25.0-27.7 | 2.7 sn | 3. atis + pencere + engellenen denemeler (guven dusuk 0.36, maket yok) |
+| 27.7-28.8 | 1.1 sn | 4. atis -> **imha** |
+
+Iki buyuk kalem: **basarisiz atislarin ardindan gelen bekleme (toplam ~6
+saniye)** ve **baslangictaki 2.5 saniyelik etiket karisikligi**. Ucuncu bir
+atisa gerek kalmasaydi sure 14.3 yerine ~4 saniye olurdu. Yani **hizlanmanin
+yolu iskalari bitirmekten geciyor**, bekleme surelerini kirpmaktan degil.
+
+#### 29.8.4 B24 — "Fuzeye balon diyor" hatasinin bedeli olculdu
+
+Kullanicinin fark ettigi etiket hatasi (t=14.7, 15.0, 16.0, 20.7, 21.0,
+26.7): maketin KENDISI `balon` olarak etiketleniyor. Bunun bedeli sanildigindan
+buyuk, cunku cift kurulumu "maketin altinda balon" ariyor:
+- Iki tespit de `balon` olunca MAKET YOK demektir; kimlik bilgisi yalnizca
+  makette oldugu icin `avcida_hazir_hedef_var` False doner ve sistem hedefi
+  gormesine ragmen TARAMA'da bekler (t=14.7-17.0, 2.5 saniye; t=20.7-21.7).
+- Ates kilidinde de `cifte balon eslesmemis (nisan noktasi tahmini)` gerekcesi
+  bu yuzden cikiyor (t=20.0).
+
+Yani dataset tarafinda oncelik artik "maket kacirilmasin"dan cok **"maket
+balon sanilmasin"**. Ornek: balon ile maketin ust uste bindigi, maketin kisa
+gorundugu (dik veya kameraya dogru) kareler.
+
+#### 29.8.5 Iyilesenler
+
+- Tespit surekliligi belirgin arti: KILIT donemlerinde maket neredeyse her
+  karede 0.6-0.87 guvenle goruluyor (v23'te %40-56 kare kutusuzdu).
+- Karton kutu yanlis pozitifi bu kosumda **hic gorulmedi** (v23'te 0.77'ye
+  kadar cikiyordu).
+- Enkoder farki (`sayac - enkoder`) ortalama 0.23-0.43, en buyuk 3.0 derece;
+  KILIT sirasinda cogunlukla 0.00-0.30. Onceki kosumlarla ayni mertebede.
+- Ates kapisi (B17) hicbir karede engelleme gerekcesi olarak gorunmedi — yani
+  taret ates anlarinda zaten yavasti, kapi maliyet uretmiyor.
+
+#### 29.8.6 Bu commit
+
+| Ne | Once | Sonra | Bulgu |
+|---|---|---|---|
+| sarma onleme kapsami | MIN_OUTPUT + MAX | **yalnizca MAX** | B21 |
+| `AIM_TOLERANCE_RATIO` | 0.6 | **0.4** | B22 |
+| `AIM_TOLERANCE_MIN_PIXELS` | 14.0 | **10.0** | B22 |
+| test bolumu 24 | yok | **olu bolge regresyon testi** | B21 |
+
+#### 29.8.7 ENKODER: hangi faz yapildi, ne kaldi
+
+| faz | konu | durum |
+|---|---|---|
+| FAZ 0 | donanim, kablolama | YAPILDI |
+| FAZ 1 | hat kurulumu (Waveshare ham protokol, 250 kbit/s) | YAPILDI |
+| FAZ 2 | enkoderi tani, kalici ayar (TPDO2/SYNC, preset 8192) | YAPILDI |
+| FAZ 3 | sadece oku ve goster, kontrole karismaz | YAPILDI |
+| FAZ 4 | boslugu ve olcegi olc (a=0.997, bosluk 1.49 derece) | YAPILDI |
+| FAZ 5' | durunca hizala (rest-snap) | YAPILDI |
+| **ates kapisi** | enkoder hiziyla ates kilidi (29.7 B17) | **YAPILDI (yeni)** |
+| **FAZ 5''** | Pi'de bosluk telafisi (yon degisiminde sayilmayan adim) | **YAPILMADI** |
+| **FAZ 6** | kapali dongu: kontrol adim sayaci yerine ENKODERI kullansin | **YAPILMADI** |
+| FAZ 7 | saglamlastirma (kablo kopmasi, yeniden baglanma) | kismen (yeniden baglanma var) |
+
+Kalan ikisi de ayni koke bagli: kontrol dongusu hala ADIM SAYACINI gercek aci
+saniyor, kamera ise FIZIKSEL aciyi goruyor; aradaki 1.5 derecelik bosluk her
+yon degisiminde sahte hata uretiyor. 29.6 B15'teki kapali dongu
+simulasyonunda yalnizca boslugu kaldirmak nisan hatasi RMS'ini 1.01'den 0.37
+dereceye indiriyordu — diger butun ayarlardan buyuk bir etki.
+
+**FAZ 6 daha temiz ve daha az riskli:** PC tarafinda `current_yaw_angle` ve
+`_angle_at()` enkoder acisini kullanir, komut yine delta olarak gider. Bosluk
+hata hesabindan tamamen cikar. FAZ 5'' (Pi'de acik dongu telafi) ayni sorunu
+dolayli cozer ve kalibrasyon gerektirir.
+
+#### 29.8.8 Sirasi gelen isler
+
+1. **Atis gruplama testi — artik olculmus bir gerekce var.** 12 metreden,
+   sistem kilitliyken 10 atis; her vurusun nereye dustugu isaretlenir. Cikti:
+   (a) namlu sapmasi (yaw/pitch ofseti, config'e girer), (b) merminin kendi
+   dagilimi. Dagilim biliniyorsa nisan toleransinin DOGRU degeri hesaplanir —
+   su an 0.4/10 piksel tahmin.
+2. **Bir kosum** (B21 + B22 olculecek). Beklenti: sabit hedefte artik 16-17
+   pikselde takilmaz, olu banda (7-10 piksel) iner; hareketli hedefte atis
+   sayisi duser, isabet orani artar.
+3. **Dataset:** maketin `balon` sanilmasi (B24). Ornek: balon-maket ust uste,
+   maket dik/kisa gorundugu kareler.
+4. **FAZ 6** (29.8.7).

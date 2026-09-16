@@ -3189,6 +3189,33 @@ class HavaSavunmaArayuz(QWidget):
                 output_pitch = _a * output_pitch + (1.0 - _a) * self._pid_cikis_pitch
                 self._pid_cikis_pitch = output_pitch
 
+        # SUZGEC SARMA ONLEME — YALNIZCA GERCEK DOYGUNLUKTA (MAX sinirinda).
+        #
+        # DIKKAT, BURADA BIR GUN KAYBEDILDI (29.8 bolum B21): sarma onleme
+        # once MIN_OUTPUT esigine de uygulanmisti, yani cikis "cok kucuk"
+        # diye sifirlanınca suzgec hafizasi da sifirlaniyordu. Sonuc,
+        # tamamen olculebilir bir OLU BOLGE:
+        #     ilk karede gonderilebilir komut icin gereken hata
+        #       = MIN_OUTPUT / (a x KP)
+        #       = 0.0564 / (0.30 x 0.70) = 0.269 derece = 19 piksel  (yaw)
+        #       = 0.0564 / (0.30 x 0.60) = 0.314 derece = 22 piksel  (pitch)
+        # Nisan toleransi 14 piksel oldugu icin sistem toleransa MATEMATIKSEL
+        # OLARAK giremiyordu: 16 piksellik hatada taret hic kimildamiyordu
+        # (sahada goruldu, aşama3HedefImha2.mp4 t=3.0-3.7, hata 16 px, taret
+        # bir saniye boyunca -4.4 derecede cakili).
+        #
+        # AYRIM SU: MAX siniri gercek bir DOYGUNLUKTUR (motor daha hizli
+        # donemez) -- orada hafizayi kirpmak dogru, yoksa hata kapandiktan
+        # sonra birkac kare daha sinirdan komut gider. MIN_OUTPUT ise bir
+        # doygunluk degil, "cok kucuk komut gonderme" kuralidir; hafizayi
+        # BOZMAMALI, cunku suzgecin birkac karede gonderilebilir bir komuta
+        # RAMPA yapmasi tam olarak bu sayede olur.
+        if config.PID_OUTPUT_SMOOTHING > 0.0:
+            if abs(output_yaw) > self.MAX_OUTPUT_DEGREE:
+                self._pid_cikis_yaw = math.copysign(self.MAX_OUTPUT_DEGREE, output_yaw)
+            if abs(output_pitch) > self.MAX_OUTPUT_DEGREE:
+                self._pid_cikis_pitch = math.copysign(self.MAX_OUTPUT_DEGREE, output_pitch)
+
         if 0 < abs(output_yaw) < self.MIN_OUTPUT_DEGREE_THRESHOLD:
             output_yaw = 0.0
         if 0 < abs(output_pitch) < self.MIN_OUTPUT_DEGREE_THRESHOLD:
@@ -3196,18 +3223,6 @@ class HavaSavunmaArayuz(QWidget):
 
         output_yaw = max(min(output_yaw, self.MAX_OUTPUT_DEGREE), -self.MAX_OUTPUT_DEGREE)
         output_pitch = max(min(output_pitch, self.MAX_OUTPUT_DEGREE), -self.MAX_OUTPUT_DEGREE)
-
-        # SUZGEC SARMA ONLEME (anti-windup). Suzgecin hafizasi HESAPLANAN degil
-        # GONDERILEN degeri tutmalı. MAX_OUTPUT_DEGREE 2.0'a indirildigi icin
-        # (29.5) buyuk hatada cikis kirpiliyor; hafiza kirpilmamis degeri
-        # tutarsa, hata kapandiktan sonra da birkac kare boyunca tam sinirdan
-        # komut gondermeye devam eder -- yani kirpma asimi ONLEMEK yerine
-        # gecikitirir. Hafizayi gonderilen degerle esitlemek standart
-        # anti-windup; DC davranisini degistirmez, yalnizca doygunluktan
-        # cikisi hizlandirir.
-        if config.PID_OUTPUT_SMOOTHING > 0.0:
-            self._pid_cikis_yaw = output_yaw
-            self._pid_cikis_pitch = output_pitch
 
         if self.active_task == 'task3':
             predicted_yaw_after_move = self.current_yaw_angle + output_yaw

@@ -21,7 +21,7 @@ _BURASI = os.path.dirname(os.path.abspath(__file__))
 # --- Model ---
 # Ağırlık dosyası bu dosyayla aynı klasörde. Mutlak yol yazmıyoruz ki proje
 # başka bir makineye taşındığında bozulmasın.
-YOLO_MODEL_PATH = os.path.join(_BURASI, "v23m1056.engine")
+YOLO_MODEL_PATH = os.path.join(_BURASI, "v25m1056.engine")
 
 # Üç aşamanın ÜÇÜ de bu tek modeli kullanır; aşamalar arasında fark yalnızca
 # görev mantığındadır. (Eskiden Aşama 3 ayrı bir model yüklüyordu.)
@@ -935,13 +935,25 @@ VERIFY_MIN_CONFIDENCE = 0.45
 # Piksel yerine orana bağlamak hem mesafeden hem zoomdan bağımsız kılar
 # (balon 15 metrede 30 px, 5 metrede 90 px).
 #
+# 0.6 -> 0.4 (2026-09-16 gece, 29.8 bolum B22): asama3HedefImha2'de DORT ATIS
+# yapildi, yalnizca BIRI isabet etti ve aradaki tek fark nisan hatasiydi:
+#     isabet eden atis : yaw   2 piksel
+#     iska eden atislar: yaw  19, 21, -12 piksel
+# 0.6 orani 12-14 metrede toleransi 14-21 piksele (0.20-0.30 derece, 5-7 cm)
+# cikariyordu; balon yaricapi 7.5 cm oldugu icin nisan hatasi TEK BASINA
+# neredeyse butun payi yiyor, uzerine namlu sapmasi ve mermi dagilimi
+# eklenince iska kaciniImaz oluyordu. 0.4 ile 12 metrede tolerans 10 piksel
+# (3.4 cm) -- kalan paya yer birakir.
+# BUNU SIMDI YAPABILIYORUZ cunku B21'deki olu bolge duzeltildi; onceki halde
+# taret 14-17 pikselde cakiliyor ve dar bir toleransa HIC ulasamiyordu.
+# Eski gerekce (29. bolum B6) asagida duruyor:
 # 0.35 -> 0.6 (2026-09-16, 29. bolum B6): tolerans FIZIKSEL isabet payindan
 # cok dardi. Balonun yaricapi ~7.5 cm; 0.35 x yaricap, nisangahi balonun ic
 # ucte birine zorluyor. Sallanan direk + 15 fps + kutu gurultusu ile 3 ardisik
 # kare bu bantta tutulamadi: 55 saniyelik kosumda "nisan TAMAM" yalnizca 2
 # ornek karede goruldu, ates 0. 0.6 x yaricap hala BALONUN ICINDE kaliyor
 # (9 m'de 19 px = 4.2 cm, 15 m'de 11 px = 4.3 cm; ikisi de 7.5 cm'nin altinda).
-AIM_TOLERANCE_RATIO = 0.6
+AIM_TOLERANCE_RATIO = 0.4
 
 # Nişan toleransı ayrıca bu mutlak piksel değerinin altına inmek zorunda
 # değil — tespit gürültüsünün altında bir hassasiyet istememek için alt sınır.
@@ -956,7 +968,10 @@ AIM_TOLERANCE_RATIO = 0.6
 # = 15 metrede 5.2 cm; balon yaricapi 7.5 cm oldugundan nisan noktasi balonun
 # icinde. 9 px ise 3.4 cm idi ve tespit kutusunun kendi gurultusuyle ayni
 # mertebedeydi -- yani olculemeyen bir hassasiyet isteniyordu.
-AIM_TOLERANCE_MIN_PIXELS = 14.0
+# 14 -> 10 (2026-09-16 gece, 29.8 B22): ayni gerekce. 10 piksel = 0.141
+# derece; olu bant eksen basina 7 piksel oldugu icin taretin dogal durus
+# hatasi bu bandin ICINDE kaliyor, yani ulasilabilir bir hedef.
+AIM_TOLERANCE_MIN_PIXELS = 10.0
 
 # --- ATES KAPISI: TARET NE KADAR YAVASKEN ATES SERBEST ---
 # Namlu, ates komutundan sonra servo cekisi (FIRE_SERVO_LEG_SEC = 0.20 sn)

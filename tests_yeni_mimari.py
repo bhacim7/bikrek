@@ -1212,6 +1212,57 @@ kontrol("ham piksel hatasi artik nisan karari vermiyor",
 kontrol("kilit_adimi de telafi edilmis hatayla besleniyor",
         "_hata_px = (_hata_yaw_px ** 2 + _hata_pitch_px ** 2) ** 0.5" in _kaynak2)
 
+# --- 24. OLU BOLGE OLMAMALI: her hata er gec komut uretmeli (29.8 B21) ---
+print()
+print("=" * 70)
+print("24. OLU BOLGE — olu bandin ustundeki her hata komut uretebilmeli")
+print("=" * 70)
+# Sahada bir gun kaybettiren hata: suzgec hafizasi MIN_OUTPUT esiginde de
+# sifirlaninca, ilk karede komut uretmek icin gereken hata
+#     MIN_OUTPUT / (a x KP)
+# kalici bir esige donusuyordu (yaw 19 px, pitch 22 px) ve NISAN TOLERANSI
+# bunun altinda oldugu icin sistem toleransa hic giremiyordu. Taret 16-17
+# pikselde cakili kaliyordu (aşama3HedefImha2.mp4, t=3.0-4.7).
+# Asagidaki benzetim gercek zinciri taklit eder: suzgec -> MIN_OUTPUT -> MAX.
+def _zincir(hata_derece, kp, dpp, kare=8):
+    _a = config.PID_OUTPUT_SMOOTHING
+    _min = config.MIN_OUTPUT_PIXELS * abs(config.HUNTER_DPP_YAW)
+    _max = 2.0
+    hafiza = 0.0
+    for _ in range(kare):
+        u = kp * hata_derece
+        y = _a * u + (1 - _a) * hafiza if _a > 0 else u
+        hafiza = y                      # MIN_OUTPUT hafizayi BOZMAMALI
+        if abs(y) > _max:
+            hafiza = _max if y > 0 else -_max
+        gonderilen = 0.0 if abs(y) < _min else max(-_max, min(_max, y))
+        if gonderilen != 0.0:
+            return True
+    return False
+
+for _ad, _kp, _dpp in (("yaw", config.KP_YAW, config.HUNTER_DPP_YAW),
+                       ("pitch", config.KP_PITCH, config.HUNTER_DPP_PITCH)):
+    _olu_bant = config.PID_DEADBAND_PIXELS * abs(_dpp)
+    _hemen_ustu = _olu_bant * 1.05      # olu bandin hemen ustundeki hata
+    kontrol(f"{_ad}: olu bandin hemen ustundeki hata ({config.PID_DEADBAND_PIXELS * 1.05:.1f} px) "
+            f"8 kare icinde komut uretiyor",
+            _zincir(_hemen_ustu, _kp, _dpp),
+            f"hata {_hemen_ustu:.4f} derece")
+    _tol = config.AIM_TOLERANCE_MIN_PIXELS * abs(_dpp)
+    kontrol(f"{_ad}: nisan toleransi kadarlik hata ({config.AIM_TOLERANCE_MIN_PIXELS:.0f} px) "
+            f"komut uretiyor (tolerans ULASILABILIR olmali)",
+            _zincir(_tol, _kp, _dpp), f"hata {_tol:.4f} derece")
+
+kontrol("nisan toleransi olu banttan BUYUK (yoksa taret toleransa giremez)",
+        config.AIM_TOLERANCE_MIN_PIXELS > config.PID_DEADBAND_PIXELS,
+        f"tolerans {config.AIM_TOLERANCE_MIN_PIXELS} px, olu bant {config.PID_DEADBAND_PIXELS} px")
+
+_k24 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("sarma onleme YALNIZCA MAX doygunlugunda (MIN_OUTPUT hafizayi bozmamali)",
+        "if abs(output_yaw) > self.MAX_OUTPUT_DEGREE:" in _k24
+        and "self._pid_cikis_yaw = math.copysign(self.MAX_OUTPUT_DEGREE, output_yaw)" in _k24,
+        "bukrek_main.process_tracking")
+
 print()
 print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
