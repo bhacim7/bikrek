@@ -785,7 +785,7 @@ class AngajmanMakinesi:
 
 
 def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
-                    yaw, no_fire_start, no_fire_end):
+                    yaw, no_fire_start, no_fire_end, taret_hizi=None):
     """
     Ateş kilidi — hepsi birden sağlanmalı.
 
@@ -817,6 +817,12 @@ def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
         return False, 'balon bu karede tespit edilmedi'
     if not nisan_tamam:
         return False, 'nisan tolerans disinda'
+    # TARET HAREKET HALINDEYKEN ATES ETME. `taret_hizi` enkoderden olculen
+    # mutlak yaw hizi (derece/sn); None ise enkoder yok/saglıksiz demektir ve
+    # kapi uygulanmaz. Gerekce config.FIRE_MAX_TURRET_RATE_DEG_S yaninda.
+    _sinir = getattr(config, 'FIRE_MAX_TURRET_RATE_DEG_S', 0) or 0
+    if taret_hizi is not None and _sinir > 0 and taret_hizi > _sinir:
+        return False, f'taret hareketli: {taret_hizi:.1f} derece/sn'
     if _atesiz_bolgede(yaw, no_fire_start, no_fire_end):
         return False, 'atesiz bolge'
     return True, 'serbest'

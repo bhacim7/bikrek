@@ -1173,6 +1173,45 @@ _k[0, 4 + 0, 7] = 0.95                         # balon
 _d2 = _m._postprocess(_k, 1920, 1105, _S)
 kontrol("klasik duzen hala calisiyor: 1 balon, skor 0.95", len(_d2) == 1 and _d2[0]['class_name'] == 'balon' and abs(_d2[0]['score'] - 0.95) < 1e-6, str(_d2))
 
+# --- 22. ATES KAPISI: TARET HAREKETLIYKEN ATES YOK (29.7 B17) ---
+print()
+print("=" * 70)
+print("22. ATES KAPISI — taret hareketliyken ates edilmez")
+print("=" * 70)
+_m22 = engagement.AngajmanMakinesi(); _m22.basla('task3')
+_c22 = engagement.cift_eslestir([det('dusman-Fuze', 800, 300, 120, 140),
+                                 det('balon', 830, 470, 40, 40)])[0]
+_m22.dogrulanan_sinif = 'dusman-Fuze'
+_m22._gec(engagement.ATES)
+_ort = dict(cift=_c22, makine=_m22, balon_gorundu=True, nisan_tamam=True,
+            yaw=0.0, no_fire_start=0.0, no_fire_end=0.0)
+_i, _g = engagement.ates_serbest_mi(**_ort, taret_hizi=0.5)
+kontrol("taret duruyorken (0.5 derece/sn) ates SERBEST", _i, _g)
+_i, _g = engagement.ates_serbest_mi(**_ort,
+                                    taret_hizi=config.FIRE_MAX_TURRET_RATE_DEG_S + 5)
+kontrol("taret hizliyken ates ENGELLI", not _i and 'taret hareketli' in _g, _g)
+_i, _g = engagement.ates_serbest_mi(**_ort, taret_hizi=None)
+kontrol("enkoder yoksa (None) kapi UYGULANMAZ — eski davranis", _i, _g)
+_i, _g = engagement.ates_serbest_mi(_c22, _m22, True, True, 0.0, 0.0, 0.0)
+kontrol("taret_hizi hic verilmezse de calisir (geriye uyum)", _i, _g)
+kontrol("esik makul: 0 < sinir <= 10 derece/sn",
+        0 < config.FIRE_MAX_TURRET_RATE_DEG_S <= 10.0,
+        f"{config.FIRE_MAX_TURRET_RATE_DEG_S} derece/sn")
+
+# --- 23. NISAN KARARI BAYAT OLMAMALI (29.7 B16) ---
+print()
+print("=" * 70)
+print("23. NISAN KARARI — telafi edilmis hataya bakiyor mu")
+print("=" * 70)
+_kaynak2 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("is_aimed_at_target telafi edilmis hatadan (derece) kuruluyor",
+        "self.is_aimed_at_target = (abs(_hata_yaw_px) <= _tolerans" in _kaynak2,
+        "bukrek_main.process_tracking")
+kontrol("ham piksel hatasi artik nisan karari vermiyor",
+        "self.is_aimed_at_target = (abs(error_yaw_pixel)" not in _kaynak2)
+kontrol("kilit_adimi de telafi edilmis hatayla besleniyor",
+        "_hata_px = (_hata_yaw_px ** 2 + _hata_pitch_px ** 2) ** 0.5" in _kaynak2)
+
 print()
 print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")

@@ -231,6 +231,10 @@ class HavaSavunmaArayuz(QWidget):
         # Yaw enkoderi (FAZ 3: yalnızca gösterim). None = Pi hiç raporlamadı.
         # {"ok": bool, "yaw": float|None, "raw": int|None}
         self._enkoder = None
+        # Enkoderden olculen mutlak yaw hizi (derece/sn) ve turev penceresi.
+        # None = enkoder yok/saglıksiz; ates kapisi o zaman uygulanmaz.
+        self.taret_yaw_hizi = None
+        self._enk_gecmis = []
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
@@ -1189,7 +1193,20 @@ class HavaSavunmaArayuz(QWidget):
         cx = bbox[0] + bbox[2] // 2
         cy = bbox[1] + bbox[3] // 2
 
-        if self.current_tracked_target_class is None:
+        # DURUM MAKINESI ZATEN DOGRULADIYSA EK ONAY ARANMAZ (29.6 B14).
+        # `dogrulanan_sinif` ancak DOGRULAMA VERIFY_CONFIRM_FRAMES (4) ARDISIK
+        # ve TUTARLI karede ayni sinifi gordukten, ustelik cifte balon
+        # eslestikten sonra dolar. Bunun ustune bir de 3 ardisik kare konum
+        # onayi istemek hayalet korumasi eklemiyor, sadece geciktiriyordu --
+        # ve onay sayaci tespit dusen HER karede sifirlandigi icin tespit
+        # surekliligi ~%50 iken 3 ardisik kare olasiligi %12'ye iniyordu.
+        # asama3Deneme2'de olculdu: kosumun son 2 saniyesinde hedef karede
+        # goruldugu halde sistem "Aday hedef dogrulaniyor (1/3)" ile "hedef bu
+        # karede yok" arasinda gidip geldi ve taret hic kimildamadi.
+        # Manuel/Asama 1 yolundaki onay YERINDE DURUYOR (orada durum makinesi
+        # calismiyor, tek koruma o).
+        _makine_dogruladi = getattr(self.angajman, 'dogrulanan_sinif', None) is not None
+        if self.current_tracked_target_class is None and not _makine_dogruladi:
             # İlk kilit: hayalet tespite karşı zamansal onay. Sahada tavandaki
             # hayalet (0.66) gerçek balondan (0.44) yüksek güvenle çıkmıştı ve
             # yalnızca 2 kare sürmüştü.
@@ -1205,6 +1222,14 @@ class HavaSavunmaArayuz(QWidget):
                     f"Durum: Aday hedef doğrulanıyor "
                     f"({self._aday_ardisik}/{config.LOCK_CONFIRM_FRAMES})...")
                 return None
+            self._aday_ardisik = 0
+            self._aday_konum = None
+            self.reset_pid_state()
+            self.last_target_velocity_x = 0.0
+            self.last_target_velocity_y = 0.0
+        elif self.current_tracked_target_class is None:
+            # Makine dogrulamis, onay atlandi: yeni hedefe gecerken PID
+            # hafizasi yine de sifirlanmali (eski hedefin hizi sizmasin).
             self._aday_ardisik = 0
             self._aday_konum = None
             self.reset_pid_state()
@@ -1277,7 +1302,8 @@ class HavaSavunmaArayuz(QWidget):
         izin, gerekce = engagement.ates_serbest_mi(
             self.aktif_cift, self.angajman, self.balon_gercek_goruldu,
             self.is_aimed_at_target, self.current_yaw_angle,
-            self.no_fire_yaw_start, self.no_fire_yaw_end)
+            self.no_fire_yaw_start, self.no_fire_yaw_end,
+            taret_hizi=self.taret_yaw_hizi)
         if not izin:
             if self.angajman.ates_sayisi > 0:
                 # Zaten ateş edilmiş ve pencere 'tekrar' demişti, ama ateş
@@ -1328,6 +1354,26 @@ class HavaSavunmaArayuz(QWidget):
         onceki = self._enkoder
         self._enkoder = d
         self._enkoder_kaydet(d)
+        # TARET HIZI (derece/sn), ates kapisi icin. Rapor ~50 Hz geliyor;
+        # tek ornekten turev almak gurultulu oldugu icin ~100 ms'lik pencere
+        # kullaniliyor (enkoderin kendi cozunurlugu 0.011 derece).
+        # DIKKAT: bu sozluk `rpi_communicator` tarafindan yeniden adlandirilir
+        # ("encoder_ok/encoder_yaw" -> "ok/yaw"); Pi'nin alan adlari BURADA
+        # GECERLI DEGIL.
+        _y = d.get("yaw")
+        if d.get("ok") and _y is not None:
+            _simdi = time.time()
+            self._enk_gecmis.append((_simdi, float(_y)))
+            while len(self._enk_gecmis) > 1 and _simdi - self._enk_gecmis[0][0] > 0.12:
+                self._enk_gecmis.pop(0)
+            if len(self._enk_gecmis) >= 2:
+                _dt = self._enk_gecmis[-1][0] - self._enk_gecmis[0][0]
+                if _dt > 0.02:
+                    self.taret_yaw_hizi = abs(
+                        (self._enk_gecmis[-1][1] - self._enk_gecmis[0][1]) / _dt)
+        else:
+            self._enk_gecmis.clear()
+            self.taret_yaw_hizi = None
         if onceki is not None and onceki.get("ok") and not d.get("ok"):
             self._update_status_label("Uyarı: yaw ENKODERİ veri vermiyor (kablo/güç?). Sistem adım sayacıyla devam ediyor.")
         elif (onceki is None or not onceki.get("ok")) and d.get("ok"):
@@ -2891,8 +2937,9 @@ class HavaSavunmaArayuz(QWidget):
         _tolerans = config.AIM_TOLERANCE_MIN_PIXELS
         if _yaricap:
             _tolerans = max(_tolerans, _yaricap * config.AIM_TOLERANCE_RATIO)
-        self.is_aimed_at_target = (abs(error_yaw_pixel) <= _tolerans and
-                                   abs(error_pitch_pixel) <= _tolerans)
+        # NISAN KARARI ASAGIDA, olu zaman telafisinden SONRA veriliyor.
+        # Burada yalnizca tolerans hesaplaniyor; `is_aimed_at_target`
+        # `error_*_degree` uzerinden kuruluyor (bkz. "BAYAT NISAN" notu).
 
         # --- ÖLÜ ZAMAN TELAFİSİ ---
         # Kamera + çıkarım gecikmesi boyunca (~100-200 ms) taret hareket etmeye
@@ -2917,10 +2964,27 @@ class HavaSavunmaArayuz(QWidget):
         error_yaw_degree = (world_yaw - self.current_yaw_angle + 180) % 360 - 180
         error_pitch_degree = (world_pitch - self.current_pitch_angle + 180) % 360 - 180
 
+        # --- BAYAT NISAN (2026-09-16 aksam, 29.7 bolum B16) ---
+        # Nisan karari eskiden HAM piksel hatasina bakiyordu: `error_yaw_pixel`
+        # karenin CEKILDIGI andaki hatadir. Taret o andan beri hareket etti;
+        # 40 derece/sn'de 0.2 saniyelik olu zaman 8 derece eder. Yani "nisan
+        # TAMAM" 0.2 saniye ONCE dogruydu, ates aninda degil. Kullanicinin
+        # "hedef hareketli oldugu icin bazen tam nisan almadan sikiyor"
+        # gozlemi tam olarak bu.
+        # Telafi edilmis hata (`error_*_degree` = hedefin dunya acisi eksi
+        # taretin SIMDIKI acisi) "su anda namlu nereye bakiyor" sorusunun
+        # cevabidir; nisan karari artik ondan veriliyor. Boslugun bu hesapta
+        # iptal oldugu 29.6 B15'te gosterildi (sabit ofset iki taraftan da
+        # dusuyor), yalnizca yon degisiminin hemen ardindan gecerli degil.
+        _hata_yaw_px = error_yaw_degree / self.DEGREES_PER_PIXEL_YAW
+        _hata_pitch_px = error_pitch_degree / self.DEGREES_PER_PIXEL_PITCH
+        self.is_aimed_at_target = (abs(_hata_yaw_px) <= _tolerans and
+                                   abs(_hata_pitch_px) <= _tolerans)
+
         # Kilit durumundayken nişan tutuldu mu diye durum makinesini besle.
         # Ateş, tolerans AIM_HOLD_FRAMES kare korunduktan sonra serbest kalır.
         if self.angajman.durum == KILIT:
-            _hata_px = (error_yaw_pixel ** 2 + error_pitch_pixel ** 2) ** 0.5
+            _hata_px = (_hata_yaw_px ** 2 + _hata_pitch_px ** 2) ** 0.5
             self.angajman.kilit_adimi(_hata_px, _yaricap or 8.0,
                                       self.balon_gercek_goruldu)
         if self.angajman.durum == ATES:
@@ -3132,6 +3196,18 @@ class HavaSavunmaArayuz(QWidget):
 
         output_yaw = max(min(output_yaw, self.MAX_OUTPUT_DEGREE), -self.MAX_OUTPUT_DEGREE)
         output_pitch = max(min(output_pitch, self.MAX_OUTPUT_DEGREE), -self.MAX_OUTPUT_DEGREE)
+
+        # SUZGEC SARMA ONLEME (anti-windup). Suzgecin hafizasi HESAPLANAN degil
+        # GONDERILEN degeri tutmalı. MAX_OUTPUT_DEGREE 2.0'a indirildigi icin
+        # (29.5) buyuk hatada cikis kirpiliyor; hafiza kirpilmamis degeri
+        # tutarsa, hata kapandiktan sonra da birkac kare boyunca tam sinirdan
+        # komut gondermeye devam eder -- yani kirpma asimi ONLEMEK yerine
+        # gecikitirir. Hafizayi gonderilen degerle esitlemek standart
+        # anti-windup; DC davranisini degistirmez, yalnizca doygunluktan
+        # cikisi hizlandirir.
+        if config.PID_OUTPUT_SMOOTHING > 0.0:
+            self._pid_cikis_yaw = output_yaw
+            self._pid_cikis_pitch = output_pitch
 
         if self.active_task == 'task3':
             predicted_yaw_after_move = self.current_yaw_angle + output_yaw

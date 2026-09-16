@@ -248,9 +248,19 @@ KAMERA_KONTROLLERI = {
         # kullanmadığı (YOLO) için kabul edilebilir.
         "auto_wb": 1,
         "wb_temperature": None,
-        "auto_exposure": None,
-        "exposure": None,
-        "gain": None,
+        # POZLAMA (2026-09-16 aksam, sahada `kamera_renk.py` ile secildi).
+        # DEGER LOG2 SANIYEDIR: -5 = 1/32 s = 31 ms, -6 = 16 ms, -7 = 8 ms.
+        # Yani SAYI KUCULDUKCE (daha negatif) pozlama KISALIR ve hareket
+        # bulanikligi azalir. Kullanici sahada -5'i sectiغi icin baslangic
+        # burasi; asil hedef -6/-7 (bkz. 29.7 B18).
+        # BU SATIRLAR OLMADAN `kamera_renk.py`'de yapilan ayar KAYBOLUYORDU:
+        # arayuz kamerayi kendi aciyor ve None olan denetimlere DOKUNMUYOR,
+        # yani surucunun otomatik pozlamasi geri geliyordu. Otomatik pozlama
+        # ic mekanda ~60 ms seciyor; bu hem 15 fps tavani hem de 400 derece/sn
+        # donuste 280 piksel bulaniklik demek.
+        "auto_exposure": 0.25,   # DirectShow'da 0.25 = MANUEL, 0.75 = otomatik
+        "exposure": -5,
+        "gain": 168,
         "brightness": None,
         "contrast": None,
         "saturation": None,
@@ -947,6 +957,20 @@ AIM_TOLERANCE_RATIO = 0.6
 # icinde. 9 px ise 3.4 cm idi ve tespit kutusunun kendi gurultusuyle ayni
 # mertebedeydi -- yani olculemeyen bir hassasiyet isteniyordu.
 AIM_TOLERANCE_MIN_PIXELS = 14.0
+
+# --- ATES KAPISI: TARET NE KADAR YAVASKEN ATES SERBEST ---
+# Namlu, ates komutundan sonra servo cekisi (FIRE_SERVO_LEG_SEC = 0.20 sn)
+# boyunca donmeye devam eder. Taret o sirada r derece/sn ile donuyorsa namlu
+# 0.2 x r derece kayar. Balon 10 metrede +-0.43 derecelik bir hedef; yani
+# 3 derece/sn'de kayma 0.6 derece, zaten butun paya yakin.
+# SAHA OLCUMU (2026-09-16, enkoder_20260916_162650, dort tur): taret zamanin
+# %75-86'sinda 3 derece/sn'nin ALTINDA. Yani bu kapi atesi engellemiyor,
+# yalnizca taret hedefin icinden GECERKEN acilan atisi kesiyor -- kullanicinin
+# "tam nisan almadan sikiyor" dedigi durum.
+# Enkoder yoksa/saglıksızsa kapi UYGULANMAZ (eski davranis); enkoder bir
+# emniyet katmani, calismamasi sistemi durdurmamalı.
+# 0 veya None = kapali.
+FIRE_MAX_TURRET_RATE_DEG_S = 3.0
 
 # Ateşten önce nişan kaç kare korunmalı.
 #

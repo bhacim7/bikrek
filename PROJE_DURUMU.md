@@ -3033,3 +3033,140 @@ PREDICTION 1.0) **oldugu gibi duruyor**; hepsi ya ise yaradi ya notr.
 5. **Kamera:** pozlama 10 -> 3-4 ms, 15 fps'in sebebi. Hala yapilmadi.
 6. **Paket 4 (dataset):** egik direk (+-35 derece), hareket bulanikligi,
    **karton kutu / ray / araba negatifleri** (B13).
+
+### 29.7 Ucuncu kosum: HEDEF IMHA EDILDI (2026-09-16 16:26)
+
+`enkoder_20260916_162650.csv`, 132 saniye, dort tur. Kullanici bildirimi:
+**3. turda hedef imha edildi.** Video yok; olcum tamamen enkoder kaydindan.
+
+#### 29.7.1 Tur tur olcum
+
+| tur | aralik | titresim RMS | frekans | nisan bandi disi | yon degisimi |
+|---|---|---|---|---|---|
+| 1 | 19.3-37.3 sn | 0.264 | 1.51 Hz | %18.6 | 107 / 55sn |
+| 2 | 49.7-64.2 sn | **0.112** | 2.43 Hz | **%7.3** | 71 / 55sn |
+| 3 | 80.8-103.5 sn (**imha**) | 0.215 | 2.50 Hz | %11.5 | 76 / 55sn |
+| 4 | 110.9-129.3 sn | 0.317 | 1.80 Hz | %20.8 | 83 / 55sn |
+
+Uc kosumun ORTANCA turu (olcum araci artik turlari ayirip ortancayi veriyor;
+manuel surus bolumleri de "tur" gorunduğu icin en kotuyu almak yaniltiyordu):
+
+| kosum | ayar | titresim RMS | frekans | bant disi |
+|---|---|---|---|---|
+| Denem (14:29) | ilk ayar | 0.155 | 0.57 Hz | %16.1 |
+| Deneme2 (15:20) | suzgec KAPALI | 0.392 | 3.37 Hz | %30.9 |
+| Deneme3 (16:26) | suzgec geri ACIK | **0.264** | **1.51 Hz** | %18.2 |
+
+Suzgeci geri acmak isini yapti: **3.37 Hz'lik denetleyici rezonansi gitti**
+(1.51 Hz artik hedefin kendi salinimina yakin), RMS ucte bir azaldi, nisan
+bandi disinda gecen zaman %31'den %18'e indi. Ilk kosumun 0.155'ine
+inilemedi; aradaki fark su an aciklanamiyor ve bir sonraki kosumda
+izlenecek (ilk kosumda `MAX_OUTPUT_DEGREE` 15, feedforward acikti).
+
+#### 29.7.2 Kullanicinin gozlemi ve kok neden
+
+> "hedef hareketli oldugu icin bazen tam nisan almadan sikma gibi durumlar
+> oluyor ama tam nisan almaya odaklanirsak da dataset kaynakli hedef
+> kayboldugu icin tam nisana oturamiyoruz"
+
+Ikisi ayri sorun ve ikisinin de sebebi bulundu.
+
+**B16 — NISAN KARARI BAYATTI (duzeltildi).** `is_aimed_at_target` HAM piksel
+hatasina bakiyordu: `error_yaw_pixel = target_x - center_x`, yani karenin
+CEKILDIGI andaki hata. Taret o andan beri hareket etmis oluyor; olculen olu
+zaman 0.22 saniye ve takipte tepe hiz 40-80 derece/sn, yani "nisan TAMAM"
+bilgisi 8 dereceye kadar bayat olabiliyor. Ates kilidi de ayni bayrağa
+baktigi icin sistem, taret hedefin icinden GECERKEN "nisan tamam" gorup ates
+edebiliyordu.
+Telafi edilmis hata (`error_*_degree` = hedefin dunya acisi eksi taretin
+SIMDIKI acisi) zaten hesaplaniyordu — PID onu kullaniyor, nisan karari
+kullanmiyordu. Artik nisan karari ve `kilit_adimi` de ondan besleniyor.
+Boslugun bu hesapta iptal oldugu 29.6 B15'te gosterilmisti (sabit ofset iki
+taraftan da dusuyor); yalnizca yon degisiminin hemen ardindan gecerli degil.
+
+**B17 — ATES KAPISI: TARET DURURKEN ATES (eklendi).** Bayat nisan
+duzeltilse bile ates komutundan sonra servo cekisi 0.20 saniye suruyor ve
+taret o sirada donmeye devam ediyor. r derece/sn'de namlu 0.2 x r derece
+kayiyor; balon 10 metrede +-0.43 derecelik bir hedef, yani 3 derece/sn'de
+kayma zaten butun payi yiyor.
+Yeni kosul `FIRE_MAX_TURRET_RATE_DEG_S = 3.0`: enkoderden olculen mutlak yaw
+hizi bu sinirin ustundeyse ates serbest degil. **Bu kapi atesi engellemiyor**
+— ayni kayittan olculdu, taret zamanin %75-86'sinda 3 derece/sn'nin altinda:
+
+| tur | medyan hiz | p90 | 3 der/sn altinda |
+|---|---|---|---|
+| 1 | 0.9 | 7.1 | %74.9 |
+| 2 | 0.0 | 3.5 | %86.0 |
+| 3 | 0.9 | 4.3 | %82.1 |
+| 4 | 0.0 | 7.0 | %79.6 |
+
+Enkoder yoksa veya saglıksizsa kapi UYGULANMAZ (eski davranis) — enkoder bir
+emniyet katmani, calismamasi sistemi durdurmamali. Hiz PC tarafinda ~100 ms
+pencereyle olculuyor (`_update_encoder_state`).
+
+**B18 — KAMERA POZLAMASI ARAYUZE HIC ULASMIYORDU (duzeltildi).** Kullanici
+`kamera_renk.py` ile pozlamayi ayarladi ama `KAMERA_KONTROLLERI['hunter']`
+icinde `exposure` ve `auto_exposure` **None** idi; None demek "bu denetime
+DOKUNMA" demek, yani arayuz kamerayi kendi acinca surucunun OTOMATIK
+pozlamasi geri geliyordu. Ic mekanda otomatik pozlama ~60 ms seciyor ve bu
+tek basina iki sorunu birden acikliyor:
+- **15 fps tavani**: 60 ms pozlama en fazla 16 kare/saniye demek. Sahada
+  olculen 15.0 fps'in sebebi buydu; config 30 bekliyordu.
+- **Hareket bulanikligi**: 400 derece/sn donuste 60 ms = 24 derece = kare
+  genisliginin neredeyse tamami. 29.3 B1'de "kutusuz kareler bulanik" diye
+  gecen gozlemin dogrudan sebebi.
+
+Sahada secilen degerler config'e yazildi: `auto_exposure: 0.25` (DirectShow'da
+0.25 = MANUEL), `exposure: -5`, `gain: 168`.
+
+**POZLAMA DEGERININ ANLAMI (kullanicinin sorusu):** deger LOG2 SANIYEDIR.
+`-5` = 2⁻⁵ = 1/32 s = **31 ms**. `-6` = 16 ms, `-7` = 8 ms, `-8` = 4 ms.
+Yani sayi KUCULDUKCE (daha negatif) pozlama KISALIR ve bulaniklik azalir.
+`-5` otomatiğin ~60 ms'sine gore iki kat iyilesme ama hedef `-6`/`-7`.
+`e` tusu otomatik pozlamayi acip kapatir; ekranda `auto_exp -1` yaziyor
+cunku bu surucu o alani OKUTMUYOR (beyaz dengesindeki `wb -1K` ile ayni
+durum). Okunamamasi calismadigi anlamina gelmiyor — `[` / `]` ile goruntunun
+degismesi manuel kipin etkin oldugunu gosteriyor.
+
+**B19 — GEREKSIZ KILIT ONAYI KALDIRILDI (29.6 B14 uygulandi).** Otonom
+modda durum makinesi hedefi zaten `VERIFY_CONFIRM_FRAMES = 4` ardisik ve
+tutarli karede dogruluyor, ustelik cifte balon eslesmis oluyor. Bunun ustune
+`_otonom_hedefi_benimse` bir de 3 ardisik kare konum onayi istiyordu ve sayac
+tespit dusen HER karede sifirlaniyordu; tespit surekliligi ~%50 iken 3 ardisik
+kare olasiligi %12. Artik makine dogruladiysa onay atlanıyor (manuel/Asama 1
+yolundaki onay yerinde duruyor, orada makine calismiyor).
+
+**B20 — SUZGEC SARMA ONLEME (eklendi).** Cikis suzgecinin hafizasi
+HESAPLANAN degeri tutuyordu; `MAX_OUTPUT_DEGREE` 2.0'a indirildigi icin
+buyuk hatada cikis kirpiliyor ve hafiza kirpilmamis degeri tasiyordu. Bu,
+hata kapandiktan sonra birkac kare daha sinirdan komut gonderilmesi demek —
+kirpma asimi onlemek yerine geciktirir. Hafiza artik GONDERILEN degerle
+esitleniyor (standart anti-windup).
+
+#### 29.7.3 Bu commit'te degisenler
+
+| Ne | Once | Sonra |
+|---|---|---|
+| `is_aimed_at_target` ve `kilit_adimi` | ham piksel hatasi (bayat) | telafi edilmis hata |
+| `FIRE_MAX_TURRET_RATE_DEG_S` | yok | **3.0 derece/sn** (enkoderli) |
+| `KAMERA_KONTROLLERI['hunter']` pozlama | None (otomatik geri geliyordu) | manuel, exp -5, gain 168 |
+| otonom kilit onayi | 3 ardisik kare | makine dogruladiysa atlanıyor |
+| suzgec hafizasi | kirpilmamis cikis | gonderilen cikis (anti-windup) |
+
+Test: 213 kontrol, TUM TESTLER GECTI. Yeni bolumler 22 (ates kapisi) ve
+23 (nisan karari bayat degil).
+
+#### 29.7.4 Sirasi gelen isler
+
+1. **Kosum.** Bes degisiklik birden girdi; olcut: `kosum_olc.py` ortanca tur
+   RMS'i (simdi 0.264) ve ates basina isabet orani. Ates sayisinin DUSMESI
+   beklenir (kapi calisiyorsa), isabet oraninin ARTMASI beklenir.
+   Ates engellendiginde durum cubugunda artik `taret hareketli: X derece/sn`
+   yaziyor — cok sik gorunuyorsa sinir 5.0'a gevsetilir.
+2. **Kamera acilis satiri.** Arayuz acilirken konsolda pozlamanin TUTUP
+   tutmadigi ve gerceklesen fps yaziyor. 30 fps'e ciktiysa `exposure` -6'ya
+   indirilebilir; goruntu fazla karanlik kalirsa `gain` artirilir.
+3. **Dataset (degismedi, hala en buyuk kalan kalem):** egik direk, hareket
+   bulanikligi, karton kutu negatifleri.
+4. **FAZ 6 (29.6 B15):** kontrol dongusu adim sayaci yerine enkoder acisini
+   kullansin. Simulasyona gore nisan hatasi RMS'ini yariya indiriyor.

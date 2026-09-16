@@ -55,30 +55,30 @@ def yukle(yol):
             np.array([int(x['enk_ok']) for x in satirlar]))
 
 
-def hareket_penceresi(t, sy, uzunluk=15.0):
+def turlari_bul(t, sy, bosluk=4.0, en_az=5.0):
     """
-    Otonom koşumun geçtiği bölümü bul.
+    Kayıttaki otonom TURLARI ayrı ayrı bul.
 
     Kayıt, arayüz açıldığı andan itibaren HER ŞEYİ tutar: manuel sürüş, boş
-    bekleme, birden çok deneme. Tamamını ölçmek sayıları sulandırır — sahada
-    ölçüldü: aynı koşumun otonom bölümünde titreşim RMS 0.345 iken tüm kayıt
-    üzerinden 0.269 çıkıyor, çünkü taretin hiç kımıldamadığı dakikalar
-    ortalamayı aşağı çekiyor.
+    bekleme, arka arkaya birkaç deneme. Hepsini tek sayıya indirmek yanıltıyor
+    — 2026-09-16'daki dört turlu koşumda turların titreşim RMS'i 0.113 ile
+    0.269 arasında değişti, yani en iyi tur eşiğin altında, en kötüsü iki
+    katıydı. Tek ortalama ikisini de gizler.
 
-    Bu yüzden komut yoğunluğu EN YÜKSEK olan `uzunluk` saniyelik pencere
-    seçilir: otonom takip, saniyede onlarca küçük düzeltme gönderir; manuel
-    sürüş ve bekleme göndermez.
+    Tur = taretin komut aldığı, aralarında `bosluk` saniyeden uzun sessizlik
+    olmayan kesintisiz bölüm. `en_az` saniyeden kısa olanlar atılır (manuel
+    dokunuşlar, açı sıfırlama).
     """
-    hareketli = np.abs(np.diff(sy)) > 0.02
-    if hareketli.sum() < 10 or t[-1] - t[0] <= uzunluk:
-        return t[0], t[-1]
-    orta = t[:-1][hareketli]
-    # kayan pencere: her başlangıç için içindeki hareketli örnek sayısı
-    baslangiclar = np.arange(t[0], t[-1] - uzunluk, 0.5)
-    sayimlar = np.array([np.sum((orta >= b) & (orta < b + uzunluk))
-                         for b in baslangiclar])
-    b = baslangiclar[int(np.argmax(sayimlar))]
-    return b, b + uzunluk
+    hareketli = np.where(np.abs(np.diff(sy)) > 0.02)[0]
+    if len(hareketli) < 10:
+        return [(t[0], t[-1])]
+    anlar = t[hareketli]
+    kesme = np.where(np.diff(anlar) > bosluk)[0]
+    basla = np.concatenate(([0], kesme + 1))
+    bitir = np.concatenate((kesme, [len(anlar) - 1]))
+    turlar = [(anlar[i], anlar[j]) for i, j in zip(basla, bitir)
+              if anlar[j] - anlar[i] >= en_az]
+    return turlar or [(anlar[0], anlar[-1])]
 
 
 def titresim(t, e, fs=50.0):
@@ -106,15 +106,39 @@ def titresim(t, e, fs=50.0):
 
 
 def olc(yol, baslangic=None, bitis=None):
+    """Dosyadaki her turu ayrı ölç; en kötü turun özetini döndür."""
     t, sy, ey, ok = yukle(yol)
-    a, b = hareket_penceresi(t, sy)
-    if baslangic is not None:
-        a = baslangic
-    if bitis is not None:
-        b = bitis
+    if baslangic is not None or bitis is not None:
+        turlar = [(baslangic if baslangic is not None else t[0],
+                   bitis if bitis is not None else t[-1])]
+    else:
+        turlar = turlari_bul(t, sy)
+    print(f"\n########  {os.path.basename(yol)}  —  {len(turlar)} tur  ########")
+    sonuclar = [_tek_tur(t, sy, ey, ok, a, b, i + 1, len(turlar))
+                for i, (a, b) in enumerate(turlar)]
+    sonuclar = [x for x in sonuclar if x]
+    if not sonuclar:
+        return None
+    if len(sonuclar) > 1:
+        # ORTANCA tur özet olarak alınıyor, en kötü değil: kayıtta manuel
+        # sürüş bölümleri de "tur" gibi görünür ve onların titreşimi otonom
+        # takiple ilgisizdir (elle çevirirken RMS 0.7-1.0 çıkabiliyor).
+        # Ortanca, tek bir manuel bölümden etkilenmez.
+        sirali = sorted(sonuclar, key=lambda x: x['rms'])
+        ortanca = sirali[len(sirali) // 2]
+        print(f"\n  --> en iyi tur RMS {sirali[0]['rms']:.3f}   "
+              f"ortanca {ortanca['rms']:.3f}   "
+              f"en kötü {sirali[-1]['rms']:.3f} derece")
+        print("      (manuel sürüş bölümleri de tur sayılır; özet ORTANCA turdur)")
+        return ortanca
+    return sonuclar[0]
+
+
+def _tek_tur(t, sy, ey, ok, a, b, sira, toplam):
     m = (t >= a) & (t <= b)
     if m.sum() < 20:
-        raise SystemExit(f"{yol}: {a:.1f}-{b:.1f} sn aralığında yeterli örnek yok.")
+        print(f"  (tur {sira}: {a:.1f}-{b:.1f} sn — yeterli örnek yok, atlandı)")
+        return None
     tt, s, e = t[m], sy[m], ey[m]
     sure = tt[-1] - tt[0]
 
@@ -129,9 +153,7 @@ def olc(yol, baslangic=None, bitis=None):
     fark = s - e
     ti = titresim(tt, e)
 
-    kendi_secti = baslangic is None and bitis is None
-    print(f"\n=== {os.path.basename(yol)}   ({a:.1f} - {b:.1f} sn, {sure:.1f} saniye"
-          f"{', en yoğun bölüm' if kendi_secti else ''}) ===")
+    print(f"\n=== tur {sira}/{toplam}   ({a:.1f} - {b:.1f} sn, {sure:.1f} saniye) ===")
     print(f"  enkoder sağlıklı           : %{100 * ok[m].mean():.1f}")
     if ti:
         print(f"  titreşim RMS               : {ti['rms']:.3f} derece"
@@ -167,7 +189,7 @@ def main():
     sonuclar = [(d, olc(d, bas, bit)) for d in dosyalar]
 
     if len(sonuclar) > 1 and all(s for _, s in sonuclar):
-        print("\n=== karşılaştırma (titreşim) ===")
+        print("\n=== karşılaştırma (her dosyanın ORTANCA turu) ===")
         ilk = sonuclar[0][1]
         for d, s in sonuclar:
             k = s['rms'] / ilk['rms'] if ilk['rms'] else float('nan')
