@@ -2573,3 +2573,215 @@ Tam analiz `DATASET_ANALIZ.md`'de; burasi karar kaydi.
 - Bekleyen: Roboflow'da `Resize 1280x720 Stretch` ve motion blur 10 -> 5 px
   (yeni versiyonda), `hsv_s/v` acilmasi, `degrees=0`, `cache='ram'`
   KULLANILMAYACAK (12k kare 1280'de ~33 GB RAM, PC kapandi).
+
+## 29. Asama 3 hareketli hedef kosumu: `aşama3Denem.mp4` cozumlemesi (2026-09-16)
+
+**Duzenek:** IR-cut lens takildi (perde artik siyah; `HUNTER_MAGENTA_KIR`,
+`HUNTER_KIRMIZI_ESIK`/`GUC` kullanici tarafindan `None` yapildi, bu bolumle
+commit'lendi). Model v23 (7 sinif). Enkoder FAZ 5' (durunca hizala) acik.
+Hedef: rayli arabada `dusman-Fuze` maketi + kirmizi balon, 15 m'den 9 m'ye
+yaklasiyor, direk sallaniyor (maket egimi kareden kareye +-35 derece).
+Iki kosum: t=3.0-22.0 (araba geri donunce manuel) ve t=33.0-51.5.
+
+**Yontem:** 54.8 sn'lik kayit 2 fps'de 110 kareye bolundu, her karede avci
+gorunumu + gozcu + baslik satiri (sayac yaw/pitch, enk, kare sayaci) + durum
+satirlari okundu. `enkoder_kayit/enkoder_20260916_142911.csv` (21 ms, 7450
+satir) videoyla hizalandi (sayacin 1.3'ten ayrildigi an = video 3.2 s).
+Bulgular bu iki kaynagin ustuste bindirilmesinden cikiyor.
+
+### 29.1 Zaman cizelgesi (ozet)
+
+| video t | durum satiri | sayac yaw | enk | ne oldu |
+|---|---|---|---|---|
+| 0-2.5 | Hazir | +1.3 | +1.33 | maket 15 m'de, avci kutu cizmiyor (Asama 3 basilmadi) |
+| 3.0 | DOGRULAMA 0.2/1.0 sn, hata yaw -367 px | +0.8 | +1.33 | Asama 3 basildi; avci ciftini goruyor (Fuze 0.52), dogrudan dogrulamaya girdi |
+| 3.2-3.9 | DOGRULAMA 0.8/1.0 | +1.3 -> **-8.4** | -6.9 | hedef dunya acisi ~-3.9; taret 0.65 sn'de 9.7 derece dondu, **4.5 derece asti**, kare bulanik |
+| 4.0 | TARAMA, gozcude aday yok (0 iz) | -6.9 | -5.6 | dogrulama 1 sn'de 4 tutarli kare toplayamadi -> `dogrulanamadi`, aci **5 sn kara listede** |
+| 4.5-8.5 | TARAMA, 1 cift, imha 0 | -7.0 | -6.93 | avci Fuze 0.77-0.86 / balon 0.71-0.76 goruyor, **5 saniye hicbir sey yapilmadi** (kara liste) |
+| 9.0-9.5 | DOGRULAMA 0.0 -> 0.6/1.0 | -7.0 -> -6.4 | | kara liste doldu, yeniden dogrulama |
+| 10.0 | Hedef kaybedildi, tahmin (2 kare kaldi) | -4.1 | -5.26 | tespit dustu; 0.5 sn'de +2.3 derece hareket |
+| 10.5 | KILIT, BALON YOK, nisan bekliyor | -5.3 | | ilk kilit (Asama 3 basildiktan 7.5 sn sonra) |
+| **11.0** | KILIT, balon VAR, **nisan TAMAM** (yaw 8 px, pitch 0) | -5.6 | -6.14 | atese en yakin an; bir sonraki karede hata 42 px, tutulamadi |
+| 12.0-13.0 | Hedef kaybedildi (4 -> 0 kare) | -3.4 / -5.1 / -6.4 | | nisangah balonun ustunde ama YOLO kutu vermiyor; taret +-1.5 derece geziyor |
+| 13.5-14.5 | KILIT nisan bekliyor (124 px, -34 px) -> kayip | -6.1 / -5.1 / -6.9 | | salinim |
+| 15.0 | TARAMA, hedef bu karede yok (0 kayit) | -7.5 | -7.42 | kilit tamamen dustu; kayip -> tahmin -> "yeni hedef araniyor" |
+| **16.0** | KILIT, **nisan TAMAM** (-17 px, 4 px) | -7.5 | -7.42 | ikinci ve son "nisan TAMAM"; sonraki kare kayip |
+| 18.0 -> 18.5 | KILIT (86 px) -> kayip | -6.8 -> **-3.0** | -7.20 -> -4.22 | 1.2 derecelik hata icin **+3.8 derece** komut |
+| 19.0-20.0 | KILIT, hedef bu karede yok; "yeni hedef araniyor" | -3.9 | -3.93 | taret duruyor, hedef karede 2 derece solda, YOLO kutu yok (direk egik) |
+| 20.5-21.5 | Aday dogrulaniyor 1/3 -> KILIT (-116 px pitch) -> kayip | -3.9 -> -8.2 -> -9.6 | | yine asim; t=21.0 karesi hareket bulanikligi |
+| 22.0-24.5 | Hazir / Tam manuel | | | kullanici mudahalesi, araba geri aliniyor |
+| 33.0 | Aday dogrulaniyor 1/3, TARAMA 2 cift | +0.6 | +0.63 | ikinci kosum; **arabanin sasesine `dusman-Drone 0.67` sahte kutu** |
+| 33.5 -> 34.0 | KILIT (-79 px) -> kayip | +0.6 -> -4.4 -> **-7.9** | -6.1 | hedef ~-2.1; **5.8 derece asim**, kare bulanik |
+| 34.5-40.0 | KILIT / kayip donusumlu | -5.7 ... -2.4 ... -5.8 | | fark sayac-enk **-1.1..-1.8 derece 4 sn boyunca** (dinlenme yok, hizalama yok) |
+| 37.5 | KILIT (61 px) | -6.5 -> **-5.3** (hizalama) -> -3.6 | -5.10 | ilk dinlenme; sayac +1.25 sicradi, ardindan +2.3 derece komut |
+| 40.0-50.0 | KILIT / kayip / yeniden edinme (3 dongu) | -5.8 ... -1.5 | | nisan TAMAM hic yok; hata 1..124 px arasinda geziyor |
+| 49.0-49.5 | kayip (62 px) -> KILIT (-114 px) | -5.2 -> **-1.5** | -6.88 -> -3.38 | 0.9 derece hata icin +3.7 derece |
+| 50.0-51.0 | TARAMA (1 iz) -> DOGRULAMA 0.6/1.0 | -3.4 -> -5.0 | | |
+| 51.5 | Hazir, pitch 5.2 | -7.1 -> -8.4 | | kullanici durdurdu (kare bulanik: pitch 3 derece/kare) |
+
+### 29.2 Sayilar
+
+| olcum | deger | not |
+|---|---|---|
+| avci kare hizi | **15.0 fps** (kare 850 -> 1666 / 54.5 sn) | config 30 bekliyor; ekran kaydi da PC'yi yukluyor |
+| KILIT/kayip donemlerinde YOLO'nun kutu VERMEDIGI ornek kare | kosum 1: 15/27 (%56), kosum 2: 14/35 (%40) | hedef karede, 40-60 px, cogu egik direk (>= 25 derece) veya bulanik kare |
+| "nisan TAMAM" goruldugu ornek kare | 2 (t=11.0, 16.0) | ikisinde de bir sonraki karede kayip; `AIM_HOLD_FRAMES=3` hic dolmadi |
+| ates | 0 | |
+| ilk KILIT'e kadar gecen sure | 7.5 sn (kosum 1), 0.5 sn (kosum 2) | fark: kosum 1'de dogrulama basarisiz -> 5 sn kara liste |
+| edinme asimi (ilk buyuk hareket) | +4.5 derece (kosum 1), +5.8 derece (kosum 2) | hedef 2-4 derece uzaktayken taret 8-10 derece dondu |
+| yaw yon degisimi (CSV) | **70** / 55 sn | takipte kabaca her 0.5 sn'de bir; genlik +-1..2 derece |
+| tepe yaw hizi (enkoder) | 395 derece/sn | 10 ms pozlamada 4 derece = 280 px bulaniklik |
+| sayac - enkoder farki, hareket halinde | -1.1..-1.8 (sola gidince), +0.5..+1.0 (saga gidince) | bosluk 1.49 (27.2) + rapor gecikmesi ~80 ms |
+| KILIT'te 150 ms'den uzun durus | 11/245 ve 8/369 komut araligi | FAZ 5' hizalama takip sirasinda **neredeyse hic** devreye girmiyor |
+| hedefin gercek acisal hizi | <= 0.5 derece/sn (dunya yaw 12 sn'de ~3 derece) | feedforward olu bandi 1 derece/sn, tam acilma 2 |
+
+### 29.3 Bulgular (etki sirasina gore)
+
+**B1 - Tespit surekliligi: kilit dususlerinin dogrudan sebebi.** Kilit
+dongusunun her kirilmasi ("Hedef kaybedildi" -> 5 kare tahmin -> "Takip
+Kayboldu" -> "Aday dogrulaniyor 1/3" -> KILIT) YOLO'nun karede acikca
+duran 40-60 px'lik maketi vermemesiyle basliyor. Kutusuz karelerin ortak
+ozelligi: direk 25-45 derece egik (maket capraz veya "+" gorunumde) ya da
+taret donerken cekilmis bulanik kare. Dik direkli, net karelerde guven
+0.74-0.86. Egitimde `degrees=5`; sahada direk +-35 derece salliyor.
+Kullanicinin "dataset ile ilgili" tespiti dogru, ama bulanikligin payi da
+var (t=21.0, 33.5, 51.5 kareleri). Her kayip dongusu 0.5-1 sn'ye ve
+`reset_pid_state` ile filtre/hiz hafizasinin sifirlanmasina mal oluyor.
+
+**B2 - Cikis suzgeci artimli komutta asim uretiyor (kod).**
+`process_tracking` her karede DELTA komutu gonderiyor
+(`set_proportional_angles_delta`: hedef = mevcut + delta).
+`PID_OUTPUT_SMOOTHING = 0.30` bu deltalar uzerinde birinci derece IIR:
+`y = 0.3 u + 0.7 y_onceki`. Konum komutunda DC kazanci 1 olan bir suzgec
+zararsizdir; ARTIMLI komutta ise suzgecin hafizasi, hata sifirlandiktan
+sonra da `0.7^k x son_cikis` buyuklugunde deltalar gondermeye devam eder
+(toplam 2.33 x son cikis). Olu bant da bunu kesmiyor: olu bantta `u=0`
+yapiliyor ama suzgec `0.7 y_onceki`yi yine gonderiyor (yalnizca 0.056
+derecenin altinda kesiliyor). Simulasyon (15 fps, 2 kare gecikme, tam olu
+zaman telafisi, KP 0.7): 2.7 derecelik adimda suzgecsiz asim 0, oturma
+0.13 sn; suzgecle asim +0.85 derece, oturma 1.0 sn; 1.2 derecelik adimda
++0.38 derece. Sahadaki asimlar (4.5 / 5.8 / 3.8 / 3.7) bundan buyuk; kalan
+kisim B3 ve B4'ten. Suzgec 2.7 Hz rezonans icin konmustu (bkz.
+`process_tracking` yorumu); o gerekce durusta gecerli, edinme ve duzeltme
+hareketlerinde bedeli asim.
+
+**B3 - Feedforward bu hedefte yalnizca gurultu tasiyor.** Hedefin gercek
+acisal hizi <= 0.5 derece/sn; olu bant 1, tam acilma 2 derece/sn.
+`_angle_at` yorumunda sahada olculmus rakam var: hedef GERCEKTEN sabitken
+sistemin hesapladigi sahte hiz 8.1-14.4 derece/sn. Bu hiz 0.22 x 0.8 =
+0.176 sn ile carpilip HER KAREDE delta olarak ekleniyor: 14 derece/sn ->
+2.5 derece/kare (sinir 5). Hata kapisi 112 px altinda tam acik, yani tam
+KILIT'te. Yon degisimi sayisi (70) ve "1.2 derecelik hata icin 3.8 derece"
+olculeri bununla tutarli. `FEEDFORWARD_GAIN=0` ile kapatilip olculmeli;
+bu hedef profili icin kazanci yok.
+
+**B4 - Edinme yalpalamasi dogrulamayi bozuyor, kara liste 5 sn yiyor.**
+Avci hedefi gorunce `avcida_hazir_hedef_var` dogrudan DOGRULAMA'ya
+geciyor ve ayni anda PID delta komutlariyla 9 derece donuyor (tepe 395
+derece/sn). Dogrulama 1.0 sn icinde 4 tutarli, >= 0.55 guvenli kare
+istiyor; donus sirasinda kareler bulanik, ilk kare 0.52 idi -> zaman
+asimi -> `dogrulanamadi` -> `BLACKLIST_VERIFY_TTL_SEC = 5.0`. Bu 5 sn
+boyunca avci hedefi 0.86 ile gorurken `tarama_adimi` (kara liste
+kontrolu avci ciftine de uygulaniyor) hicbir sey yapmiyor; gozcu 15 m'de
+iz uretemiyor (0 iz). 15 m -> 9 m yaklasmasi ~20 sn suruyorsa 5 sn
+pencerenin dortte biri. Dogru davranis: ilk buyuk hareketi TEK mutlak aci
+komutu olarak vermek (gozcu adaylari icin zaten YONELME yolu bu), taret
+oturunca (enkoder hizalamasi da burada dogal olarak devreye girer)
+dogrulamaya baslamak; ve avcinin su an cift gordugu aciyi kara listeye
+almamak.
+
+**B5 - Bosluk 1.5 derece: enkoder hizalamasi KILIT'te calismiyor; calisinca
+tek sekme yapiyor. Kullanicinin sorusu ("enkoderle son adimi attirmanin
+alakasi var mi") - dogrudan yok, dolayli var:**
+- Takip sirasinda taret 150 ms hic durmuyor (11/245 ve 8/369 aralik), FAZ
+  5' hizalamasi devreye girmiyor. Sayac ile enkoder arasindaki 1.1-1.8
+  derecelik fark 4 saniye boyunca kaliyor (t=33-37.5). Bu fark sabitken
+  P terimini bozmaz (dunya acisi da mevcut aci da sayaca gore); yon
+  degisiminde bozar: taret 1.5 derece boyunca fiziksel olarak durur,
+  kamera ayni hatayi gormeye devam eder, dongu komut biriktirir, bosluk
+  bitince biriken hareket bir anda gelir. 70 yon degisiminin her biri bu
+  bedeli oduyor.
+- t=37.53'te ilk dinlenme: sayac -6.54 -> -5.29 (+1.25) hizalandi. PC
+  tarafinda mevcut aci aniden 1.25 derece degisince, onceki karelerden
+  hesaplanan dunya acisiyla hata 1.25 derece sicradi ve taret +2.3 derece
+  gitti (video: t=37.5 61 px -> t=38.0 -47 px). Yani hizalama dogru bilgiyi
+  getiriyor ama PC'nin dunya acisi tahmini eski sayaca gore oldugundan
+  bir sekme uretiyor. Kosum boyunca 2-3 kez oldu; salinimin ana kaynagi
+  degil, ama duzeltilmeli: hizalama aninda PC `_last_world_yaw` ve
+  `_son_gorulen_dunya_yaw`'i ayni farkla kaydirmali (veya hizalama
+  yalnizca hedef yokken yapilmali).
+- Asil cozum FAZ 5'': Pi'de yon degisiminde bosluk kadar adimi
+  SAYMADAN atmak (klasik bosluk telafisi). Bosluk miktari enkoderle
+  kalibre edilir (27.2: 1.49; bu CSV'de yone gore -1.4 / +1.0 goruluyor,
+  rapor gecikmesi karisik). Telafi dogruysa CSV'de her yon degisiminden
+  sonra durusta fark < 0.2 kalmali.
+
+**B6 - Nisan toleransi fiziksel isabet payindan cok dar.** Tolerans
+`max(9 px, 0.35 x balon yaricapi)`; balon 9-15 m'de 30-40 px -> 9-10 px =
+0.13 derece = 10 m'de 2.2 cm. Balon yaricapi ~7.5 cm = 10 m'de 0.43 derece
+= 30 px. Uzerine `AIM_HOLD_FRAMES=3` (15 fps'de 0.2 sn) ve sallanan direk.
+Sahada hata 1-42 px arasinda geziyor, 3 ardisik kare <= 9 px hic olmadi.
+Tolerans 0.6 x yaricap (~20 px, 0.28 derece, 10 m'de 5 cm - balonun
+icinde) ve 2 kare makul; ates dagilimi olculmedigi icin ust sinir bu.
+
+**B7 - Kayip yonetimi tareti bosuna gezdiriyor.** "Hedef kaybedildi,
+tahminle takip" sirasinda taret hareket ediyor (t=10.0 +2.3, t=18.5 +3.8,
+t=34.0 -3.5 derece). Hedefin gercek hizi <= 0.5 derece/sn olduguna gore
+`PREDICTION_MAX_RATE_DEG_S = 2.5` ile 5 kare (0.33 sn) tahmin en fazla
+0.8 derece olmali; olculen hareketler bunun 3-4 kati, yani kayip aninda
+gonderilen komutlar tahminden degil B2/B3'ten geliyor. Kayipta en guvenli
+davranis: hizi 1 derece/sn ile sinirlamak ve `MAX_MISSING_FRAMES`i 15
+fps'ye gore 8'e cikarmak (0.5 sn) ki her kisa YOLO boslugu "Takip
+Kayboldu + yeniden edinme (3 kare) + PID sifirlama" dongusune donusmesin.
+
+**B8 - Gozcu bu mesafede katki vermiyor, sahte tespit riski var.** 15 m'de
+gozcu 0-2 iz, edinme iki kosumda da avcidan geldi. t=33.0'da arabanin
+sasesine `dusman-Drone 0.67` kutusu cikti (kilit oncesi, zarar vermedi ama
+ray/araba negatifleri datasete girmeli).
+
+**B9 - Pitch kucuk sorun.** Ilk yalpalamada pitch -3.2'ye dustu (t=3.5),
+sonra 0.5 civarinda kaldi; pitch hatasi cogunlukla < 25 px. t=21.0'daki
+-116 px yeni edinmenin ilk karesi. Once yaw duzelmeli.
+
+### 29.4 Plan - paketler halinde, her paket tek kosumla olculur
+
+Olcut her paket icin ayni: `enkoder_kayit` CSV'de yaw yon degisimi sayisi
+(simdi 70/55 sn), edinme asimi (simdi 4.5-5.8 derece), ekran kaydinda
+"nisan TAMAM" kare sayisi ve ates.
+
+**Paket 1 - yalnizca `config.py`, kod yok (once bu):**
+- `FEEDFORWARD_GAIN = 0.0` (B3). Hedef 0.5 derece/sn; ff'nin telafi edecegi
+  gecikme yolu 0.1 derece, gurultusu 2.5 derece.
+- `PID_OUTPUT_SMOOTHING = 0.0` ve `MAX_OUTPUT_DEGREE` 15 -> 2.0 (B2).
+  Suzgecin isi olan rezonans sonumu icin komut basina 2 derece siniri
+  hiz sinirlamasi gorevi gorur; rezonans geri gelirse suzgec yerine olu
+  bantta hafizayi sifirlayan tek satir (`_pid_cikis_yaw = 0`) denenir.
+- `BLACKLIST_VERIFY_TTL_SEC` 5.0 -> 1.5 (B4).
+- `VERIFY_MIN_CONFIDENCE` 0.55 -> 0.45, `CONF_THRESHOLD` 0.4 -> 0.3 (B1;
+  egik maket 0.42-0.56 veriyor).
+- `MAX_MISSING_FRAMES` 5 -> 8, `PREDICTION_MAX_RATE_DEG_S` 2.5 -> 1.0 (B7).
+- `AIM_TOLERANCE_RATIO` 0.35 -> 0.6, `AIM_TOLERANCE_MIN_PIXELS` 9 -> 14,
+  `AIM_HOLD_FRAMES` 3 -> 2 (B6).
+- Kamera: pozlama 10 ms -> 3-4 ms (kazanc artirilarak), konsoldaki
+  "gerceklesen format ve fps" satiri kontrol edilip 15 fps'nin sebebi
+  bulunmali (1920x1200 YUY2 mi, ekran kaydi mi).
+
+**Paket 2 - kod (Paket 1 olculdukten sonra):**
+- Avci-kaynakli edinmede tek mutlak aci komutu + oturma bekleme, sonra
+  DOGRULAMA (B4). Mevcut YONELME yolu avci cifti icin de kullanilir;
+  `ENGAGE_SLEW_TOLERANCE_DEG` 1.0 zaten var.
+- Avcinin bu karede cift gordugu aciyi `dogrulanamadi` kara listesine
+  almama (B4).
+- Hizalama sicramasinin PC'de dunya acisi tahminine yansitilmasi (B5).
+
+**Paket 3 - Pi, FAZ 5'' bosluk telafisi (B5).** Yon degisiminde
+`BACKLASH_DEG` kadar adim sayilmadan atilir; deger enkoderle kalibre
+edilir (ayni CSV: durustaki fark). Beklenen: yon degisimi basina 1.5
+derecelik komut birikmesi kalkar.
+
+**Paket 4 - dataset (B1, paralel yurur):** rotasyon +-35 derece
+(direk salinimi), hareket bulanikligi, avci kamerasindan egik direkli
+kareler, ray/araba/sase negatifleri. Bu kosumun karelerinden kutusuz
+kalanlar dogrudan ornek.
+
+Kod degisikligi yapilmadi; bu bolum ve lens config'i commit'lendi.

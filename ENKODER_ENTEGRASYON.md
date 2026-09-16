@@ -397,3 +397,18 @@ Koda `ENCODER_GEAR_RATIO = 2.0` ile baslanacak, kalibrasyonla duzeltilecek.
 Not: TPDO1'in inhibit süresi 0 olduğu için taret 47°/s dönerken saniyede ~1600
 çerçeve üretir. Kod tarafında ya TPDO1 kapatılacak (0x1800/1 bit 31) ya da
 inhibit verilecek; konum SYNC-tetiklemeli TPDO2'den okunacak.
+
+## Saha gozlemi 2026-09-16: FAZ 5' hareketli hedefte (PROJE_DURUMU 29. bolum, B5)
+
+- Takip sirasinda taret 150 ms durmuyor (KILIT donemlerinde 11/245 ve
+  8/369 komut araligi); hizalama neredeyse hic devreye girmiyor. Sayac-enk
+  farki 1.1-1.8 derece 4 sn boyunca kaliyor (bosluk).
+- Hizalama girdiginde (t=37.53, +1.25 derece) PC'nin dunya acisi tahmini
+  eski sayaca gore oldugundan hata 1.25 derece sicriyor, taret bir sekme
+  yapiyor. Duzeltme: hizalama aninda PC tarafinda `_last_world_yaw` ve
+  `_son_gorulen_dunya_yaw` ayni farkla kaydirilmali.
+- Salinimin ana kaynagi enkoder degil (29.3 B2/B3); ama bosluk 70 yon
+  degisiminin her birinde 1.5 derecelik komut birikmesi uretiyor.
+- **FAZ 5'' karari:** yon degisiminde bosluk kadar adimi saymadan atmak
+  (klasik telafi), enkoderle kalibre. Olcut: CSV'de her yon degisiminden
+  sonra durusta fark < 0.2.

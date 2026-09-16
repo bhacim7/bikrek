@@ -289,7 +289,7 @@ HUNTER_WB_GAINS = None      # örn. (0.95, 1.0, 0.78)
 #   pembe perde  (R,B > G) -> griye çekilir
 # Güç 0..1; 1.0 = ortak fazlalığın tamamı. None/0 = kapalı. ~4 ms/kare.
 # IR-cut filtre takılınca None. `kamera_renk.py` 'm' ile önizlenir.
-HUNTER_MAGENTA_KIR = 1.0
+HUNTER_MAGENTA_KIR = None
 
 # Nötr-macenta KARARTMA: kızılötesi G'ye de giriyor, bu yüzden macenta
 # kırma sonrası siyah perde GRİ kalıyor (kalan G düzeyi de IR). R ≈ B olan
@@ -313,8 +313,8 @@ HUNTER_MAGENTA_NOTR_ESIK = 60
 #     G, B *= (1 − GUC)              (dataset'teki doygun kırmızıya yaklaş)
 # Eşik 80: füze/balon R−G 120–190 -> girer; ten ~50, zemin ~20, pembe perde
 # ~60 -> girmez. Kırmızı olmayan hiçbir piksele dokunmaz. None/0 = kapalı.
-HUNTER_KIRMIZI_ESIK = 80
-HUNTER_KIRMIZI_GUC = 0.6       # sahada secildi (2026-09-10); 0.3 ile fuze soluk kaliyordu
+HUNTER_KIRMIZI_ESIK = None
+HUNTER_KIRMIZI_GUC = None       # sahada secildi (2026-09-10); 0.3 ile fuze soluk kaliyordu
 
 HUNTER_DARK_DESAT = (5, 50)    # sahada acik birakildi (2026-09-10): macenta kirmayla birlikte
                                # perde daha koyu; 6 ms/kare bedeli kabul edildi.
