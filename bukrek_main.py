@@ -3078,10 +3078,12 @@ class HavaSavunmaArayuz(QWidget):
                         feedforward_pitch)
         self.last_error_pitch = error_pitch_degree
 
-        if abs(error_yaw_degree) < self.pid_deadband_yaw:
+        _olu_yaw = abs(error_yaw_degree) < self.pid_deadband_yaw
+        _olu_pitch = abs(error_pitch_degree) < self.pid_deadband_pitch
+        if _olu_yaw:
             output_yaw = 0.0
             self.integral_yaw = 0.0
-        if abs(error_pitch_degree) < self.pid_deadband_pitch:
+        if _olu_pitch:
             output_pitch = 0.0
             self.integral_pitch = 0.0
 
@@ -3096,12 +3098,32 @@ class HavaSavunmaArayuz(QWidget):
         # Ölü bant SONRASINA konuldu ki süzgecin hafızası sıfır çıkışta da
         # boşalsın; aksi halde deadband'a girildiğinde süzgeç eski değeri
         # sızdırmaya devam ederdi.
+        # KUYRUK KESME (2026-09-16, 29.6 bolum). Komut ARTIMLI gonderiliyor
+        # (`set_proportional_angles_delta`: Pi'de hedef = mevcut + delta).
+        # Artimli komutta suzgecin hafizasi, hata sifirlandiktan SONRA da
+        # 0.7^k x son_cikis buyuklugunde deltalar gondermeye devam eder ve
+        # bunlarin toplami (1-a)/a = 2.33 x son_cikis kadar FAZLADAN YOLDUR.
+        # Olu bant tek basina yetmiyordu: olu bantta ham cikis 0 yapiliyor
+        # ama suzgec 0.7 x y_onceki'yi yine gonderiyordu.
+        # Cozum: olu banda girildiginde HAFIZAYI DA bosalt. Boylece
+        #   - hedefe oturunca artik komut kalmiyor (asim yok),
+        #   - takip sirasinda suzgec calismaya devam ediyor (rezonans sonumu
+        #     duruyor). Suzgeci tamamen kapatmak 3.45 Hz'lik titremeyi geri
+        #     getirmisti (titresim RMS 0.121 -> 0.345 derece).
         _a = config.PID_OUTPUT_SMOOTHING
         if _a > 0.0:
-            output_yaw = _a * output_yaw + (1.0 - _a) * self._pid_cikis_yaw
-            output_pitch = _a * output_pitch + (1.0 - _a) * self._pid_cikis_pitch
-            self._pid_cikis_yaw = output_yaw
-            self._pid_cikis_pitch = output_pitch
+            if _olu_yaw:
+                self._pid_cikis_yaw = 0.0
+                output_yaw = 0.0
+            else:
+                output_yaw = _a * output_yaw + (1.0 - _a) * self._pid_cikis_yaw
+                self._pid_cikis_yaw = output_yaw
+            if _olu_pitch:
+                self._pid_cikis_pitch = 0.0
+                output_pitch = 0.0
+            else:
+                output_pitch = _a * output_pitch + (1.0 - _a) * self._pid_cikis_pitch
+                self._pid_cikis_pitch = output_pitch
 
         if 0 < abs(output_yaw) < self.MIN_OUTPUT_DEGREE_THRESHOLD:
             output_yaw = 0.0

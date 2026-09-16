@@ -2869,3 +2869,160 @@ pozlamayi kapatir, '[' / ']' pozlamayi degistirir, 'g' / 'h' kazanc) aracin
 "TUTMADI" uyarisi vermedigi deger config'e yazilmali. Ayrica kamera acilis
 satirindaki gerceklesen fps okunmali: sahada 15 fps olculdu, config 30
 bekliyor; sebep 1920x1200 sikistirmasiz akis ya da ekran kaydinin yuku olabilir.
+
+### 29.6 Paket 1 sonrasi kosum: `aşama3Deneme2.mp4` (2026-09-16 15:25)
+
+20.8 saniye, 3 fps'de 62 kare tek tek okundu; `enkoder_kayit/
+enkoder_20260916_152053.csv` (21 ms) videoya hizalandi (taret video t=3.75'te
+-1.89'dan ayriliyor). Ayni duzenek, ayni mesafe, tek kosum.
+
+**SISTEM ILK KEZ ATES ETTI.** Asama 3'e basildiktan 4.0 saniye sonra,
+nisan hatasi yaw -2 piksel / pitch -10 piksel iken (0.03 / 0.14 derece).
+Onceki kosumda 55 saniyede hic ates edilememisti.
+
+#### 29.6.1 Zaman cizelgesi
+
+| video t | durum | sayac yaw | enk | not |
+|---|---|---|---|---|
+| 0.0-0.7 | Tam Manuel | -1.89 | -1.89 | Asama 3'e t=0.65'te basildi |
+| 1.0-1.7 | DOGRULAMA — **0 cift** goruluyor (0.1 -> 0.8/1.0 sn) | -1.89 | -1.89 | girer girmez tespit dustu; **taret hic kimildamiyor** |
+| 2.0-3.3 | TARAMA — gozcude aday yok (0 iz), 0-1 cift | -1.89 | -1.89 | dogrulama zaman asimi -> aci 1.5 sn kara listede; avci hedefi 0.77 ile goruyor |
+| 3.7 | Aday hedef dogrulaniyor (1/3), 1 cift | -1.89 | -1.89 | kara liste doldu (1.5 sn) |
+| 4.0 | **KILIT** — BALON YOK, hata -52 px | -4.5 | -4.13 | taret 0.3 sn'de 2.6 derece dondu |
+| 4.3 | KILIT — BALON YOK, hata -30 px | -5.5 | -4.78 | tepe -5.49; hedef dunya acisi ~-5.2 -> **asim 0.3 derece** |
+| **4.65** | **ATES — imha dogrulaniyor (1. atis)** | -5.3 | -4.41 | hata **-2 px / -10 px**; fark sayac-enk -0.86 |
+| 5.0-5.7 | ATES — imha dogrulaniyor | -5.3..-3.8 | | balon HALA yerinde -> pencere 'tekrar' dedi |
+| 6.0-9.3 | **Ates engellendi** (2/45 -> 43/45) | -4.3..-5.9 | | 3.5 saniye bosa bekleme; gerekce donusumlu "maket bu karede tespit edilmedi" / "nisan tolerans disinda" |
+| 9.7 | Aday dogrulaniyor (1/3), TARAMA | -6.2 | -6.29 | 45/45 doldu -> `imha_edilemedi` -> kara liste |
+| 10.3 | **KILIT — balon VAR, nisan TAMAM**, hata 24 px | -5.4 | -5.17 | ikinci nisan; sonraki karede tespit dustu |
+| 10.7-11.0 | Hedef kaybedildi (6 -> 1 kare kaldi) | -4.3 | | |
+| 11.3 | KILIT — hedef bu karede yok | -3.4 | -3.77 | maket **`dusman-Drone` 0.40** olarak etiketlendi (yanlis sinif) |
+| 12.0 | KILIT — balon VAR, nisan bekliyor, hata -102 px | -4.2 | -3.53 | |
+| 12.3 | Hedef kaybedildi | -5.3 | -4.46 | **karton kutu `dusman-Drone` 0.39** |
+| 12.7-14.0 | Hedef kaybedildi (5,7,6,2,4,0 kare) | -6.6..-6.5 | | maket yine `dusman-Drone` 0.39 |
+| 14.3-15.3 | Aday dogrulaniyor -> KILIT [kopru] -> BALON YOK | -6.5..-6.7 | | pitch hatasi -69 px ile +48 px arasinda sicradi |
+| 15.7-16.7 | Hedef kaybedildi / KILIT hedef yok | -7.1..-6.9 | | t=16.3'te **karton kutu `dusman-Drone` 0.77** |
+| **17.0-18.7** | KILIT — hedef bu karede yok / Aday dogrulaniyor (1/3) | **-6.99 sabit** | -6.99 | **taret tamamen duruyor**, hedef karede 1.5 derece solda; 3 ardisik kare hic toplanamadi |
+| 19.0-20.3 | Hazir | -6.99 | -6.99 | kullanici Gorevi Durdur'a basti |
+
+#### 29.6.2 Olcum karsilastirmasi
+
+| olcut | ONCE (Denem) | SONRA (Deneme2) | yon |
+|---|---|---|---|
+| ates | 0 | **1** | iyi |
+| ilk KILIT'e kadar | 7.5 sn | **3.3 sn** | iyi |
+| edinme asimi | +4.5 / +5.8 derece | **+0.3 derece** | iyi |
+| en buyuk tek komut (sayac adimi) | 1.25 derece | **0.75 derece** | iyi |
+| \|sayac-enk\| en buyuk | 2.96 derece | **1.60 derece** | iyi |
+| kara liste tikanmasi | 5.0 sn | **1.5 sn** | iyi |
+| **titresim RMS** | 0.121 derece | **0.345 derece** | **kotu (2.9 kat)** |
+| **titresim tepeden tepeye** | 0.51 derece | **1.44 derece** | **kotu** |
+| **titresim frekansi (FFT tepe)** | 0.66 Hz | **3.45 Hz** | **kotu** |
+| **nisan bandi (0.198 derece) disinda gecen zaman** | %9.4 | **%49.5** | **kotu** |
+| yaw yon degisimi (55 sn'ye normalize) | 74.8 | **244.4** | kotu |
+| p99 enkoder hizi | 24.3 derece/sn | 83.8 derece/sn | kotu |
+| avci kare hizi | 15.0 fps | 15.0 fps | degismedi |
+
+#### 29.6.3 Bulgular
+
+**B10 — `PID_OUTPUT_SMOOTHING = 0` KARARI YANLISTI, GERI ALINDI.**
+29.3 B2'deki kuyruk analizi matematiksel olarak dogru: artimli komutta suzgec
+hafizasi hata bittikten sonra (1-a)/a = 2.33 kat fazladan yol gonderir. Ama
+ONCELIK yanlis konmustu — suzgecin sonumleme degeri, kuyrugunun bedelinden
+buyukmus. Suzgec kapatilinca 2.7 Hz yapisal rezonans 3.45 Hz'te geri geldi,
+genligi iki bucuk katina cikti ve taret zamanin yarisini nisan bandinin
+disinda gecirdi. Kullanicinin "gelisme yok gibi" izlenimi dogrudan bu:
+gozle gorulen sey taretin surekli titremesi.
+
+DOGRU COZUM IKISINI AYIRMAK, ve uygulandi: suzgec `0.30`'a geri alindi,
+kuyruk ise `process_tracking` icinde OLU BANDA GIRILDIGINDE hafizanin da
+sifirlanmasiyla kesildi (`_olu_yaw` / `_olu_pitch`). Boylece hedefe oturunca
+artik komut kalmiyor (asim yok), takip sirasinda sonumleme calismaya devam
+ediyor. `MAX_OUTPUT_DEGREE = 2.0` yerinde kaldi — asimi 5.8 dereceden 0.3
+dereceye indiren asil degisiklik oydu, titremeyle ilgisi yok.
+
+**B11 — ATES ISABET ETMEDI; ARTIK DARBOGAZ YAZILIM DEGIL MEKANIK.**
+Ates aninda nisan hatasi -2 px / -10 px, yani 0.03 / 0.14 derece — 10
+metrede 0.5 / 2.4 santim. Nisangah videoda gorunur sekilde balonun uzerinde.
+Buna ragmen balon yerinde kaldi ve imha dogrulama penceresi 'tekrar' dedi.
+Nisan alma tarafi ISINI YAPTI; sorun namlu ile kamera ekseni arasinda
+(boresight) veya mermi dususunde (`BALLISTIC_PITCH_OFFSET = 0.0`).
+Enkoderle ilgisi yok: fark -0.86 derece ama kamera taretin uzerinde, yani
+kameranin gordugu nisan FIZIKSEL nisandir.
+**Once su ayrilmali:** ates komutunda mermi gercekten cikti mi? Ciktiysa
+duvara sabit mesafeden (9 ve 15 metre) nisangah isaretli bir noktadayken
+5'er atis yapilip vurus merkezi olculmeli; yaw kaymasi boresight, pitch
+kaymasi `BALLISTIC_PITCH_OFFSET` olarak config'e girer.
+
+**B12 — Basarisiz atistan sonra 3.5 saniye tikanma.**
+`FIRE_RETRY_GIVEUP_FRAMES = 45` yorumunda "~1.5 sn @30fps" yaziyordu; saha
+15 fps oldugu icin 3 saniye demekti. Olculen tikanma t=6.0 -> t=9.5.
+**22'ye indirildi** (1.5 sn @15fps).
+
+**B13 — `CONF_THRESHOLD = 0.3` iki yeni sorun getirdi.**
+- Karton kutu `dusman-Drone` olarak cikiyor: t=8.3'te 0.74, t=9.7'de 0.47,
+  t=12.3'te 0.39, **t=16.3'te 0.77**. 0.77 esigi yukseltmekle elenmez;
+  dataset negatifi gerekiyor (Paket 4). Su an zarar vermedi cunku cift
+  kurulumu maketin ALTINDA balon ariyor, kutunun altinda balon yok.
+- Maketin KENDISI `dusman-Drone` olarak etiketleniyor (t=11.3'te 0.40,
+  t=12.7'de 0.39). Bu daha tehlikeli: `kilit_hedefi_sec` dogrulanan sinifla
+  eslesmeyen maketi "yabanci maket" sayar ve ucuncu maddeden kilidi
+  dusurur. Esigi geri yukseltmek bunu COZMEZ (dusuk guvenli dogru tespitleri
+  de atar); cozum egik/bulanik ornekle egitim.
+
+**B14 — Kilit onayi dusen her tespitte sifirlaniyor; kosumun sonunda sistem
+donuyor.** t=17.0-18.7 arasinda taret tamamen duruyor (sayac ve enkoder
+-6.99'da sabit, fark 0.00), hedef karede 1.5 derece solda ve YOLO onu
+araliklarla 0.31-0.38 guvenle goruyor. Durum satiri "Aday hedef dogrulaniyor
+(1/3)" ile "KILIT — hedef bu karede yok" arasinda gidip geliyor.
+Sebep: otonom modda durum makinesi hedef vermedigi her karede
+`_aday_ardisik = 0` yapiliyor, yani `LOCK_CONFIRM_FRAMES = 3` ARD ARDA
+TESPIT gerektiriyor. Tespit surekliligi ~%50 iken bunun olasiligi %12.
+Ustelik bu onay otonom yolda GEREKSIZ: durum makinesi zaten
+`VERIFY_CONFIRM_FRAMES = 4` ardisik tutarli kare ile sinifi dogrulamis ve
+hedefi ACIYLA takip ediyor. Hayalet korumasi orada zaten var.
+**Paket 2'ye alindi** (otonom modda kilit onayini atla veya sifirlamak
+yerine azalt).
+
+**B15 — Bosluk artik en buyuk tek hata kaynagi.** Kapali dongu
+simulasyonunda (sallanan hedef +-1 derece 0.7 Hz, olcum gurultusu 0.3
+derece, 15 fps, 2 kare olu zaman) yalnizca boslugu kaldirmak nisan hatasi
+RMS'ini **1.01'den 0.37 dereceye** dusuruyor ve nisan bandinda gecen zamani
+%15'ten %33'e cikariyor — diger butun ayarlardan daha buyuk bir etki.
+Sebep: olu zaman telafisi ADIM SAYACIYLA yapiliyor, kamera ise FIZIKSEL
+aciyi goruyor; bosluk iki tarafta ayni olmadigi icin telafide iptal olmuyor
+ve her yon degisiminde 1.5 dereceye kadar sahte hata giriyor.
+**En temiz cozum FAZ 6'ya yaklasiyor:** enkoder saglikliyken PC'nin kontrol
+dongusu `current_yaw_angle` olarak ADIM SAYACINI degil ENKODERI kullansin.
+O zaman hata hesabi kameranin gordugu ile ayni cerceveye oturur ve bosluk
+kontrol yolundan tamamen cikar. Pi tarafinda bosluk telafisi (FAZ 5'')
+alternatif ama daha dolayli.
+
+#### 29.6.4 Bu commit'te yapilanlar
+
+| Sabit / kod | Once | Sonra | Bulgu |
+|---|---|---|---|
+| `PID_OUTPUT_SMOOTHING` | 0.0 | **0.30** (geri) | B10 |
+| `process_tracking` olu bant | — | **suzgec hafizasi sifirlaniyor** | B10 |
+| `FIRE_RETRY_GIVEUP_FRAMES` | 45 | **22** | B12 |
+
+Paket 1'in geri kalani (MAX_OUTPUT 2.0, tolerans 14 px, AIM_HOLD 2,
+CONF 0.3, VERIFY_MIN_CONF 0.45, kara liste 1.5 sn, MAX_MISSING 8,
+PREDICTION 1.0) **oldugu gibi duruyor**; hepsi ya ise yaradi ya notr.
+
+#### 29.6.5 Sirasi gelen isler
+
+1. **Mekanik atis kalibrasyonu (B11) — artik en onemlisi.** Sabit mesafeden
+   atis testi; boresight ve `BALLISTIC_PITCH_OFFSET`. Bu cozulmeden nisan
+   iyilestirmelerinin sahada karsiligi olmaz.
+2. **Bir kosum daha** (kod degismeden): titresimin 0.12 dereceye dondugu ve
+   edinme asiminin 0.3 derecede kaldigi dogrulanmali. Olcut:
+   `titresim.py` ile RMS, `karsilastir.py` ile yon degisimi.
+3. **Paket 2 (kod):** otonom modda kilit onayini atla (B14); avci kaynakli
+   edinmede tek mutlak aci komutu + oturma bekleme; hizalama sicramasini
+   dunya acisina yansit.
+4. **FAZ 6 (B15):** kontrol dongusu enkoder acisini kullansin. Simulasyona
+   gore tek basina en buyuk kazanc.
+5. **Kamera:** pozlama 10 -> 3-4 ms, 15 fps'in sebebi. Hala yapilmadi.
+6. **Paket 4 (dataset):** egik direk (+-35 derece), hareket bulanikligi,
+   **karton kutu / ray / araba negatifleri** (B13).

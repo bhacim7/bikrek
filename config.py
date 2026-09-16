@@ -692,12 +692,19 @@ MIN_OUTPUT_PIXELS = 4.0
 #   2.7 derecelik adim -> suzgecsiz asim 0.00, oturma 0.13 sn
 #                      -> suzgecle  asim 0.85, oturma 1.00 sn
 #   1.2 derecelik adim -> suzgecle  asim 0.38 derece
-# REZONANS NE OLACAK: 2.7 Hz sonumu artik komut basina MAX_OUTPUT_DEGREE
-# siniriyla (bukrek_main, 15.0 -> 2.0) saglaniyor; hiz siniri rezonans
-# genligini de siniirlar. Sahada 2-3 Hz'lik HIZLI titreme geri gelirse cozum
-# suzgeci geri acmak DEGIL (asimi geri getirir), olu banda girildiginde
-# suzgec hafizasini sifirlamaktir (`_pid_cikis_yaw = 0`, Paket 2).
-PID_OUTPUT_SMOOTHING = 0.0
+# OLCULDU VE GERI ALINDI (2026-09-16 aksam, 29.6 bolum). Suzgec kapatilinca
+# 3.45 Hz'lik titreme geri geldi ve ONCEKINDEN KOTU oldu:
+#     titresim RMS   0.121 -> 0.345 derece   (2.9 kat)
+#     tepeden tepeye 0.51  -> 1.44  derece
+#     nisan bandi (0.198 derece) disinda gecen zaman  %9.4 -> %49.5
+# Yani suzgecin sonumleme degeri, kuyrugunun bedelinden BUYUKMUS. Kuyruk
+# analizi (yukarida) dogru ama onceligi yanlis konmus.
+# Suzgec geri acildi; kuyruk ayri olarak kesildi: `process_tracking` artik
+# OLU BANDA GIRILDIGINDE suzgec hafizasini da sifirliyor, boylece hata
+# bittikten sonra 0.7^k'lik artik komutlar gonderilmiyor. Asimi sinirlayan
+# MAX_OUTPUT_DEGREE = 2.0 de yerinde kaliyor (o degisiklik ise ise yaradi:
+# edinme asimi 5.8 -> 0.3 derece).
+PID_OUTPUT_SMOOTHING = 0.30
 
 # Bir aday hedefe kilitlenmeden önce ard arda kaç karede aynı yerde görülmeli.
 # YOLO tek tük yanlış pozitif üretiyor ve hayaletler 1-2 kare sürüyor.
@@ -992,7 +999,12 @@ FIRE_CONFIRM_DELAY_SEC = 0.6
 # verildikten sonra ates edilemezse ates_kaydet() cagrilmiyor, sayac
 # artmiyor, 'pes' asla tetiklenmiyor ve ates_sayisi > 0 oldugu icin KILIT'e
 # de donulmuyordu. Sistem ATES durumunda 20 saniye takili kaldi.
-FIRE_RETRY_GIVEUP_FRAMES = 45     # ~1.5 sn @30fps
+# 45 -> 22 (2026-09-16, 29.6 bolum B12): yorumdaki "~1.5 sn" 30 fps
+# varsayiyordu; saha 15 fps calisiyor, yani 45 kare 3 SANIYE demekti.
+# asama3Deneme2'de olculdu: ilk atistan sonra maket araliklı goruldugu icin
+# sistem t=6.0'dan t=9.5'e kadar "Ates engellendi" yazip bekledi, 3.5 saniye.
+# 22 kare = 1.5 sn @15fps, yorumun asil niyeti.
+FIRE_RETRY_GIVEUP_FRAMES = 22     # ~1.5 sn @15fps (saha kare hizi)
 
 # --- HEDEF TAKIP: hedef surekliligi ---
 # Takip modunda secilen hedef, bir sonraki karede bu piksel yaricapi icinde

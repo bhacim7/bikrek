@@ -2,6 +2,7 @@
 import sys, time
 sys.path.insert(0, r"C:\Users\barış hacim\PycharmProjects\PythonProject\HSSmultipocess")
 
+import io
 import numpy as np
 import cv2
 import config
@@ -890,17 +891,21 @@ kontrol("TARAMA'ya gecince ates/engel sayaclari sifirlaniyor",
         _m26.ates_sayisi == 0 and _m26.ates_engel_ardisik == 0,
         f"ates={_m26.ates_sayisi} engel={_m26.ates_engel_ardisik}")
 
-# (c) PID CIKIS SUZGECI — ARTIMLI KOMUTTA KUYRUK (29. bolum B2)
-# Suzgec 2.7 Hz yapisal rezonans icin konmustu ve konum komutunda dogru
-# araçtir. Ama komut ARTIMLI (set_proportional_angles_delta): hata
-# sifirlandiktan sonra suzgecin hafizasi (1-a)/a x son_cikis kadar FAZLADAN
-# YOL gonderir (a=0.30'da 2.33 kat). 2026-09-16'da kapatildi; rezonans
-# sonumu komut basina MAX_OUTPUT_DEGREE = 2.0 siniriyla sagLaniyor.
+# (c) PID CIKIS SUZGECI: hem ETKIN hem KUYRUKSUZ olmali (29.6 bolum)
+# Suzgec 2.7 Hz yapisal rezonansi sonumluyor -- kapatildiginda sahada
+# titresim RMS 0.121'den 0.345 dereceye cikti, o yuzden ETKIN kalmali.
+# Ama komut ARTIMLI (set_proportional_angles_delta), bu yuzden hafizasi
+# hata bittikten sonra (1-a)/a x son_cikis kadar fazladan yol gonderirdi.
+# Cozum suzgeci kapatmak DEGIL, olu banda girildiginde hafizayi bosaltmak;
+# asagidaki kaynak kontrolu o satirin yerinde durdugunu guvenceye alir.
 import math as _math
 _a = config.PID_OUTPUT_SMOOTHING
-_artik_yol = (1 - _a) / _a if _a > 0 else 0.0
-kontrol("artimli komutta suzgec kuyrugu yok (hata bitince fazladan yol)",
-        _artik_yol <= 0.5, f"artik yol {_artik_yol:.2f} x son cikis (a={_a})")
+kontrol("PID cikis suzgeci ETKIN (0 ise rezonans sonumu yok)", _a > 0.0, f"{_a}")
+_kaynak = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("olu banda girilince suzgec hafizasi bosaltiliyor (kuyruk kesme)",
+        "if _olu_yaw:\n                self._pid_cikis_yaw = 0.0" in _kaynak
+        and "if _olu_pitch:\n                self._pid_cikis_pitch = 0.0" in _kaynak,
+        "bukrek_main.process_tracking icindeki kuyruk kesme satirlari")
 if _a > 0:
     _fc = -_math.log(1 - _a) * 30.0 / (2 * _math.pi)
     _kaz = lambda f: 1.0 / _math.sqrt(1 + (f / _fc) ** 2)
