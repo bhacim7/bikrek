@@ -176,7 +176,13 @@ ENCODER_TIMEOUT_SEC = 0.25     # bu süre veri gelmezse "sağlıksız"
 ENCODER_REST_SNAP = True       # kapatınca: enkoder yalnızca raporlanır (FAZ 3 davranışı)
 ENCODER_REST_SEC = 0.15        # bu süre adım atılmadıysa "duruyor"
 ENCODER_SNAP_MIN_DEG = 0.05    # bundan küçük fark görmezden gelinir (~4.5 sayım)
-ENCODER_SNAP_MAX_DEG = 10.0    # bundan büyük fark şüpheli (sarma/açılış hatası): uygulanmaz, uyarılır
+# 10 -> 45 (2026-09-16 gece, PROJE_DURUMU 29.10). Gunun kayitlarinda sayac ile
+# enkoder arasi fark 10-22 dereceye cikip SAATLERCE oyle kaldi: hizli
+# hareketlerde kacirilan adimlar tek seferde 10 dereceyi asinca hizalama
+# "supheli" diye reddediliyor ve bir daha hic duzelmiyordu. Enkoder turu
+# taret turunun yarisi (oran 2) oldugu icin +-90 derece icinde belirsizlik
+# yok; 45 derece guvenli sinir.
+ENCODER_SNAP_MAX_DEG = 45.0    # bundan büyük fark şüpheli (sarma/açılış hatası): uygulanmaz, uyarılır
 ENCODER_REENGAGE = True        # hizalama sonrası hedef uzaksa servoyu tekrar aç
 ENCODER_REENGAGE_TOL_DEG = 0.10  # bu kadar yakınsa yeniden yaklaşma yok (~9 sayım)
 ENCODER_REENGAGE_MAX = 3       # hedef başına en fazla bu kadar düzeltme hareketi

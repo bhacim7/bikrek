@@ -3487,3 +3487,79 @@ ve maketin `balon` sanilmasi (%18) dataset isi; 15 fps hala; ates sonrasi
    yavas salinim varsa azalt (0.02).
 3. Dataset: maketin balon sanilmasi, karton kutu negatifi.
 4. 3 hedefli kurulum ile tek tur denemesi.
+
+### 29.10 `görüntüTıklama.mp4` — "saga tikliyorum, taret sola donuyor" (2026-09-16 gece, FAZ 6 sonrasi)
+
+15.2 saniye, Tam Manuel Kontrol modu, 30 fps'de kare kare okundu; kayit
+`enkoder_20260916_222302.csv` (video 22:23:43-22:23:58) ile eslestirildi.
+
+**Gozlem.** Taret -14.02 derecede 15 saniye duruyor. Operator nisangahin
+hemen yanina (yaklasik 1-2 derece) tikliyor; taret 32 derece/sn ile
+**-33.27'ye** gidiyor (-19.25 derece, SOLA). Sonraki tiklamalar -8.15 ve
+-6.04 derece daha sola. "Sag" tusuyla -4.77'ye donuluyor; tiklamalar yine
+-5.96, -6.04, -5.74 derece sola. Tiklama kodu (`mouse_press_event`,
+`_etiket_to_kare`, `_piksel_to_dunya`) tek tiklamada en fazla +-13.5 derece
+uretebilir (yarim kare x 0.01411); -19.25 bu yoldan cikamaz. Yani PC'nin
+hesapladigi hedef DOGRU, Pi'nin gittigi yer YANLIS.
+
+**Kok neden.** FAZ 6 (bc0a2fe) ile PC'nin "mevcut yaw"i ENKODER oldu.
+Mutlak komut (`send_angle_command` -> Pi `set_angles`) ise Pi'nin ADIM
+SAYACI cercevesinde yurutuluyor. Iki cerceve ayni sanilmisti ("FAZ 5'
+hizalama durusta ikisini esitler"). Gunun kayitlari aksini gosteriyor:
+
+| kayit | durusta sayac - enkoder (medyan) | en buyuk |
+|---|---|---|
+| 12:54 | +11.1 | 12.4 |
+| 13:07 | +21.2 | 23.7 |
+| 14:07 | +11.7 | 14.9 |
+| 20:04 | +15.5 | 17.0 |
+| 21:39 (HedefSikma kosumu) | +19.2 | 21.9 |
+
+21:39 kaydinda fark 21:39:37'de +19.4, 21:39:56'da +21.8 ve 21:42:07'ye
+("Acilari Sifirla") kadar oyle kaldi. Ilk tiklamanin -19.25 derecesi, o
+anki +19.23'luk farkin ta kendisi: PC "enkoder -14.02 + 1.4 = -12.6" dedi,
+Pi "sayacim +5.2, -12.6'ya gitmem icin 17.8 sola" dedi.
+
+Fark neden kalici: Pi'de `ENCODER_SNAP_MAX_DEG = 10`. Hizli hareketlerde
+kacirilan adimlar tek seferde 10 dereceyi asinca hizalama "supheli" diye
+reddediliyor ve bir daha hic duzelmiyor. Kucuk farklar (0.5-3 derece)
+duzeltiliyor (kayitlarda 27-225 sicrama), buyukler asla.
+
+**Onceki testlerde neden gorulmedi.** Takip yolu delta komutu
+(`set_proportional_angles_delta`) kullaniyor; delta cerceveden bagimsiz.
+Tiklama, gozcu yonelmesi ve derece/piksel kalibrasyonu mutlak komut
+kullaniyor; FAZ 6 acilana kadar mutlak komut da sayac cercevesinde
+hesaplaniyordu, fark hic isin icine girmiyordu. FAZ 6'dan sonraki ilk
+mutlak komut bu videodaki tiklama.
+
+**Ikinci hasar: FAZ 4 kaydi kor kalmisti.** `_enkoder_kaydet` sayac
+sutununa `current_yaw_angle` yaziyordu; FAZ 6'da o deger enkoder oldugu
+icin 22:17'den sonraki uc kayitta "sayac" sutunu bir onceki satirin
+enkoder degerini tekrar ediyor (satir satir dogrulandi: 918/918). Panelde
+"delta +0.00" da ayni sebepten hep sifirdi.
+
+**Kullanicinin sordugu UI kodu.** `setAlignment(Qt.AlignCenter)` ab0ec01
+(2026-08-15), `setGeometry(60, 60, 2000, 1100)` 1cf0c39 (2026-08-16),
+`spotter_cmd_q=None` imzasi 018750b (2026-08-13). bc0a2fe bu satirlara
+dokunmadi; `git diff a85dd9b~1 HEAD -- bukrek_main.py` tiklama yolunda
+tek satir degistirmiyor. Sorun UI'da degil, komut cercevesinde.
+
+#### 29.10.1 Duzeltmeler
+
+| dosya / yer | ne | neden |
+|---|---|---|
+| `encoder_module.py` `sayac_cercevesine(hedef_enk, sayac_yaw, enk_yaw)` | YENI saf fonksiyon: hedefe (sayac - enkoder) farkini ekler, sarar | mutlak komutu Pi'nin cercevesine cevirir; test edilebilir |
+| `bukrek_main.py` `_sayac_yaw_son` | YENI alan; `_update_current_angles` her raporda yazar | FAZ 6'da `current_yaw_angle` enkoder oldugu icin sayac ayrica tutulmali |
+| `bukrek_main.py` `send_angle_command` | enkoder kontroldeyken yaw `sayac_cercevesine` ile cevrilir; fark 0.5 dereceyi asarsa konsola yazar | tiklama, gozcu yonelme, kalibrasyon: hepsi bu tek noktadan gecer |
+| `bukrek_main.py` `_enkoder_kaydet` | sayac sutununa `_sayac_yaw_son` | FAZ 4 cozumlemesi yeniden calissin |
+| `bukrek_main.py` `_bilgi_panelini_yenile` | delta = enkoder - gercek sayac | fark artik panelde gorunur |
+| `motor_fire_module.py` (Pi) `ENCODER_SNAP_MAX_DEG` 10 -> 45 | hizalama 45 dereceye kadar uygulanir | 10-22 derecelik fark saatlerce kaliyordu; oran 2 oldugu icin +-90 icinde belirsizlik yok |
+| `tests_yeni_mimari.py` 28 | donusum (fark yok / ileri / geri / sarma / bilinmiyor) + kaynak kontrolleri | |
+
+Degismeyen: tiklama kodu, `_etiket_to_kare`, `_piksel_to_dunya`, UI
+hizalamasi, delta komut yolu, FAZ 6'nin kendisi.
+
+**Beklenti:** tiklama tiklanan yere gider (fark ne olursa olsun). Konsolda
+"FAZ 6: mutlak yaw ... -> ..." satiri fark 0.5 dereceyi asinca gorunur;
+Pi guncellenince fark 45 dereceye kadar durusta kendiliginden kapanir ve
+bu satir nadirlesir.

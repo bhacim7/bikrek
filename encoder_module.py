@@ -164,6 +164,24 @@ def aci_at(gecmis, t):
     return onceki[1]
 
 
+def sayac_cercevesine(hedef_enk, sayac_yaw, enk_yaw):
+    """
+    ENKODER cercevesindeki mutlak yaw hedefini Pi'nin ADIM SAYACI cercevesine
+    cevirir (FAZ 6, 2026-09-16 gece, PROJE_DURUMU 29.10).
+
+    Pi 'set_angles' komutunu kendi sayacina gore yurutur. FAZ 6 ile PC'nin
+    "mevcut aci"si enkoderden geliyor; iki cerceve arasinda sahada 10-22
+    derecelik kalici fark olculdu (kacirilan adim + kayis). Donusum
+    yapilmazsa nisangahin hemen sagina tiklamak tareti fark kadar SOLA
+    gonderiyordu (`görüntüTıklama.mp4`: ilk tiklama -19.25 derece, o anki
+    fark +19.23). sayac_yaw ve enk_yaw AYNI rapordan alinmali.
+    """
+    if sayac_yaw is None or enk_yaw is None:
+        return hedef_enk
+    fark = (float(sayac_yaw) - float(enk_yaw) + 180.0) % 360.0 - 180.0
+    return (float(hedef_enk) + fark + 180.0) % 360.0 - 180.0
+
+
 def sayim_per_derece(cpr, oran):
     return cpr * oran / 360.0
 

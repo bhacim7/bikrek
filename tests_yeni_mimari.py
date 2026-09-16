@@ -1128,7 +1128,11 @@ _f = mfm.enkoder_hizala(11.5, simdi=1.0)
 kontrol("hizalama: sayac 10.0 -> 11.5, fark +1.5", abs(_f - 1.5) < 1e-9 and abs(mfm._simulated_yaw - 11.5) < 1e-9, f"{_f} {mfm._simulated_yaw}")
 kontrol("hizalama sayaci artti", mfm.hizalama_durumu()["encoder_snap_n"] >= 1)
 kontrol("esik alti fark (0.03) uygulanmaz, 0.0 doner", mfm.enkoder_hizala(11.53, simdi=1.0) == 0.0 and abs(mfm._simulated_yaw - 11.5) < 1e-9)
-kontrol("supheli fark (25 derece) uygulanmaz, None", mfm.enkoder_hizala(36.5, simdi=1.0) is None and abs(mfm._simulated_yaw - 11.5) < 1e-9)
+# Sinir 10 -> 45 (29.10): 20 derecelik fark artik UYGULANIR, 60 derece supheli.
+kontrol("20 derece fark uygulanir (eski sinir 10 idi, sahada 10-22 derece gorüldu)",
+        abs(mfm.enkoder_hizala(31.5, simdi=1.0) - 20.0) < 1e-9 and abs(mfm._simulated_yaw - 31.5) < 1e-9)
+mfm._simulated_yaw = 11.5
+kontrol("supheli fark (60 derece) uygulanmaz, None", mfm.enkoder_hizala(71.5, simdi=1.0) is None and abs(mfm._simulated_yaw - 11.5) < 1e-9)
 mfm._son_adim_zamani = 0.95
 kontrol("son adim 50 ms once: hizalama yok", mfm.enkoder_hizala(12.0, simdi=1.0) is None)
 mfm._son_adim_zamani = 0.0; mfm._servo_active = True
@@ -1398,6 +1402,33 @@ kontrol("hedef sallaniyor (sinir+3): ates ENGELLI", not _i and 'hedef hareketli'
 _i, _g27 = engagement.ates_serbest_mi(_c27, _m27, True, True, 0.0, 0.0, 0.0, hedef_hizi=None)
 kontrol("hiz olcumu yoksa kapi uygulanmaz", _i, _g27)
 kontrol("hedef hizi siniri makul (1-5 derece/sn)", 1.0 <= config.FIRE_MAX_TARGET_RATE_DEG_S <= 5.0)
+
+# --- 28. MUTLAK KOMUT CERCEVESI (29.10, görüntüTıklama.mp4) ---
+# FAZ 6 ile PC'nin acisi enkoderden; Pi 'set_angles'i sayaca gore yurutur.
+# Sahada sayac-enkoder farki +19.23 derece iken nisangahin sagina tiklama
+# tareti 19.25 derece SOLA gonderdi. Donusum bu farki geri ekler.
+print()
+print("28. Mutlak komut: enkoder cercevesi -> sayac cercevesi")
+_sc = _em.sayac_cercevesine
+kontrol("fark yokken hedef aynen gecer", abs(_sc(-12.6, -14.02, -14.02) - (-12.6)) < 1e-9)
+# sahadaki durum: enkoder -14.02, sayac +5.21 (fark +19.23); tiklama +1.4 derece saga
+kontrol("sayac 19.23 ileride: hedefe fark eklenir (-12.62 -> +6.61)",
+        abs(_sc(-12.62, 5.21, -14.02) - 6.61) < 1e-9)
+kontrol("sayac geride: fark cikarilir", abs(_sc(10.0, -3.0, 2.0) - 5.0) < 1e-9)
+kontrol("sarma: 179 + 3 -> -178", abs(_sc(179.0, 3.0, 0.0) - (-178.0)) < 1e-9)
+kontrol("sayac bilinmiyorsa donusum yok", _sc(7.5, None, -14.0) == 7.5)
+_k28 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("send_angle_command enkoder kontroldeyken sayac cercevesine ceviriyor",
+        "yaw = encoder_module.sayac_cercevesine(" in _k28
+        and _k28.index("yaw = encoder_module.sayac_cercevesine(")
+            < _k28.index('command = {"action": "set_angles"'))
+kontrol("sayac yaw'i her raporda saklaniyor (_sayac_yaw_son)",
+        "def _update_current_angles(self, yaw, pitch):\n        self._sayac_yaw_son = yaw" in _k28)
+kontrol("FAZ 4 kaydi sayac sutununa gercek sayaci yaziyor",
+        "_sy = (self._sayac_yaw_son if self._sayac_yaw_son is not None" in _k28)
+_k28m = io.open('motor_fire_module.py', encoding='utf-8').read()
+kontrol("Pi: hizalama siniri 10 dereceden buyuk (sahada 10-22 derece fark olustu)",
+        "ENCODER_SNAP_MAX_DEG = 45.0" in _k28m)
 
 print()
 print("=" * 70)

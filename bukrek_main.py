@@ -241,6 +241,11 @@ class HavaSavunmaArayuz(QWidget):
         # enkoder saglikliyken buradan beslenir; sayac yalnizca pitch'te.
         self._enk_aci_gecmisi = deque(maxlen=300)
         self._enk_son_rapor = 0.0
+        # Pi'nin ADIM SAYACI yaw'i, son rapordaki degeri. FAZ 6'da
+        # `current_yaw_angle` enkoderden geldigi icin sayac ayrica tutulur:
+        # mutlak komutlar (`send_angle_command`) sayac cercevesine cevrilir,
+        # FAZ 4 kaydi ve paneldeki delta gercek sayaci gosterir (29.10).
+        self._sayac_yaw_son = None
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
@@ -1363,6 +1368,7 @@ class HavaSavunmaArayuz(QWidget):
                 and time.time() - self._enk_son_rapor < 0.3)
 
     def _update_current_angles(self, yaw, pitch):
+        self._sayac_yaw_son = yaw
         if self._enkoder_kontrolde():
             # FAZ 6: yaw ENKODERDEN gelir (bkz. _update_encoder_state);
             # sayacin yaw'i kullanilmaz, bosluk hata hesabina girmez.
@@ -1435,8 +1441,14 @@ class HavaSavunmaArayuz(QWidget):
                 print(f"Enkoder kaydı: {yol}")
             ey = d.get("yaw")
             ham = d.get("raw")
+            # sayac_yaw sutunu Pi'nin ADIM SAYACI olmali. FAZ 6 acikken
+            # `current_yaw_angle` enkoder oldugu icin buraya yazilirsa
+            # sutun bir onceki enkoder degerini tekrar eder ve FAZ 4
+            # cozumlemesi (olcek/bosluk/kacirma) kor kalir (29.10).
+            _sy = (self._sayac_yaw_son if self._sayac_yaw_son is not None
+                   else self.current_yaw_angle)
             self._enkoder_kayit.write(
-                f"{time.time():.3f},{self.current_yaw_angle:.3f},{self.current_pitch_angle:.3f},"
+                f"{time.time():.3f},{_sy:.3f},{self.current_pitch_angle:.3f},"
                 f"{'' if ey is None else format(float(ey), '.3f')},{int(bool(d.get('ok')))},"
                 f"{'' if ham is None else ham}\n")
             self._enkoder_kayit_n += 1
@@ -1946,7 +1958,11 @@ class HavaSavunmaArayuz(QWidget):
             enk = "  |  enk: YOK"
         else:
             ey = float(self._enkoder["yaw"])
-            fark = (ey - self.current_yaw_angle + 180) % 360 - 180
+            # Delta = enkoder - ADIM SAYACI. FAZ 6'da current_yaw_angle
+            # enkoderin kendisi oldugu icin fark hep 0 gorunuyordu (29.10).
+            _sy = (self._sayac_yaw_son if self._sayac_yaw_son is not None
+                   else self.current_yaw_angle)
+            fark = (ey - _sy + 180) % 360 - 180
             enk = f"  |  enk {ey:+.2f}° (Δ{fark:+.2f}°)"
         self.update_info_panel(
             f"Mevcut Yaw: {self.current_yaw_angle:.1f}°, "
@@ -1989,6 +2005,23 @@ class HavaSavunmaArayuz(QWidget):
         current_time = time.time()
         if not force and current_time - self.last_angle_command_send_time < 0.1:
             return False
+
+        # FAZ 6 (29.10): `yaw` ENKODER cercevesinde hesaplandi (tiklama,
+        # gozcu yonelme, kalibrasyon hep `current_yaw_angle`/`_angle_at`
+        # uzerinden). Pi ise 'set_angles'i ADIM SAYACINA gore yurutur ve
+        # ikisi arasinda sahada 10-22 derece kalici fark olculdu. Fark
+        # eklenmeden gonderilen komut tareti fark kadar yanlis yone
+        # goturuyordu ("saga tikliyorum sola donuyor"). Delta komutlari
+        # (`set_proportional_angles_delta`) cerceveden bagimsiz, onlara
+        # dokunulmuyor.
+        if self._enkoder_kontrolde() and self._sayac_yaw_son is not None:
+            yaw_enk = yaw
+            yaw = encoder_module.sayac_cercevesine(
+                yaw_enk, self._sayac_yaw_son, self.current_yaw_angle)
+            if abs((yaw - yaw_enk + 180) % 360 - 180) > 0.5:
+                print(f"FAZ 6: mutlak yaw {yaw_enk:.2f}° (enkoder) -> "
+                      f"{yaw:.2f}° (sayac); sayac {self._sayac_yaw_son:.2f}° "
+                      f"enkoder {self.current_yaw_angle:.2f}°")
 
         command = {"action": "set_angles", "yaw": yaw, "pitch": pitch}
         self.last_angle_command_send_time = current_time

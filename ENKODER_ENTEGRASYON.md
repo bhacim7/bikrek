@@ -467,3 +467,22 @@ karisimi; yalnizca rapor gecikmesi geri alinmali.
 **Kalan:** FAZ 5'' (Pi'de bosluk telafisi) artik gerekli degil — bosluk PC'nin
 hata hesabindan ciktigi icin. FAZ 7 (saglamlastirma): kablo kopunca
 sayaca dusus var; yeniden baglaninca otomatik geri donus var.
+
+
+### FAZ 6 duzeltme — mutlak komut cercevesi (2026-09-16 gece, PROJE_DURUMU 29.10)
+
+Yukaridaki "hizalama sayesinde durusta ikisi ayni" varsayimi YANLISTI.
+Gunun kayitlarinda sayac ile enkoder arasi fark 10-22 derece olup saatlerce
+kaldi (`ENCODER_SNAP_MAX_DEG = 10` ustundeki farki reddediyor). FAZ 6 ile
+PC'nin acisi enkoder oldugu icin mutlak `set_angles` komutlari fark kadar
+yanlis yere gitti (`görüntüTıklama.mp4`).
+
+- PC: `send_angle_command` enkoder kontroldeyken yaw'i
+  `encoder_module.sayac_cercevesine` ile sayac cercevesine cevirir
+  (son rapordaki sayac - enkoder farki eklenir). Delta komutlari
+  degismedi.
+- PC: FAZ 4 kaydinin `sayac_yaw` sutunu ve paneldeki delta yine gercek
+  sayaci gosterir (`_sayac_yaw_son`).
+- Pi: `ENCODER_SNAP_MAX_DEG` 10 -> 45. **Pi'ye yuklenmesi gerekir**
+  (`motor_fire_module.py`). Yuklenmese de PC tarafi dogru calisir; sadece
+  fark durusta kendiliginden kapanmaz.
