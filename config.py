@@ -25,7 +25,17 @@ YOLO_MODEL_PATH = os.path.join(_BURASI, "v23m1056.engine")
 
 # Üç aşamanın ÜÇÜ de bu tek modeli kullanır; aşamalar arasında fark yalnızca
 # görev mantığındadır. (Eskiden Aşama 3 ayrı bir model yüklüyordu.)
-CONF_THRESHOLD = 0.4
+# 0.4 -> 0.3 (2026-09-16, 29. bolum B1). asama3Denem.mp4: KILIT donemlerinde
+# ornek karelerin %40-56'sinda maket KAREDE DURUYOR ama kutu cikmiyor. Kutusuz
+# karelerin ortak ozelligi direk 25-45 derece egik ya da kare bulanik; egik
+# maketin olculen guveni 0.42-0.56, yani esigin hemen altinda. Her kacirilan
+# kare "Hedef kaybedildi -> Takip Kayboldu -> yeniden edinme (3 kare) -> PID
+# sifirlama" dongusune ve 0.5-1 sn kayba mal oluyor.
+# BEDELI daha cok yanlis pozitif; ona karsi UC katman zaten var: cift
+# eslestirme (yalniz maket veya yalniz balon angaje edilemez),
+# LOCK_CONFIRM_FRAMES zamansal onayi ve VERIFY_MIN_CONFIDENCE. Dataset egik/
+# bulanik orneklerle guclendikten sonra 0.4'e geri donulebilir.
+CONF_THRESHOLD = 0.3
 NMS_THRESHOLD = 0.4
 
 # data.yaml ile BİREBİR aynı sıra olmalı — sınıf indeksleri buradan çözülüyor.
@@ -501,7 +511,22 @@ KP_PITCH = 0.6
 # Saf oransal denetim hareketli hedefte kalıcı olarak geride kalır. Bu terim
 # hedefin ölçüm gecikmesi boyunca kat edeceği yolu önceden telafi eder.
 # Etkin telafi = FEEDFORWARD_GAIN x FEEDFORWARD_LEAD_TIME.
-FEEDFORWARD_GAIN = 0.8
+#
+# 0.8 -> 0.0 (2026-09-16, 29. bolum B3): BU HEDEF PROFILINDE KAZANCI YOK,
+# GURULTUSU BUYUK. asama3Denem.mp4'te rayli arabanin olculen dunya acisal
+# hizi <= 0.5 derece/sn (12 saniyede ~3 derece). Feedforward'in telafi
+# edecegi yol 0.5 x 0.176 = 0.09 derece, yani olu bandin (7 px = 0.10
+# derece) altinda -- yok hukmunde.
+# Buna karsilik `_angle_at` yorumundaki saha olcumu: hedef GERCEKTEN
+# sabitken sistemin hesapladigi SAHTE hiz 8.1-14.4 derece/sn. Bu, her
+# karede 14 x 0.176 = 2.5 derecelik delta demek (sinir 5.0) ve hata kapisi
+# 112 px'in altinda tam acik oldugu icin tam KILIT sirasinda ekleniyor.
+# Olculen sonuc: 55 saniyede 70 yaw yon degisimi, 1.2 derecelik hata icin
+# 3.8 derecelik komut.
+# GERI ACMA KOSULU: hedef hizi 5 derece/sn'yi gecen bir senaryo (yakin
+# mesafede hizli gecis) girerse once 0.3 ile denenmeli, ve ancak
+# FEEDFORWARD_VELOCITY_DEADBAND gercek hizin ustune cekildikten sonra.
+FEEDFORWARD_GAIN = 0.0
 
 # Duyarga gecikmesi (saniye): kamera + çıkarım + açı raporu + motor tepkisi.
 # EKRAN KAYDINDAN ÖLÇÜLDÜ: hedef sabit hızla giderken kalan piksel hatası
@@ -611,7 +636,12 @@ MAX_TARGET_RATE_DEG_S = 30.0
 # (212 piksel) gezmesine izin veriyordu.
 # Gercek yarisma hedefleri 0.6-2.1 derece/sn. 2.5 en hizlisinin %20 ustunde,
 # yani gercek hareketi tam kapsiyor; gurultuye birakilan pay ise ucte bir.
-PREDICTION_MAX_RATE_DEG_S = 2.5
+#
+# 2.5 -> 1.0 (2026-09-16, 29. bolum B7): asama3Denem.mp4'te hedefin olculen
+# dunya hizi <= 0.5 derece/sn. 1.0 bunun iki kati, yani gercek hareketi hala
+# tam kapsiyor; ama kor ekstrapolasyonun MAX_MISSING_FRAMES=8 kare (0.53 sn
+# @15fps) boyunca gezdirebilecegi yol 1.3 dereceden 0.53 dereceye iniyor.
+PREDICTION_MAX_RATE_DEG_S = 1.0
 
 # --- Ölü bant (duruşta titremeyi engeller) ---
 # PİKSEL cinsinden tanımlı, çünkü gürültü kaynağı YOLO kutu merkezidir.
@@ -649,14 +679,41 @@ MIN_OUTPUT_PIXELS = 4.0
 #
 # 0.0 yazilirsa suzgec KAPANIR (eski davranis). Sahada salinim hala buyukse
 # once bu deger kucultulmeli (0.20), yetmezse KP dusurulmeli.
-PID_OUTPUT_SMOOTHING = 0.30
+#
+# 0.30 -> 0.0 (2026-09-16, 29. bolum B2). YUKARIDAKI HESAP KONUM KOMUTU ICIN
+# DOGRU, AMA KOMUTUMUZ ARTIMLI. `send_proportional_move_command` her karede
+# bir DELTA gonderiyor (Pi: hedef = mevcut + delta). Artimli komutta "DC
+# kazanci 1.0" ozelligi tam tersi anlama geliyor: hata sifirlandiktan sonra
+# suzgecin hafizasi 0.7^k x son_cikis buyuklugunde deltalar gondermeye devam
+# ediyor ve bunlarin TOPLAMI (1-a)/a = 2.33 x son_cikis kadar FAZLADAN YOL.
+# Olu bant da kesmiyor: olu bantta u=0 yapiliyor ama suzgec 0.7 x y_onceki'yi
+# yine gonderiyor (yalnizca 0.056 derecenin altinda kesiliyor).
+# Simulasyon (15 fps, 2 kare gecikme, tam olu zaman telafisi, KP 0.7):
+#   2.7 derecelik adim -> suzgecsiz asim 0.00, oturma 0.13 sn
+#                      -> suzgecle  asim 0.85, oturma 1.00 sn
+#   1.2 derecelik adim -> suzgecle  asim 0.38 derece
+# REZONANS NE OLACAK: 2.7 Hz sonumu artik komut basina MAX_OUTPUT_DEGREE
+# siniriyla (bukrek_main, 15.0 -> 2.0) saglaniyor; hiz siniri rezonans
+# genligini de siniirlar. Sahada 2-3 Hz'lik HIZLI titreme geri gelirse cozum
+# suzgeci geri acmak DEGIL (asimi geri getirir), olu banda girildiginde
+# suzgec hafizasini sifirlamaktir (`_pid_cikis_yaw = 0`, Paket 2).
+PID_OUTPUT_SMOOTHING = 0.0
 
 # Bir aday hedefe kilitlenmeden önce ard arda kaç karede aynı yerde görülmeli.
 # YOLO tek tük yanlış pozitif üretiyor ve hayaletler 1-2 kare sürüyor.
 LOCK_CONFIRM_FRAMES = 3
 
 # Hedef kaybolduğunda kaç kare tahminle devam edilsin.
-MAX_MISSING_FRAMES = 5
+#
+# 5 -> 8 (2026-09-16, 29. bolum B7): avci sahada 30 degil 15 fps calisiyor
+# (kare sayacindan olculdu: 850 -> 1666 / 54.5 sn). 5 kare @30fps = 0.17 sn
+# demekti, @15fps ise 0.33 sn -- ama tespit bosluklari 0.5 sn'ye kadar
+# cikiyor. Kisa kalinca her bosluk "Takip Kayboldu -> yeni hedef araniyor ->
+# 3 karelik yeniden onay -> reset_pid_state" dongusune donusuyor ve hiz/
+# filtre hafizasi sifirlaniyor. 8 kare = 0.53 sn @15fps.
+# Tahminin savurma riski ayni commit'te PREDICTION_MAX_RATE_DEG_S 2.5 -> 1.0
+# ile kapatildi: 8 kare x 1.0 derece/sn = en fazla 0.53 derece.
+MAX_MISSING_FRAMES = 8
 
 
 # =====================================================================
@@ -845,12 +902,29 @@ ENGAGE_LOCK_TIMEOUT = 8.0
 # Doğrulama: maket sınıfı kaç kare üst üste aynı çıkmalı, hangi güvenin
 # üstünde. Aşama 3'te dost vurmak diskalifiye olduğu için katı tutuldu.
 VERIFY_CONFIRM_FRAMES = 4
-VERIFY_MIN_CONFIDENCE = 0.55
+# 0.55 -> 0.45 (2026-09-16, 29. bolum B4). asama3Denem.mp4 1. kosum: Asama 3
+# basildiginda avci hedefi zaten goruyordu (Fuze 0.52) ve sistem dogrudan
+# DOGRULAMA'ya girdi; ama AYNI ANDA PID 9.7 derecelik yalpalamayi baslatti,
+# donus sirasindaki kareler bulaniklasti ve 1.0 saniyede 4 tutarli >= 0.55
+# kare toplanamadi -> 'dogrulanamadi' -> aci 5 saniye kara listeye girdi.
+# Avci hedefi 0.86 ile gorurken 5 saniye hicbir sey yapilmadi.
+# Esik hala ateş kilidinde de kullaniliyor (`ates_serbest_mi`), yani dost
+# guvenligi icin kritik. 0.45'e inmenin dost riski dusuk: dost/dusman karari
+# TEK karede degil, VERIFY_CONFIRM_FRAMES=4 ARDISIK ve TUTARLI karede
+# veriliyor; dost cikarsa Asama 3'te 600 saniye kara liste.
+VERIFY_MIN_CONFIDENCE = 0.45
 
 # Nişan toleransı: hata balonun YARIÇAPININ bu oranından küçük olmalı.
 # Piksel yerine orana bağlamak hem mesafeden hem zoomdan bağımsız kılar
 # (balon 15 metrede 30 px, 5 metrede 90 px).
-AIM_TOLERANCE_RATIO = 0.35
+#
+# 0.35 -> 0.6 (2026-09-16, 29. bolum B6): tolerans FIZIKSEL isabet payindan
+# cok dardi. Balonun yaricapi ~7.5 cm; 0.35 x yaricap, nisangahi balonun ic
+# ucte birine zorluyor. Sallanan direk + 15 fps + kutu gurultusu ile 3 ardisik
+# kare bu bantta tutulamadi: 55 saniyelik kosumda "nisan TAMAM" yalnizca 2
+# ornek karede goruldu, ates 0. 0.6 x yaricap hala BALONUN ICINDE kaliyor
+# (9 m'de 19 px = 4.2 cm, 15 m'de 11 px = 4.3 cm; ikisi de 7.5 cm'nin altinda).
+AIM_TOLERANCE_RATIO = 0.6
 
 # Nişan toleransı ayrıca bu mutlak piksel değerinin altına inmek zorunda
 # değil — tespit gürültüsünün altında bir hassasiyet istememek için alt sınır.
@@ -858,10 +932,22 @@ AIM_TOLERANCE_RATIO = 0.35
 # geçildiği için 1.5 katına çıkarıldı (6 -> 9). 15 metrede balon yarıçapı 19 px
 # olduğundan oran terimi (0.35 x 19 = 6.5 px) bu sınırın altında kalır; yani
 # 15 metrede tolerans 9 px = 0.13 derece = 3.4 cm.
-AIM_TOLERANCE_MIN_PIXELS = 9.0
+#
+# 9.0 -> 14.0 (2026-09-16, 29. bolum B6): 15 metrede balon yaricapi ~19 px
+# oldugu icin oran terimi (0.6 x 19 = 11.4 px) hala bu alt sinirin altinda
+# kaliyor, yani UZAK MESAFEDE BELIRLEYICI OLAN BU DEGER. 14 px = 0.198 derece
+# = 15 metrede 5.2 cm; balon yaricapi 7.5 cm oldugundan nisan noktasi balonun
+# icinde. 9 px ise 3.4 cm idi ve tespit kutusunun kendi gurultusuyle ayni
+# mertebedeydi -- yani olculemeyen bir hassasiyet isteniyordu.
+AIM_TOLERANCE_MIN_PIXELS = 14.0
 
 # Ateşten önce nişan kaç kare korunmalı.
-AIM_HOLD_FRAMES = 3
+#
+# 3 -> 2 (2026-09-16, 29. bolum B6): kare hizi sahada 30 degil 15 olcuLdu,
+# yani 3 kare 0.10 sn degil 0.20 sn demekti. Ustelik tespit surekliligi
+# kirildiginda (B1) 3 ardisik kare hic toplanamiyor. 2 kare @15fps = 0.13 sn,
+# eski 3 kare @30fps'e yakin. Tek karelik gurultuye karsi koruma korunuyor.
+AIM_HOLD_FRAMES = 2
 
 # --- IMHA DOGRULAMA ---
 # Sahada olculdu (asama2-3-hedefTakip.mp4): Asama 3'te ates 4.07 saniyede
@@ -976,7 +1062,17 @@ VERIFY_NO_BALLOON_GIVEUP_SEC = 0.40
 # gönderildi — taret 4 saniye boş duvara baktı. Kısa bir kara liste sıradaki
 # adaya geçmeyi sağlar; süre dolunca aday yeniden denenir, yani gerçek bir
 # hedefi kalıcı olarak kaybetme riski yok.
-BLACKLIST_VERIFY_TTL_SEC = 5.0
+#
+# 5.0 -> 1.5 (2026-09-16, 29. bolum B4). Yukaridaki gerekce GOZCU adaylari
+# icin yazilmisti (taret bos duvara bakiyor, siradakine gecmeli). Ama kara
+# liste kontrolu `avcida_hazir_hedef_var` icinde AVCININ GORDUGU cifte de
+# uygulaniyor ve orada anlami tersine donuyor: asama3Denem.mp4 1. kosumda
+# dogrulama yalpalama yuzunden basarisiz oldu, hedef 5 saniye listeye girdi
+# ve avci onu 0.86 guvenle gorurken sistem 5 saniye bekledi. Rayli hedefin
+# 15 m'den 9 m'ye yaklasmasi ~20 saniye; bu, pencerenin dortte biri.
+# 1.5 saniye "siradakine gec" islevi icin yeterli (bir dogrulama turu 1.0 sn).
+# ASIL COZUM Paket 2: avcinin SU AN cift gordugu aciyi bu listeye hic almamak.
+BLACKLIST_VERIFY_TTL_SEC = 1.5
 
 # --- KILIT KOPRUSU: maket bir kare gorunmezse kilidi birakma ---
 # Sahada olculdu (Asama2Hedef.mp4): kilit fazinin ~yarisinda YOLO maketi

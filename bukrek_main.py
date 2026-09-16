@@ -254,7 +254,22 @@ class HavaSavunmaArayuz(QWidget):
         # yapısında büyük komut tehlikeliydi (uzun blok = kuyruk birikmesi);
         # pozisyon servosunda değil, bu yüzden uzak hedefe daha az çevrimde
         # ulaşmak için yükseltildi.
-        self.MAX_OUTPUT_DEGREE = 15.0
+        #
+        # 15.0 -> 2.0 (2026-09-16, PROJE_DURUMU 29. bolum B2). Iki isi birden
+        # goruyor:
+        #   1) HIZ SINIRI. 2.0 derece/komut x 15 fps = 30 derece/sn. Olculen
+        #      tepe hiz 395 derece/sn idi ve 10 ms pozlamada 4 derecelik
+        #      hareket = 280 piksel bulaniklik demek; YOLO o kareleri
+        #      kaciriyor (B1 ile ayni kok neden). 30 derece/sn'de bir karede
+        #      2 derece = 140 px, hala cok ama kabul edilebilir.
+        #   2) REZONANS SINIRI. PID_OUTPUT_SMOOTHING kapatildigi icin (B2)
+        #      2.7 Hz sonumu buradan geliyor: salinim genligi komut basina
+        #      2 dereceyle sinirli.
+        # BUYUK YALPALAMAYI ETKILEMEZ: gozcu kaynakli edinme mutlak aci
+        # komutuyla (`send_angle_command`) yapiliyor, bu sinirin disinda.
+        # Avci gorus acisinin yarisi 13.75 derece; en kotu hatada 7 kare
+        # (0.47 sn) surer.
+        self.MAX_OUTPUT_DEGREE = 2.0
 
         # Ölü bant ve minimum çıkış, PİKSEL cinsinden tanımlanıp dereceye
         # çevrilir. Gürültü kaynağı YOLO kutu merkezi olduğu için doğal birim

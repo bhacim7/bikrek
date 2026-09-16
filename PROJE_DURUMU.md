@@ -2785,3 +2785,87 @@ kareler, ray/araba/sase negatifleri. Bu kosumun karelerinden kutusuz
 kalanlar dogrudan ornek.
 
 Kod degisikligi yapilmadi; bu bolum ve lens config'i commit'lendi.
+
+### 29.5 Paket 1 uygulandi (2026-09-16)
+
+Yalnizca sabit degerler degisti; akis/mantik degismedi. On bir deger, dordu
+tespit-surekliligi ve angajman tarafinda, yedisi kontrol tarafinda.
+
+| # | Sabit | Once | Sonra | Dosya | Bulgu |
+|---|---|---|---|---|---|
+| 1 | `CONF_THRESHOLD` | 0.4 | **0.3** | config | B1 |
+| 2 | `VERIFY_MIN_CONFIDENCE` | 0.55 | **0.45** | config | B4 |
+| 3 | `BLACKLIST_VERIFY_TTL_SEC` | 5.0 | **1.5** | config | B4 |
+| 4 | `MAX_MISSING_FRAMES` | 5 | **8** | config | B7 |
+| 5 | `PREDICTION_MAX_RATE_DEG_S` | 2.5 | **1.0** | config | B7 |
+| 6 | `FEEDFORWARD_GAIN` | 0.8 | **0.0** | config | B3 |
+| 7 | `PID_OUTPUT_SMOOTHING` | 0.30 | **0.0** | config | B2 |
+| 8 | `MAX_OUTPUT_DEGREE` | 15.0 | **2.0** | bukrek_main | B2 |
+| 9 | `AIM_TOLERANCE_RATIO` | 0.35 | **0.6** | config | B6 |
+| 10 | `AIM_TOLERANCE_MIN_PIXELS` | 9.0 | **14.0** | config | B6 |
+| 11 | `AIM_HOLD_FRAMES` | 3 | **2** | config | B6 |
+
+Her degerin gerekcesi ilgili satirin ustunde, kodun icinde yaziyor.
+`MAX_OUTPUT_DEGREE` config'te degil `bukrek_main.py`'de tanimli oldugu icin
+"yalnizca config" hedefi bir satirlik sabitle bozuldu; mantik degismedi.
+
+**Testler:** `tests_yeni_mimari.py` TUM TESTLER GECTI. Tek bir test guncellendi:
+16(c) "PID cikis suzgeci ETKIN" sartini kosuyordu; artimli komuttaki kuyruk
+bulgusundan (B2) sonra bu sart tersine cevrildi — artik "hata bitince fazladan
+yol gonderilmiyor" ((1-a)/a <= 0.5) kontrol ediliyor, suzgec yeniden acilirsa
+kesim frekansi kontrolleri devrede kaliyor.
+
+**Kapali dongu simulasyonu** (15 fps, 2 kare olu zaman, tam telafi, KP 0.7;
+gercek tespit gurultusu YOK, yani yalnizca kontrol davranisini gosterir):
+
+| hedef adimi | once (a=0.30, max 15, ff acik) | sonra (a=0, max 2, ff kapali) |
+|---|---|---|
+| 2.7 derece | asim +0.83, oturma 0.93 sn | asim -0.07, oturma **0.13 sn** |
+| 1.2 derece | asim +0.35, oturma 0.53 sn | asim -0.03, oturma **0.07 sn** |
+| 0.5 derece | asim +0.18, oturma 0.13 sn | asim -0.05, oturma **0.00 sn** |
+
+Bosluk 1.5 derece eklendiginde asim yine olusmuyor ama oturma 0.27-0.40 sn'ye
+cikiyor — bu kalan bedel Paket 3'un (FAZ 5'' bosluk telafisi) isi.
+
+**Beklenti (bir sonraki kosumda olculecek):**
+
+| olcut | 2026-09-16 kosumu | Paket 1 beklentisi |
+|---|---|---|
+| yaw yon degisimi | 70 / 55 sn | **< 25** |
+| edinme asimi | +4.5 / +5.8 derece | **< 1.5 derece** |
+| tepe yaw hizi | 395 derece/sn | **~30 derece/sn** (komut siniri) |
+| "nisan TAMAM" ornek kare | 2 | **> 10** |
+| ates | 0 | **>= 1** |
+| ilk KILIT'e kadar | 7.5 sn (1. kosum) | **< 3 sn** |
+| YOLO kutusuz kare orani | %40-56 | %30-45 (yalnizca esik etkisi) |
+
+**Beklenmeyen ama olabilecekler — kosumda bunlara bakilacak:**
+- **Yavas yonelme.** Komut basina 2 derece siniri, avci gorus acisinin
+  kenarindaki (13.75 derece) bir hedefe donusu 0.47 saniyeye cikarir. Taret
+  "agir" gorunurse sinir 3.0'a alinir; 4.0 uzerine cikmak asimi geri getirir.
+- **2-3 Hz hizli titreme.** Suzgec kapatildi. Titreme geri gelirse cozum
+  suzgeci geri acmak DEGIL (asim geri gelir), olu banda girildiginde suzgec
+  hafizasini sifirlamaktir (Paket 2).
+- **Yanlis pozitif artisi.** `CONF_THRESHOLD` 0.3 ile ray/araba/tavan
+  hayaletleri cogalabilir (t=33.0'da 0.67 ile `dusman-Drone` cikmisti).
+  Cift eslestirme + 3 karelik onay bunlari elemeli; elemiyorsa esik 0.35'e
+  cekilir ve dataset negatifleri (Paket 4) beklenir.
+- **Erken ates.** Tolerans genisledi (9 -> 14 px) ve onay 3 -> 2 kareye indi.
+  Isabet olculmedigi icin bu yonun ust siniri budur; iska varsa once
+  `AIM_HOLD_FRAMES` 3'e geri alinir, sonra tolerans 12'ye.
+
+**Bu pakette KASTEN degistirilmeyenler:** `KP_YAW/KP_PITCH` (0.7/0.6),
+`CAPTURE_LATENCY_OFFSET` (0.08), `PID_DEADBAND_PIXELS` (7.0),
+`LOCK_CONFIRM_FRAMES` (3), `VERIFY_CONFIRM_FRAMES` (4). Ayni anda cok sey
+degisirse hangisinin ise yaradigi olculemez; bunlar Paket 1 sonucuna gore
+sirayla denenecek.
+
+**Kamerada ELLE yapilacak (config'ten ayarlanamiyor):** pozlama 10 ms ->
+3-4 ms, kazanc artirilarak. `KAMERA_KONTROLLERI['hunter']` icinde
+`exposure`/`auto_exposure` `None` (surucu ne diyorsa o) ve config yorumunda
+belirtildigi gibi DirectShow'un `CAP_PROP_EXPOSURE` davranisi guvenilmez —
+deger korlemesine yazilmadi. `kamera_renk.py` ile ayarlanip ('e' otomatik
+pozlamayi kapatir, '[' / ']' pozlamayi degistirir, 'g' / 'h' kazanc) aracin
+"TUTMADI" uyarisi vermedigi deger config'e yazilmali. Ayrica kamera acilis
+satirindaki gerceklesen fps okunmali: sahada 15 fps olculdu, config 30
+bekliyor; sebep 1920x1200 sikistirmasiz akis ya da ekran kaydinin yuku olabilir.
