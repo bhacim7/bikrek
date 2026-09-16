@@ -439,3 +439,31 @@ delta olarak gider, bosluk hata hesabindan tamamen cikar. FAZ 5'' ayni sorunu
 acik dongu telafiyle dolayli cozer ve kalibrasyon gerektirir.
 Kapali dongu simulasyonu (29.6 B15): yalnizca boslugu kaldirmak nisan hatasi
 RMS'ini 1.01 -> 0.37 dereceye indiriyor.
+
+
+## FAZ 6 — YAPILDI, PC TARAFINDA (2026-09-16 gece, PROJE_DURUMU 29.9 B28)
+
+Pi tarafi degismedi. PC'de `config.ENCODER_CONTROL = True` iken:
+- `bukrek_main._update_encoder_state` her raporda `(zaman - ENCODER_LAG_SEC, aci)`
+  cifti `_enk_aci_gecmisi`'ne ekler ve `current_yaw_angle`'i enkoderden yazar.
+- `_update_current_angles` (adim sayaci raporu) yaw'i ARTIK yazmaz, pitch'i
+  yazar; aci gecmisine enkoder yaw + sayac pitch girer.
+- `_angle_at(t)` yaw'i `encoder_module.aci_at(_enk_aci_gecmisi, t)` ile, pitch'i
+  sayac gecmisinden aradegerler. Olu zaman telafisi boylece FIZIKSEL aciyla
+  yapilir; bosluk (1.49 derece) hata hesabindan cikar.
+- Enkoder 0.3 sn rapor vermezse `_enkoder_kontrolde()` False doner ve her
+  sey sayaca geri duser (FAZ 3 davranisi). FAZ 5' hizalama Pi'de calismaya
+  devam eder; PC artik sayac sicramasindan etkilenmez (29.6 B5'teki
+  "hizalama sekmesi" kendiliginden kalkti).
+- Komutlar yine `set_proportional_angles_delta` (delta). Mutlak komutlar
+  (`send_angle_command`, gozcu yolu) sayac cercevesinde; hizalama sayesinde
+  durusta ikisi ayni.
+
+**Ayar:** `ENCODER_LAG_SEC` (0.05). Taret enkoder kontrolunde hedefi ASIYORSA
+artir (0.08), yavas salinim varsa azalt (0.02). 29.3'te hareket halinde
+olculen ~80 ms'lik fark bosluk + mekanik gecikme + rapor gecikmesi
+karisimi; yalnizca rapor gecikmesi geri alinmali.
+
+**Kalan:** FAZ 5'' (Pi'de bosluk telafisi) artik gerekli degil — bosluk PC'nin
+hata hesabindan ciktigi icin. FAZ 7 (saglamlastirma): kablo kopunca
+sayaca dusus var; yeniden baglaninca otomatik geri donus var.

@@ -101,6 +101,25 @@ HUNTER_CROP_TO_MODEL_ASPECT = True
 # boşluğu ayırır). Ölçüm bitince False yapılabilir; yük ihmal edilebilir
 # (50 satır/sn).
 ENCODER_LOG = True
+
+# --- FAZ 6: KONTROL DONGUSU ENKODER ACISINI KULLANIR (2026-09-16 gece, 29.9) ---
+# Kamera FIZIKSEL aciyi gorur; adim sayaci ise boslugun (1.5 derece) hangi
+# tarafinda oldugunu bilmez. Olu zaman telafisi (hedef dunya acisi = kare
+# anindaki taret acisi + piksel hatasi; komut = dunya acisi - simdiki aci)
+# sayacla yapilinca her yon degisiminde 1.5 dereceye kadar sahte hata
+# giriyordu (29.6 B15 simulasyonu: yalnizca boslugu kaldirmak nisan hatasi
+# RMS'ini 1.01 -> 0.37 derece). True ise PC tarafinda `current_yaw_angle` ve
+# `_angle_at()` yaw icin enkoderi kullanir; komutlar yine delta olarak Pi'ye
+# gider (Pi tarafi degismedi). Enkoder saglıksizsa otomatik olarak sayaca
+# doner. Pitch'te enkoder yok, sayac kalir.
+ENCODER_CONTROL = True
+# Enkoder raporunun adim sayaci raporuna gore GECIKMESI (sn): SYNC 10 ms +
+# seri + Pi dongusu. 29.3'te hareket halinde ~80 ms olculdu ama bunun bir
+# kismi gercek mekanik gecikme (motor/esneme) ve o telafi EDILMEMELI (kamera
+# da fiziksel aciyi goruyor). Kilitte taret hizi <3 derece/sn oldugundan
+# 0.05 sn'lik yanilma 0.15 derece = 10 px'in altinda kalir. Taret enkoder
+# kontrolunde hedefi ASIYORSA bu deger artirilir, yavas salinim varsa azaltilir.
+ENCODER_LAG_SEC = 0.05
 ENCODER_LOG_DIR = os.path.join(_BURASI, "enkoder_kayit")
 
 RPI_IP = '192.168.137.229'
@@ -930,6 +949,14 @@ VERIFY_CONFIRM_FRAMES = 4
 # TEK karede degil, VERIFY_CONFIRM_FRAMES=4 ARDISIK ve TUTARLI karede
 # veriliyor; dost cikarsa Asama 3'te 600 saniye kara liste.
 VERIFY_MIN_CONFIDENCE = 0.45
+# DOGRULAMA PENCERESI (2026-09-16 gece, 29.9 B26): eski kural "son 4 kare
+# BIREBIR ayni sinif" idi. Sahada maket dusman-Fuze/-Helikopter/-Drone
+# arasinda kayiyor; dogrulama 2.7 saniye ve iki deneme surdu (t=27.3-30.0).
+# Yeni kural: son VERIFY_WINDOW_FRAMES karede ayni TARAF (dost- / dusman-)
+# en az VERIFY_CONFIRM_FRAMES kez ve cogunlukla gorulduyse kimlik o taraftir;
+# dogrulanan sinif, o tarafin en sik etiketi. Dusman tipinin (fuze/heli)
+# karismasi atesi etkilemez; dost/dusman ayrimi hala 4 kare + cogunluk ister.
+VERIFY_WINDOW_FRAMES = 6
 
 # Nişan toleransı: hata balonun YARIÇAPININ bu oranından küçük olmalı.
 # Piksel yerine orana bağlamak hem mesafeden hem zoomdan bağımsız kılar
@@ -986,6 +1013,20 @@ AIM_TOLERANCE_MIN_PIXELS = 10.0
 # emniyet katmani, calismamasi sistemi durdurmamalı.
 # 0 veya None = kapali.
 FIRE_MAX_TURRET_RATE_DEG_S = 3.0
+
+# --- ATES KAPISI 2: HEDEF ne kadar yavasken ates serbest ---
+# (2026-09-16 gece, 29.9 B27). HedefSıkmaDeneme.mp4'te uc atis, uc iska;
+# biri nisan hatasi yaw 1 px / pitch 1 px iken (t=32.7). Nisan kusursuzdu,
+# yine de iska: balon DIREKTE SALLANIYOR. Salinim genligi ~±1.5 derece,
+# periyot ~1.3 sn -> tepe hizi ~7 derece/sn. Ates komutundan mermi cikisina
+# ~0.25 sn (servo cekisi 0.20 + gecikme); 7 x 0.25 = 1.75 derece = 12 metrede
+# 37 cm. Balon yaricapi 7.5 cm. Yani salinimin ortasinda acilan atis
+# matematiksel olarak iska. Sarkac uclarda durur (hiz ~0); kapi atesi oraya
+# tasir: 2 derece/sn x 0.25 sn = 0.5 derece = 10 cm, kabul edilebilir sinir.
+# Hiz, hedefin DUNYA acisindaki degisimden olculur (`target_world_*_rate`,
+# process_tracking icinde EMA). FAZ 6 ile bu olcum enkoder tabanli ve
+# bosluk gurultusunden arinmis. None/0 = kapali.
+FIRE_MAX_TARGET_RATE_DEG_S = 2.0
 
 # Ateşten önce nişan kaç kare korunmalı.
 #
@@ -1149,6 +1190,36 @@ LOCK_BRIDGE_MAX_FRAMES = 5
 # hayalet (sahada 0.1-0.2 sn suren, 0.6 guvenli etiketler goruldu) iyi
 # bir kilidi dusurup TARAMA'ya gonderebiliyordu.
 LOCK_ABORT_CONFIRM_FRAMES = 3
+
+# --- BALON CAPASI: kimlik BIR KEZ dogrulanir, sonra BALON takip edilir ---
+# (2026-09-16 gece, PROJE_DURUMU 29.9 B25). HedefSıkmaDeneme.mp4'te maket
+# kare kare dusman-Fuze / dusman-Helikopter / dusman-Drone / balon arasinda
+# gidip geliyordu; balon ise ayni karelerde 0.80-0.88 ile hemen hep vardi.
+# Eski kural "bu karede maket dogrulanan sinifla ayni olmali" idi; her
+# sinif kaymasi kilidi dusurup atesi engelliyordu ("maket bu karede tespit
+# edilmedi", "sinif dogrulanandan farkli", "guven dusuk"). Kullanicinin
+# onerisi: "balonu duzgun takip edersek, ustundekinin dusman oldugu
+# dogrulandigi gibi ates edilebilir." Uygulanan tam olarak bu:
+#   * DOGRULAMA'da kimlik (dost/dusman) bir kez karara baglanir.
+#   * KILIT/ATES'te hedef, son kilit acisina EN YAKIN BALONLU cifttir;
+#     o karede maketin ne etiketi aldigi (veya hic gorunmemesi) onemsizdir.
+#   * EMNIYET: capadaki maket ardisik karelerde GUVENLE dost gorunurse
+#     kilit birakilir ve aci kara listeye girer (asagidaki iki sabit).
+# False = eski davranis (maket sinifi her karede eslesmeli).
+LOCK_BALLOON_ANCHOR = True
+# Capaya baglilik yaricapi (derece): balon bir karede bundan fazla
+# kayamaz. Direk salinimi karede 0.3-0.5 derece; 3 hedefli senaryoda
+# hedefler birbirinden >5 derece uzakta.
+LOCK_ANCHOR_MAX_DEG = 1.2
+# Kacirilan her kare icin yaricap bu kadar buyur (hedef gorulmezken
+# hareket etmis olabilir), ust sinir LOCK_ANCHOR_MAX_TOTAL_DEG.
+LOCK_ANCHOR_GROW_DEG = 0.4
+LOCK_ANCHOR_MAX_TOTAL_DEG = 3.0
+# Capadaki maket kac ARDISIK karede en az bu guvenle dost gorunurse kilit
+# birakilir. Tek karelik hayaletler (sahada 0.6'ya kadar guvenle goruldu)
+# kilidi dusurmez.
+LOCK_FRIEND_ABORT_FRAMES = 3
+LOCK_FRIEND_ABORT_CONF = 0.60
 
 # Balistik: 15 metrede mermi düşüşünü telafi eden sabit pitch ofseti
 # (derece, pozitif = yukarı nişan al). SAHADA ÖLÇÜLMELİ; ölçülene kadar 0.

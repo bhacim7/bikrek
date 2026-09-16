@@ -21,6 +21,7 @@ from camera_module import camera_worker
 from inference_module import inference_worker
 from spotter_module import spotter_worker
 import engagement
+import encoder_module
 from engagement import (BOSTA, TARAMA, YONELME, DOGRULAMA, KILIT, ATES)
 
 class HavaSavunmaArayuz(QWidget):
@@ -235,6 +236,11 @@ class HavaSavunmaArayuz(QWidget):
         # None = enkoder yok/saglıksiz; ates kapisi o zaman uygulanmaz.
         self.taret_yaw_hizi = None
         self._enk_gecmis = []
+        # FAZ 6 (config.ENCODER_CONTROL): yaw icin enkoder gecmisi
+        # (zaman - ENCODER_LAG_SEC, aci). `_angle_at` ve `current_yaw_angle`
+        # enkoder saglikliyken buradan beslenir; sayac yalnizca pitch'te.
+        self._enk_aci_gecmisi = deque(maxlen=300)
+        self._enk_son_rapor = 0.0
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
@@ -761,6 +767,14 @@ class HavaSavunmaArayuz(QWidget):
         """
         if not self._angle_history:
             return self.current_yaw_angle, self.current_pitch_angle
+        if self._enkoder_kontrolde():
+            # FAZ 6: yaw enkoder gecmisinden, pitch sayac gecmisinden.
+            _ey = encoder_module.aci_at(self._enk_aci_gecmisi, t)
+            if _ey is not None:
+                return _ey, self._sayac_aci_at(t)[1]
+        return self._sayac_aci_at(t)
+
+    def _sayac_aci_at(self, t):
         onceki = None
         for kayit in self._angle_history:
             if kayit[0] <= t:
@@ -802,6 +816,13 @@ class HavaSavunmaArayuz(QWidget):
         if abs(ham) >= config.VELOCITY_FAST_THRESHOLD:
             return config.VELOCITY_FAST_SMOOTHING
         return config.VELOCITY_SMOOTHING
+
+    def _hedef_hizi(self):
+        """Hedefin dunya acisal hizi (derece/sn), ates kapisi 2 icin.
+        Olcum yoksa None (kapi uygulanmaz)."""
+        if self._last_world_time is None:
+            return None
+        return math.hypot(self.target_world_yaw_rate, self.target_world_pitch_rate)
 
     def _tahmin_hizi(self):
         """
@@ -1170,7 +1191,7 @@ class HavaSavunmaArayuz(QWidget):
             _nis = "nişan TAMAM" if self.is_aimed_at_target else "nişan bekliyor"
             self._update_status_label(
                 f"Durum: {m.durum} — {m.dogrulanan_sinif or '?'}"
-                f"{' [köprü]' if kopruden else ''} | {_bal} | {_nis} "
+                f"{' [çapa]' if kopruden else ''} | {_bal} | {_nis} "
                 f"({len(ciftler)} kayıt, imha {m.imha_sayisi})")
             self.aktif_cift = secili
             return self._nisan_tespiti(secili)
@@ -1303,7 +1324,8 @@ class HavaSavunmaArayuz(QWidget):
             self.aktif_cift, self.angajman, self.balon_gercek_goruldu,
             self.is_aimed_at_target, self.current_yaw_angle,
             self.no_fire_yaw_start, self.no_fire_yaw_end,
-            taret_hizi=self.taret_yaw_hizi)
+            taret_hizi=self.taret_yaw_hizi,
+            hedef_hizi=self._hedef_hizi())
         if not izin:
             if self.angajman.ates_sayisi > 0:
                 # Zaten ateş edilmiş ve pencere 'tekrar' demişti, ama ateş
@@ -1334,12 +1356,24 @@ class HavaSavunmaArayuz(QWidget):
             f"({self.angajman.imha_sayisi + 1}. hedef, "
             f"{self.angajman.ates_sayisi}. atış)")
 
+    def _enkoder_kontrolde(self):
+        """FAZ 6 etkin ve enkoder taze mi? (config.ENCODER_CONTROL)"""
+        return (getattr(config, 'ENCODER_CONTROL', False)
+                and self._enk_aci_gecmisi
+                and time.time() - self._enk_son_rapor < 0.3)
+
     def _update_current_angles(self, yaw, pitch):
-        self.current_yaw_angle = yaw
-        self.current_pitch_angle = pitch
-        # Ölü zaman telafisi için açı geçmişi (PC saati ile damgalanır;
-        # kamera karesinin zaman damgası da aynı saatten gelir).
-        self._angle_history.append((time.time(), yaw, pitch))
+        if self._enkoder_kontrolde():
+            # FAZ 6: yaw ENKODERDEN gelir (bkz. _update_encoder_state);
+            # sayacin yaw'i kullanilmaz, bosluk hata hesabina girmez.
+            self.current_pitch_angle = pitch
+            self._angle_history.append((time.time(), self.current_yaw_angle, pitch))
+        else:
+            self.current_yaw_angle = yaw
+            self.current_pitch_angle = pitch
+            # Ölü zaman telafisi için açı geçmişi (PC saati ile damgalanır;
+            # kamera karesinin zaman damgası da aynı saatten gelir).
+            self._angle_history.append((time.time(), yaw, pitch))
         # Etiket güncellemesi kısıtlanıyor: açı raporu 50 Hz'e çıkarıldı ve her
         # örnekte Qt etiketi yenilemek boşuna yük. Geçmiş tam hızda tutuluyor,
         # sadece görsel yenileme ~15 Hz'e iniyor.
@@ -1371,6 +1405,12 @@ class HavaSavunmaArayuz(QWidget):
                 if _dt > 0.02:
                     self.taret_yaw_hizi = abs(
                         (self._enk_gecmis[-1][1] - self._enk_gecmis[0][1]) / _dt)
+            # FAZ 6: kontrol acisi. Rapor gecikmesi geri alinarak damgalanir.
+            if getattr(config, 'ENCODER_CONTROL', False):
+                self._enk_aci_gecmisi.append(
+                    (_simdi - getattr(config, 'ENCODER_LAG_SEC', 0.0), float(_y)))
+                self._enk_son_rapor = _simdi
+                self.current_yaw_angle = float(_y)
         else:
             self._enk_gecmis.clear()
             self.taret_yaw_hizi = None

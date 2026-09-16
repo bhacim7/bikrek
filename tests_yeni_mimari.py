@@ -219,9 +219,25 @@ kontrol("tum kosullar tamamsa serbest", izin, ger)
 izin, ger = engagement.ates_serbest_mi(cift, m2, False, True, 0.0, 0.0, 0.0)
 kontrol("balon GORULMEDIYSE engellenir (eski Asama3 acigi)", not izin, ger)
 
+# ESKI KURAL (LOCK_BALLOON_ANCHOR=False): maket bu karede yoksa ates yok.
+config.LOCK_BALLOON_ANCHOR = False
 izin, ger = engagement.ates_serbest_mi(
     engagement.HedefCifti(None, cift.balon, 1.0), m2, True, True, 0.0, 0.0, 0.0)
-kontrol("maket yoksa engellenir", not izin, ger)
+kontrol("[eski kural] maket yoksa engellenir", not izin, ger)
+config.LOCK_BALLOON_ANCHOR = True
+# BALON CAPASI (29.9 B25): kimlik DOGRULAMA'da dusman olarak baglandiysa,
+# maketin bu karede gorunmemesi/etiketinin kaymasi atesi KESMEZ.
+izin, ger = engagement.ates_serbest_mi(
+    engagement.HedefCifti(None, cift.balon, 1.0), m2, True, True, 0.0, 0.0, 0.0)
+kontrol("[capa] kimlik dusman dogrulandiysa maketsiz karede ates SERBEST", izin, ger)
+_kayik = engagement.cift_eslestir(
+    [det('dusman-Helikopter', 600, 300, 96, 60, 0.36), det('balon', 633, 415, 30, 30)])[0]
+izin, ger = engagement.ates_serbest_mi(_kayik, m2, True, True, 0.0, 0.0, 0.0)
+kontrol("[capa] etiket dusman-tipi arasinda kaydiysa (guven 0.36) ates SERBEST", izin, ger)
+_dostg = engagement.cift_eslestir(
+    [det('dost-F16', 600, 300, 96, 60, 0.9), det('balon', 633, 415, 30, 30)])[0]
+izin, ger = engagement.ates_serbest_mi(_dostg, m2, True, True, 0.0, 0.0, 0.0)
+kontrol("[capa] bu karede GUVENLE dost gorunuyorsa ates ENGELLI", not izin, ger)
 
 dost = engagement.cift_eslestir(
     [det('dost-F16', 600, 300, 96, 60), det('balon', 633, 415, 30, 30)])[0]
@@ -294,9 +310,14 @@ _c = engagement.cift_eslestir(tek, tek_balonlara_izin=True)
 kontrol("manuel/kalibrasyon modunda kilitlenebilir",
         len(_c) == 1 and _c[0].balon is not None and _c[0].maket is None)
 _m = engagement.AngajmanMakinesi(); _m.basla('task2')
-_m.durum = engagement.ATES; _m.dogrulanan_sinif = 'dusman-Drone'
+_m.durum = engagement.ATES; _m.dogrulanan_sinif = None     # kalibrasyon: kimlik YOK
 _izin, _ger = engagement.ates_serbest_mi(_c[0], _m, True, True, 0.0, 0.0, 0.0)
-kontrol("tek balona ATES asla serbest degil", not _izin, _ger)
+kontrol("tek balona ATES asla serbest degil (kimlik dogrulanmadi)", not _izin, _ger)
+config.LOCK_BALLOON_ANCHOR = False
+_m.dogrulanan_sinif = 'dusman-Drone'
+_izin, _ger = engagement.ates_serbest_mi(_c[0], _m, True, True, 0.0, 0.0, 0.0)
+kontrol("[eski kural] kimlik olsa da maketsiz balona ates yok", not _izin, _ger)
+config.LOCK_BALLOON_ANCHOR = True
 _kar = [det('dusman-Drone', 600, 300, 96, 60), det('balon', 633, 415, 30, 30),
         det('balon', 200, 700, 40, 40)]
 kontrol("manuel: cift + yalniz balon = 2 hedef",
@@ -611,14 +632,24 @@ _m15.kilit_aci = (5.0, 1.0)
 _sec, _kopru = _m15.kilit_hedefi_sec(_yalniz, [(5.0 + 3 * config.LOCK_BRIDGE_MAX_DEG, 1.0)])
 kontrol("uzaktaki balona KOPRU KURULMUYOR", _sec is None, f"{_sec}")
 
-# (e) Kopru butcesi dolunca kilit birakilir
+# (e) [eski kural] Kopru butcesi dolunca kilit birakilir. Capa modunda
+# butce YOK: balon capaya bagli kaldigi surece takip surer (29.9 B25).
+config.LOCK_BALLOON_ANCHOR = False
 _m16 = engagement.AngajmanMakinesi(); _m16.basla('task2')
 _m16.durum = engagement.KILIT; _m16.dogrulanan_sinif = 'dusman-F16'
 _m16.kilit_aci = (5.0, 1.0)
 for _ in range(config.LOCK_BRIDGE_MAX_FRAMES + 1):
     _m16.kilit_hedefi_sec(_yalniz, [(5.0, 1.0)])
-kontrol("kopru butcesi dolunca TARAMA'ya donuluyor",
+kontrol("[eski kural] kopru butcesi dolunca TARAMA'ya donuluyor",
         _m16.durum == engagement.TARAMA, _m16.durum)
+config.LOCK_BALLOON_ANCHOR = True
+_m16b = engagement.AngajmanMakinesi(); _m16b.basla('task2')
+_m16b.durum = engagement.KILIT; _m16b.dogrulanan_sinif = 'dusman-F16'
+_m16b.kilit_aci = (5.0, 1.0)
+for _ in range(config.LOCK_BRIDGE_MAX_FRAMES + 3):
+    _s16, _ = _m16b.kilit_hedefi_sec(_yalniz, [(5.0, 1.0)])
+kontrol("[capa] maketsiz balon capada kaldikca kilit SURER (butce yok)",
+        _s16 is not None and _m16b.durum == engagement.KILIT, _m16b.durum)
 
 # (f) EMNIYET AGI: kilit acisinda BASKA SINIFTAN maket belirirse kilit dusmeli
 _m17 = engagement.AngajmanMakinesi(); _m17.basla('task3')
@@ -1262,6 +1293,111 @@ kontrol("sarma onleme YALNIZCA MAX doygunlugunda (MIN_OUTPUT hafizayi bozmamali)
         "if abs(output_yaw) > self.MAX_OUTPUT_DEGREE:" in _k24
         and "self._pid_cikis_yaw = math.copysign(self.MAX_OUTPUT_DEGREE, output_yaw)" in _k24,
         "bukrek_main.process_tracking")
+
+# --- 25. BALON CAPASI: kimlik bir kez, balon takip (29.9 B25) ---
+print()
+print("=" * 70)
+print("25. BALON CAPASI — etiket kaysa da kilit ve ates surer, dost israrinda duser")
+print("=" * 70)
+def _cift_at(sinif, guven=0.8, x=600):
+    return engagement.cift_eslestir(
+        [det(sinif, x, 300, 96, 60, guven), det('balon', x + 33, 415, 30, 30, 0.85)])[0]
+_m25 = engagement.AngajmanMakinesi(); _m25.basla('task3')
+_m25.durum = engagement.KILIT; _m25.dogrulanan_sinif = 'dusman-Fuze'
+_s, _k = _m25.kilit_hedefi_sec([_cift_at('dusman-Fuze')], [(5.0, 1.0)])
+kontrol("dogru etiket: normal takip, capa (5.0,1.0)", _s is not None and not _k and _m25.kilit_aci == (5.0, 1.0))
+# ayni balon, maket bu karede Helikopter (sahada goruldu)
+_s, _k = _m25.kilit_hedefi_sec([_cift_at('dusman-Helikopter', 0.6)], [(5.2, 1.1)])
+kontrol("etiket dusman-Helikopter'e kaydi: capa uzerinden takip SURER", _s is not None and _k and _m25.durum == engagement.KILIT)
+kontrol("capa balonla birlikte guncellendi", _m25.kilit_aci == (5.2, 1.1), str(_m25.kilit_aci))
+# maket 'balon' sanildi -> iki balon, maket yok
+_ikibalon = engagement.cift_eslestir([det('balon', 600, 300, 40, 90, 0.5), det('balon', 633, 415, 30, 30, 0.85)],
+                                     tek_balonlara_izin=True)
+_acilar = [(9.0, 3.0), (5.3, 1.1)]
+_s, _k = _m25.kilit_hedefi_sec(_ikibalon, _acilar)
+kontrol("maket 'balon' sanilinca capaya EN YAKIN balon secildi (uzak olan degil)",
+        _s is not None and _k and _m25.kilit_aci == (5.3, 1.1), str(_m25.kilit_aci))
+_m25.durum = engagement.ATES
+_izin, _ger = engagement.ates_serbest_mi(_s, _m25, True, True, 0.0, 0.0, 0.0)
+kontrol("capadaki maketsiz balona ATES SERBEST (kimlik dusman-Fuze)", _izin, _ger)
+_m25.durum = engagement.KILIT
+# balon 2 kare kayboldu -> yaricap buyudu, 3. karede 2.0 derece otede yakalandi
+for _ in range(2):
+    _s, _ = _m25.kilit_hedefi_sec([], [])
+kontrol("balon 2 kare yok: kilit dusmedi, kayip sayildi", _s is None and _m25.durum == engagement.KILIT and _m25.capa_kayip == 2)
+_s, _k = _m25.kilit_hedefi_sec([_cift_at('dusman-Drone', 0.4)], [(5.3 + 1.9, 1.1)])
+kontrol("kayip sonrasi buyuyen yaricapla (1.2+2x0.4=2.0) 1.9 derece otedeki balon yakalandi", _s is not None, str(_m25.capa_kayip))
+_s, _k = _m25.kilit_hedefi_sec([_cift_at('dusman-Fuze')], [(5.3 + 1.9 + 2.5, 1.1)])
+kontrol("2.5 derece otedeki AYNI SINIF cift capaya ALINMADI (3 hedefte baska dusman olabilir)", _s is None)
+# DOST israri -> kilit birakilir, kara liste
+_m25b = engagement.AngajmanMakinesi(); _m25b.basla('task3')
+_m25b.durum = engagement.KILIT; _m25b.dogrulanan_sinif = 'dusman-Fuze'; _m25b.kilit_aci = (5.0, 1.0)
+_m25b.kilit_hedefi_sec([_cift_at('dost-F16', 0.9)], [(5.0, 1.0)])
+_m25b.kilit_hedefi_sec([_cift_at('dost-F16', 0.9)], [(5.0, 1.0)])
+kontrol("dost 2 kare: henuz KILIT (tek kare hayalet korumasi)", _m25b.durum == engagement.KILIT)
+_s, _ = _m25b.kilit_hedefi_sec([_cift_at('dost-F16', 0.9)], [(5.0, 1.0)])
+kontrol("dost 3 ardisik kare guvenle: kilit BIRAKILDI, TARAMA", _s is None and _m25b.durum == engagement.TARAMA)
+kontrol("dost acisi kara listede", _m25b.kara_liste.icinde_mi(5.0, 1.0))
+_m25c = engagement.AngajmanMakinesi(); _m25c.basla('task3')
+_m25c.durum = engagement.KILIT; _m25c.dogrulanan_sinif = 'dusman-Fuze'; _m25c.kilit_aci = (5.0, 1.0)
+for _ in range(5):
+    _s, _ = _m25c.kilit_hedefi_sec([_cift_at('dost-F16', 0.45)], [(5.0, 1.0)])
+kontrol("dusuk guvenli (0.45) dost etiketi kilidi DUSURMUYOR (sahte etiket)", _s is not None and _m25c.durum == engagement.KILIT)
+
+# --- 26. DOGRULAMA PENCERESI: taraf cogunlugu (29.9 B26) ---
+print()
+print("=" * 70)
+print("26. DOGRULAMA PENCERESI — dusman tipleri karissa da 4/6 ile dogrulanir")
+print("=" * 70)
+def _dogrula(sira):
+    m = engagement.AngajmanMakinesi(); m.basla('task3')
+    m._gec(engagement.DOGRULAMA)
+    son = None
+    for s in sira:
+        son = m.dogrulama_adimi([_cift_at(s, 0.7)])
+    return m, son
+_m26, _s26 = _dogrula(['dusman-Fuze', 'dusman-Helikopter', 'dusman-Fuze', 'dusman-Drone', 'dusman-Fuze'])
+kontrol("F,H,F,D,F: 4 dusman/5 -> dogrulandi, sinif en sik olan (dusman-Fuze)",
+        _m26.durum == engagement.KILIT and _m26.dogrulanan_sinif == 'dusman-Fuze', f"{_m26.durum} {_m26.dogrulanan_sinif}")
+_m26b, _ = _dogrula(['dusman-Fuze', 'dost-F16', 'dusman-Fuze', 'dost-F16', 'dusman-Fuze'])
+kontrol("3 dusman + 2 dost: 4 yok -> DOGRULANMADI", _m26b.durum == engagement.DOGRULAMA, _m26b.durum)
+_m26c, _s26c = _dogrula(['dost-F16', 'dost-Helikopter', 'dost-F16', 'dost-F16'])
+kontrol("4 dost: DOST karari, TARAMA + kara liste", _s26c == 'dost-F16' and _m26c.durum == engagement.TARAMA, f"{_s26c} {_m26c.durum}")
+_m26d, _ = _dogrula(['dusman-Fuze'] * config.VERIFY_CONFIRM_FRAMES)
+kontrol("eski davranis korunuyor: 4 ardisik ayni sinif -> KILIT", _m26d.durum == engagement.KILIT)
+
+# --- 27. FAZ 6 ve HEDEF HIZI KAPISI (29.9 B27/B28) ---
+print()
+print("=" * 70)
+print("27. FAZ 6 — enkoder acisi aradegerleme; hedef hizi kapisi")
+print("=" * 70)
+import encoder_module as _em
+_g = [(10.0, 0.0), (10.1, 1.0), (10.2, 3.0)]
+kontrol("aci_at: tam ornekte ornek degeri", abs(_em.aci_at(_g, 10.1) - 1.0) < 1e-9)
+kontrol("aci_at: ortada dogrusal (10.15 -> 2.0)", abs(_em.aci_at(_g, 10.15) - 2.0) < 1e-9)
+kontrol("aci_at: gecmisten eski -> ilk deger", _em.aci_at(_g, 9.0) == 0.0)
+kontrol("aci_at: gecmisten yeni -> son deger", _em.aci_at(_g, 11.0) == 3.0)
+kontrol("aci_at: bos gecmis -> None", _em.aci_at([], 10.0) is None)
+_k27 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("FAZ 6: _angle_at enkoder kontrolde iken enkoder gecmisini kullaniyor",
+        "_ey = encoder_module.aci_at(self._enk_aci_gecmisi, t)" in _k27)
+kontrol("FAZ 6: enkoder kontrolde iken sayacin yaw'i current_yaw_angle'a yazilmiyor",
+        "if self._enkoder_kontrolde():\n            # FAZ 6: yaw ENKODERDEN gelir" in _k27)
+kontrol("FAZ 6: enkoder gecikmesi geri alinarak damgalaniyor",
+        "_simdi - getattr(config, 'ENCODER_LAG_SEC', 0.0)" in _k27)
+kontrol("FAZ 6 config: ENCODER_CONTROL acik, gecikme 0-0.15 sn arasinda",
+        config.ENCODER_CONTROL and 0.0 <= config.ENCODER_LAG_SEC <= 0.15)
+_m27 = engagement.AngajmanMakinesi(); _m27.basla('task3')
+_m27.durum = engagement.ATES; _m27.dogrulanan_sinif = 'dusman-Fuze'
+_c27 = _cift_at('dusman-Fuze')
+_i, _g27 = engagement.ates_serbest_mi(_c27, _m27, True, True, 0.0, 0.0, 0.0, hedef_hizi=0.5)
+kontrol("hedef yavas (0.5 derece/sn): ates SERBEST", _i, _g27)
+_i, _g27 = engagement.ates_serbest_mi(_c27, _m27, True, True, 0.0, 0.0, 0.0,
+                                     hedef_hizi=config.FIRE_MAX_TARGET_RATE_DEG_S + 3)
+kontrol("hedef sallaniyor (sinir+3): ates ENGELLI", not _i and 'hedef hareketli' in _g27, _g27)
+_i, _g27 = engagement.ates_serbest_mi(_c27, _m27, True, True, 0.0, 0.0, 0.0, hedef_hizi=None)
+kontrol("hiz olcumu yoksa kapi uygulanmaz", _i, _g27)
+kontrol("hedef hizi siniri makul (1-5 derece/sn)", 1.0 <= config.FIRE_MAX_TARGET_RATE_DEG_S <= 5.0)
 
 print()
 print("=" * 70)

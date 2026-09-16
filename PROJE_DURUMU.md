@@ -3347,3 +3347,143 @@ dolayli cozer ve kalibrasyon gerektirir.
 3. **Dataset:** maketin `balon` sanilmasi (B24). Ornek: balon-maket ust uste,
    maket dik/kisa gorundugu kareler.
 4. **FAZ 6** (29.8.7).
+
+### 29.9 `HedefSıkmaDeneme.mp4` — son iki tur, 3 atis 0 isabet; mimari degisiklik (2026-09-16 gece)
+
+47.5 saniye, 3 fps'de 143 kare tek tek okundu (iki otonom tur: t=0-15 ve
+t=27-47; arada manuel surus). Kayit `enkoder_20260916_213936.csv`, kullanici
+`kosum_olc.py` ciktisini paylasti (6 tur; son ikisi bu video).
+
+**Sonuc: iki turda uc atis, hicbiri isabet etmedi.** Titresim ise iyi durumda:
+son iki turun RMS'i 0.172 ve 0.136 derece (hedef <0.15), frekans 2.26 ve
+1.06 Hz. Yani kontrol dongusu artik sorun degil; sorun yukari katta.
+
+#### 29.9.1 Zaman cizelgesi (ozet)
+
+| t | durum | etiket (maket) | ne oldu |
+|---|---|---|---|
+| 0.0-1.3 | KILIT, balon VAR | Fuze 0.70 / 0.63 / 0.79 / 0.54 / **0.36** | nisan bekliyor, "guven dusuk 0.36" ile ates engellendi |
+| 1.7 | KILIT | **dusman-Helikopter 0.60** | "maket bu karede tespit edilmedi" (sinif tutmadi) |
+| **2.0** | **ATES 1. atis** | Fuze 0.43 | hata yaw -9 / pitch 4 px -> **iska** |
+| 2.7-4.0 | imha dogrulaniyor / engellendi | **balon** 0.46 / 0.62 / 0.46 (maket balon sanildi) | "maket bu karede tespit edilmedi" 2/22 .. 11/22 |
+| 4.3 | engellendi | Fuze 0.80 | "nisan tolerans disinda" 16/22, hata 70 px |
+| 4.7 | **hedef birakiliyor** | **dusman-Helikopter 0.82** | 22/22 doldu -> kara liste 1.5 sn |
+| 5.0-6.0 | TARAMA | Fuze 0.53 / 0.87 / 0.58 | kara liste bekleniyor (hedef 0.87 ile karede) |
+| 6.3-6.7 | DOGRULAMA | **Helikopter 0.62**, Fuze 0.72 | |
+| 7.0-7.3 | KILIT — hedef bu karede yok | **balon 0.56**, **Helikopter 0.76** | sinif tutmadi |
+| 7.7-9.0 | Hedef kaybedildi, tahmin | — | |
+| 9.3-9.7 | engellendi: tolerans disinda | Fuze 0.81 / 0.68 | hata 24 / 43 px |
+| 10.0 | engellendi: maket yok | **Helikopter 0.65** | |
+| **10.7** | **ATES 1. atis** (yeni kilit) | Fuze 0.78 | hata yaw 16 / pitch -1 -> **iska** |
+| 11.0-11.3 | imha dogrulaniyor -> **DOGRULAMA** | **Drone 0.45**, **Helikopter 0.86** | kilit ATES sirasinda yabanci maket (3 kare) ile dustu |
+| 12.0-15.0 | DOGRULAMA/TARAMA/Aday | balon 0.51, Drone 0.57/0.63 | kilit kurulamadi; kullanici durdurdu |
+| 27.3 | DOGRULAMA | Fuze 0.42 | 2. tur basi |
+| 28.3 | TARAMA (2 cift) | **balon 0.62 + balon 0.46** | maket yok -> kimlik yok |
+| 30.0-30.7 | DOGRULAMA -> KILIT [kopru] | Fuze 0.71, **Helikopter 0.42**, Fuze 0.59 | |
+| 31.0-32.3 | KILIT nisan bekliyor | Fuze 0.34-0.77, **balon** 0.63 | hata 74 / -45 / -70 / -7 / 59 px (direk saliniyor) |
+| **32.7** | **ATES 1. atis** | Fuze 0.51 | hata **yaw 1 / pitch 1 px** -> **ISKA** |
+| 33.0-35.3 | imha dogrulaniyor / engellendi | **balon** 0.46/0.70/0.50, Fuze 0.61 | "maket bu karede tespit edilmedi" 1..21/22 |
+| 35.7 | TARAMA | **Drone 0.35** | 22/22 -> kara liste |
+| 36.0-42.3 | TARAMA/DOGRULAMA/KILIT/kayip donguleri | Fuze, Helikopter, Drone karisik | ates yok |
+| 45.3 | KILIT | **dusman-Drone** | BALON YOK |
+| 46.3 | kayip | **karton kutu: dusman-F16 0.37** | |
+| 46.7 | Hazir | | kullanici durdurdu |
+
+Ornek karelerde maketin etiketi: ~%45 dusman-Fuze, ~%20 dusman-Helikopter,
+~%15 dusman-Drone, ~%18 **balon**. Balonun kendisi ise ayni karelerin
+neredeyse tamaminda 0.80-0.88 ile var. Kullanicinin gozlemi birebir dogru.
+
+#### 29.9.2 Bulgular
+
+**B25 — ETIKET KAYMASI KILIDIN VE ATESIN TEK BASINA EN BUYUK DUSMANIYDI
+(mimari degisti).** Eski kural her karede "maket dogrulanan sinifla ayni
+olmali" diyordu; bu sart uc ayri yerde atesi kesiyordu:
+`kilit_hedefi_sec` ("hedef bu karede yok"), `ates_serbest_mi` ("maket bu
+karede tespit edilmedi" / "sinif dogrulanandan farkli" / "guven dusuk") ve
+yabanci-maket iptali (3 kare Helikopter -> kilit dustu, t=11.0). Ustelik
+22 karelik engel butcesi dolunca hedef kara listeye giriyor ve 1.5 saniye
+daha kaybediliyordu.
+
+Uygulanan: **BALON CAPASI** (`config.LOCK_BALLOON_ANCHOR`). Kimlik
+DOGRULAMA'da bir kez karara baglanir; KILIT/ATES'te hedef, son kilit
+acisina en yakin BALONLU cifttir, maketin o karede ne etiket aldigi
+(veya hic gorunmemesi) onemsizdir. Emniyet: capadaki maket 3 ardisik
+karede >=0.60 guvenle DOST gorunurse kilit birakilir ve aci kara listeye
+girer; tek karelik >=0.60 dost gorunumu ise sadece o karede atesi keser.
+Ayni siniftan ama capa yaricapinin disindaki cift de artik alinmiyor —
+3 hedefli senaryoda ikisi ayni tip olabilir.
+
+**B26 — DOGRULAMA "4 kare birebir ayni etiket" istiyordu.** Etiket
+dusman tipleri arasinda kayarken bu 2.7 saniye ve iki deneme surdu
+(t=27.3-30.0). Yeni kural: son 6 karede ayni TARAF (dost-/dusman-) en az
+4 kez ve cogunlukla -> kimlik o taraf, sinif en sik etiket. Dost/dusman
+ayrimi hala 4 kare ister.
+
+**B27 — NISAN KUSURSUZKEN ISKA: BALON SALLANIYOR.** t=32.7'de atis hatasi
+yaw 1 / pitch 1 piksel, yine iska. Sebep atis gecikmesi: servo cekisi
+0.20 sn + komut gecikmesi ~0.05 sn. Direk sarkac gibi saliniyor, genlik
+~±1.5 derece, periyot ~1.3 sn -> tepe hizi ~7 derece/sn; 0.25 sn'de 1.75
+derece = 12 metrede 37 cm. Balon yaricapi 7.5 cm. Yani salinimin
+ortasinda acilan atis matematiksel olarak iska; **29.8 B22'deki "iska =
+nisan hatasi" sonucu eksikti**, hedef hareketi de iska uretiyor.
+Uygulanan: `FIRE_MAX_TARGET_RATE_DEG_S = 2.0` — hedefin dunya acisal hizi
+(zaten hesaplanan `target_world_*_rate`) sinirin ustundeyse ates yok.
+Sarkac uclarda durur; ates oraya tasinir (2 x 0.25 = 0.5 derece = 10 cm
+ust sinir). Engel gerekcesi durum cubugunda "hedef hareketli: X" olarak
+gorunur.
+
+**B28 — FAZ 6 UYGULANDI (kontrol dongusu enkoderi kullaniyor).**
+`ENCODER_CONTROL = True` iken PC tarafinda `current_yaw_angle` ve
+`_angle_at()` yaw'i ENKODER gecmisinden okur (rapor gecikmesi
+`ENCODER_LAG_SEC` = 0.05 sn geri alinarak damgalanir); pitch sayacta kalir;
+komutlar yine delta olarak Pi'ye gider, Pi tarafi degismedi. Enkoder 0.3
+sn rapor vermezse otomatik olarak sayaca donulur. Bosluk (1.5 derece) hata
+hesabindan tamamen cikiyor; B27'deki hedef hizi olcumu de boslugun sahte
+hizindan arinmis oluyor (feedforward'in eski derdi buydu).
+
+**B29 — Kalanlar (kod degismedi):** karton kutu `dusman-F16 0.37` (t=46.3)
+ve maketin `balon` sanilmasi (%18) dataset isi; 15 fps hala; ates sonrasi
+22 kare + 1.5 sn kara liste artik B25 ile cok daha az tetiklenecek.
+
+#### 29.9.3 Bu commit'te ne degisti, nerede, neden
+
+| dosya / yer | ne | neden |
+|---|---|---|
+| `config.py` LOCK_BALLOON_ANCHOR, LOCK_ANCHOR_MAX_DEG 1.2, _GROW 0.4, _MAX_TOTAL 3.0, LOCK_FRIEND_ABORT_FRAMES 3, _CONF 0.60 | yeni | B25 balon capasi ayarlari |
+| `config.py` VERIFY_WINDOW_FRAMES 6 | yeni | B26 dogrulama penceresi |
+| `config.py` FIRE_MAX_TARGET_RATE_DEG_S 2.0 | yeni | B27 hedef hizi kapisi |
+| `config.py` ENCODER_CONTROL True, ENCODER_LAG_SEC 0.05 | yeni | B28 FAZ 6 |
+| `engagement.py` `kilit_hedefi_sec` | yeniden yazildi; eski govde `_kilit_hedefi_sec_eski` (bayrak False iken) | B25: capaya en yakin balonlu cift; dost israrinda birak; ayni sinif uzaktaysa alma |
+| `engagement.py` `ates_serbest_mi` | `hedef_hizi=` parametresi; capa modunda maket-sart kosullari kaldirildi, dost-gorunumu kesici eklendi | B25, B27 |
+| `engagement.py` `dogrulama_adimi` + `_taraf_cogunlugu` | 4 ardisik ayni -> 6'da 4 ayni taraf | B26 |
+| `engagement.py` `AngajmanMakinesi.__init__`/`_gec` | `dost_ardisik`, `capa_kayip` alanlari | B25 |
+| `encoder_module.py` `aci_at` | yeni saf fonksiyon | B28: zaman-aci aradegerleme (testlenebilir) |
+| `bukrek_main.py` `_enkoder_kontrolde`, `_update_current_angles`, `_update_encoder_state`, `_angle_at`/`_sayac_aci_at` | FAZ 6 | B28 |
+| `bukrek_main.py` `_hedef_hizi`, `_otonom_ates_denemesi` | ates kapisina hedef hizi | B27 |
+| `bukrek_main.py` KILIT durum metni | "[köprü]" -> "[çapa]" | B25 |
+| `tests_yeni_mimari.py` 6, 8, 13(e) | eski kural bayrakla sabitlendi; capa beklentileri eklendi | |
+| `tests_yeni_mimari.py` 25, 26, 27 | yeni | capa, dogrulama penceresi, FAZ 6 aradegerleme, hedef hizi kapisi |
+
+253 kontrol, tumu gecti.
+
+#### 29.9.4 Ucuncu asama (3 hedef, tek turda) icin ne degisti
+
+- Kimlik bir kez dogrulanip balon takip edildigi icin etiket kaymasi
+  artik hedef degistirmez; ayni siniftan ikinci bir dusman capa
+  yaricapinin (1.2-3.0 derece) disinda kaldigi surece ayri hedef sayilir.
+- Imha sonrasi kara liste (12 sn) ve TARAMA'nin "merkeze en yakin cift"
+  kurali siradaki hedefe gecisi sagliyor; bu kosumda olculemedi, 3 hedefli
+  kurulumda olculmeli.
+- Hiz sinirlayan kalemler ayni: 15 fps, dogrulama (~0.3 sn), sarkac
+  penceresi bekleme (B27), atis gecikmesi 0.25 sn.
+
+#### 29.9.5 Sirasi gelen isler
+
+1. Kosum: beklenti — "maket bu karede tespit edilmedi" gerekcesi
+   neredeyse hic gorunmemeli; ates aninda "hedef hareketli" gerekcesi
+   gorunmeli ve atislar sarkac uclarina denk gelmeli; `kosum_olc.py`
+   ile RMS <0.15 korunmali (FAZ 6 sonrasi dusmesi beklenir).
+2. FAZ 6 ayari: taret hedefi asiyorsa `ENCODER_LAG_SEC` artir (0.08),
+   yavas salinim varsa azalt (0.02).
+3. Dataset: maketin balon sanilmasi, karton kutu negatifi.
+4. 3 hedefli kurulum ile tek tur denemesi.

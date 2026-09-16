@@ -343,6 +343,11 @@ class AngajmanMakinesi:
         self.kopru_kare = 0
         # Kilit acisinda BASKA siniftan maket kac karedir goruluyor.
         self.yabanci_maket_ardisik = 0
+        # BALON CAPASI (config.LOCK_BALLOON_ANCHOR): capadaki maket kac
+        # ardisik karede guvenle DOST gorundu; capaya yakin balon kac
+        # ardisik karedir bulunamiyor (arama yaricapi buna gore buyur).
+        self.dost_ardisik = 0
+        self.capa_kayip = 0
 
         self._sinif_gecmisi = []       # doğrulama için ardışık sınıflar
         self._dogrulama_balon = 0      # doğrulamada balon kaç karede görüldü
@@ -373,6 +378,8 @@ class AngajmanMakinesi:
                 self.kilit_aci = None
                 self.kopru_kare = 0
                 self.yabanci_maket_ardisik = 0
+                self.dost_ardisik = 0
+                self.capa_kayip = 0
                 # Yeni hedefe geçiliyor: atış bütçesi ve öğrenilen nişan
                 # ofseti sıfırlanmalı. Ofset maket genişliğine normalize
                 # olsa da başka bir hedefin geometrisini taşımamalı.
@@ -553,16 +560,19 @@ class AngajmanMakinesi:
             return None
 
         self._sinif_gecmisi.append(cift.sinif)
-        if len(self._sinif_gecmisi) > config.VERIFY_CONFIRM_FRAMES:
+        pencere = max(config.VERIFY_CONFIRM_FRAMES,
+                      getattr(config, 'VERIFY_WINDOW_FRAMES', config.VERIFY_CONFIRM_FRAMES))
+        if len(self._sinif_gecmisi) > pencere:
             self._sinif_gecmisi.pop(0)
 
-        yeterli = len(self._sinif_gecmisi) >= config.VERIFY_CONFIRM_FRAMES
-        tutarli = yeterli and len(set(self._sinif_gecmisi)) == 1
-        if not tutarli:
+        # TARAF COGUNLUGU (config.VERIFY_WINDOW_FRAMES): dusman tipleri
+        # birbirine karisabilir, dost/dusman ayrimi karismaz. Eski "4 kare
+        # birebir ayni etiket" kurali sahada dogrulamayi 2.7 saniyeye
+        # uzatiyordu.
+        sinif = _taraf_cogunlugu(self._sinif_gecmisi, config.VERIFY_CONFIRM_FRAMES)
+        if sinif is None:
             self._dogrulama_zaman_asimi()
             return None
-
-        sinif = self._sinif_gecmisi[0]
         if dost_mu(sinif):
             self.kara_listeye_al(self._dost_ttl(), 'dost')
             self._gec(TARAMA)
@@ -613,9 +623,83 @@ class AngajmanMakinesi:
         kaymışsak, maket geri geldiğinde sınıfı tutmaz ve kilit düşer.
         Ateş zaten `ates_serbest_mi` ile ayrıca korunuyor; bu katman
         taretin yanlış hedefte oyalanmasını da engelliyor.
+
+        BALON CAPASI (config.LOCK_BALLOON_ANCHOR, 2026-09-16 gece):
+        yukaridaki uc kademe, maketin HER KAREDE dogrulanan sinifla
+        etiketlenmesini sart kosuyordu. Sahada maket kare kare
+        dusman-Fuze / -Helikopter / -Drone / balon arasinda kayiyor
+        (HedefSıkmaDeneme.mp4); her kayma kilidi dusuruyordu. Kimlik
+        DOGRULAMA'da bir kez karara baglandigina gore takip edilmesi
+        gereken sey BALON'dur — o zaten her karede var. Yeni siralama:
+          1. Dogrulanan sinifla eslesen maketli cift -> capa guncellenir
+          2. Capaya (son kilit acisi) en yakin BALONLU cift, maketin bu
+             karedeki etiketi ne olursa olsun -> takip surer
+          3. Capadaki maket ARDISIK karelerde guvenle DOST ise -> kilidi
+             birak, aciyi kara listeye al (emniyet agi)
         """
         acilar = list(acilar) + [None] * max(0, len(ciftler) - len(acilar))
+        if not getattr(config, 'LOCK_BALLOON_ANCHOR', True):
+            return self._kilit_hedefi_sec_eski(ciftler, acilar)
 
+        # Capa yaricapi: kacirilan her karede buyur (hedef gorulmezken
+        # hareket etmis olabilir), ust sinirli.
+        yaricap = min(config.LOCK_ANCHOR_MAX_TOTAL_DEG,
+                      config.LOCK_ANCHOR_MAX_DEG
+                      + config.LOCK_ANCHOR_GROW_DEG * self.capa_kayip)
+
+        # 1) Dogrulanan sinifla eslesen maketli cift: capa guncellenir.
+        #    CAPA VARSA MESAFE SARTI BURADA DA GECERLI: ayni siniftan ama
+        #    uzaktaki bir cift BASKA bir hedeftir (yarismada 3 hedef ayni
+        #    anda; ikisi ayni tip olabilir). Eski kod sinif tutunca aciya
+        #    bakmadan aliyordu.
+        for c, a in zip(ciftler, acilar):
+            if c.maket is not None and c.sinif == self.dogrulanan_sinif:
+                if (self.kilit_aci is not None and a is not None
+                        and _aci_uzakligi(a, self.kilit_aci) > yaricap):
+                    continue
+                if a is not None:
+                    self.kilit_aci = a
+                self.kopru_kare = 0
+                self.capa_kayip = 0
+                self.dost_ardisik = 0
+                self.yabanci_maket_ardisik = 0
+                return c, False
+
+        if self.kilit_aci is None:
+            return None, False
+
+        # 2) Capaya en yakin BALONLU cift (maket etiketi onemsiz)
+        aday, aday_aci, aday_uzaklik = None, None, None
+        for c, a in zip(ciftler, acilar):
+            if c.balon is None or a is None:
+                continue
+            u = _aci_uzakligi(a, self.kilit_aci)
+            if u <= yaricap and (aday is None or u < aday_uzaklik):
+                aday, aday_aci, aday_uzaklik = c, a, u
+        if aday is None:
+            self.capa_kayip += 1
+            self.kopru_kare += 1
+            return None, False
+
+        # 3) EMNIYET: capadaki maket israrla ve guvenle DOST ise birak
+        if (aday.maket is not None and dost_mu(aday.sinif)
+                and aday.guven >= config.LOCK_FRIEND_ABORT_CONF):
+            self.dost_ardisik += 1
+            if self.dost_ardisik >= config.LOCK_FRIEND_ABORT_FRAMES:
+                self.hedef_yaw, self.hedef_pitch = self.kilit_aci
+                self.kara_listeye_al(self._dost_ttl(), 'kilitte dost gorundu')
+                self._gec(TARAMA)
+                return None, False
+        else:
+            self.dost_ardisik = 0
+
+        self.kilit_aci = aday_aci
+        self.capa_kayip = 0
+        self.kopru_kare += 1          # istatistik: kac kare capayla gidildi
+        return aday, True
+
+    def _kilit_hedefi_sec_eski(self, ciftler, acilar):
+        """config.LOCK_BALLOON_ANCHOR = False iken eski uc kademeli secim."""
         # 1) Doğrulanan sınıfla eşleşen maketli çift
         for c, a in zip(ciftler, acilar):
             if c.maket is not None and c.sinif == self.dogrulanan_sinif:
@@ -785,7 +869,8 @@ class AngajmanMakinesi:
 
 
 def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
-                    yaw, no_fire_start, no_fire_end, taret_hizi=None):
+                    yaw, no_fire_start, no_fire_end, taret_hizi=None,
+                    hedef_hizi=None):
     """
     Ateş kilidi — hepsi birden sağlanmalı.
 
@@ -797,14 +882,31 @@ def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
     """
     if makine.durum != ATES:
         return False, 'durum ATES degil'
-    if cift is None or cift.maket is None:
-        return False, 'maket bu karede tespit edilmedi'
-    if not dusman_mi(cift.sinif):
-        return False, f'sinif dusman degil: {cift.sinif}'
-    if cift.guven < config.VERIFY_MIN_CONFIDENCE:
-        return False, f'guven dusuk: {cift.guven:.2f}'
-    if makine.dogrulanan_sinif != cift.sinif:
-        return False, 'sinif dogrulanandan farkli'
+    if cift is None:
+        return False, 'hedef yok'
+    if getattr(config, 'LOCK_BALLOON_ANCHOR', True):
+        # BALON CAPASI: kimlik DOGRULAMA'da bir kez karara baglandi. Bu
+        # karede maketin etiketi/guveni/varligi sart DEGIL — balon
+        # capaya baglilikla takip ediliyor (bkz. kilit_hedefi_sec).
+        # Sahada (HedefSıkmaDeneme.mp4) uc kosulun her biri ayri ayri
+        # atesi kesiyordu: "maket bu karede tespit edilmedi", "sinif
+        # dogrulanandan farkli", "guven dusuk 0.36"; balon o karelerde
+        # 0.80+ ile duruyordu.
+        if not dusman_mi(makine.dogrulanan_sinif):
+            return False, f'dogrulanan sinif dusman degil: {makine.dogrulanan_sinif}'
+        # Tek karelik bile olsa GUVENLE dost gorunen makete ates yok.
+        if (cift.maket is not None and dost_mu(cift.sinif)
+                and cift.guven >= config.LOCK_FRIEND_ABORT_CONF):
+            return False, f'bu karede dost gorunumu: {cift.sinif} {cift.guven:.2f}'
+    else:
+        if cift.maket is None:
+            return False, 'maket bu karede tespit edilmedi'
+        if not dusman_mi(cift.sinif):
+            return False, f'sinif dusman degil: {cift.sinif}'
+        if cift.guven < config.VERIFY_MIN_CONFIDENCE:
+            return False, f'guven dusuk: {cift.guven:.2f}'
+        if makine.dogrulanan_sinif != cift.sinif:
+            return False, 'sinif dogrulanandan farkli'
     # İKİ AYRI KONTROL, BİLEREK.
     # `balon_gorundu` ÇAĞIRANDAN gelen bir bayrak; çağıran onu yanlış
     # hesaplarsa bu koşul sessizce geçilir. Elimizdeki çifti de doğrudan
@@ -823,9 +925,29 @@ def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
     _sinir = getattr(config, 'FIRE_MAX_TURRET_RATE_DEG_S', 0) or 0
     if taret_hizi is not None and _sinir > 0 and taret_hizi > _sinir:
         return False, f'taret hareketli: {taret_hizi:.1f} derece/sn'
+    # HEDEF SALLANIRKEN ATES ETME: balon direkte sarkac gibi salinir, tepe
+    # hizi ~7 derece/sn; 0.25 sn'lik atis gecikmesinde 1.75 derece kayar.
+    # Sarkac uclarda durur; ates oraya tasinir. Gerekce config'te.
+    _hs = getattr(config, 'FIRE_MAX_TARGET_RATE_DEG_S', 0) or 0
+    if hedef_hizi is not None and _hs > 0 and hedef_hizi > _hs:
+        return False, f'hedef hareketli: {hedef_hizi:.1f} derece/sn'
     if _atesiz_bolgede(yaw, no_fire_start, no_fire_end):
         return False, 'atesiz bolge'
     return True, 'serbest'
+
+
+def _taraf_cogunlugu(gecmis, gerekli):
+    """
+    Pencerede ayni TARAF (dost-/dusman-) en az `gerekli` kez ve digerinden
+    cok gorulduyse o tarafin en sik sinifini dondurur, yoksa None.
+    """
+    dusman = [s for s in gecmis if dusman_mi(s)]
+    dost = [s for s in gecmis if dost_mu(s)]
+    if len(dusman) >= gerekli and len(dusman) > len(dost):
+        return max(set(dusman), key=dusman.count)
+    if len(dost) >= gerekli and len(dost) > len(dusman):
+        return max(set(dost), key=dost.count)
+    return None
 
 
 def _aci_uzakligi(a, b):

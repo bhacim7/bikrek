@@ -140,6 +140,30 @@ def baslangic_toplam(ham, merkez, cpr):
     return toplam
 
 
+def aci_at(gecmis, t):
+    """
+    (zaman, aci) dizisinde t anindaki aciyi dogrusal aradegerler.
+    FAZ 6: PC'nin olu zaman telafisi, kare cekildigi andaki taret acisini
+    ENKODER gecmisinden okur. Gecmis zamana gore artan olmali. Bos ise None;
+    t gecmisin disindaysa en yakin uc.
+    """
+    if not gecmis:
+        return None
+    onceki = None
+    for kayit in gecmis:
+        if kayit[0] <= t:
+            onceki = kayit
+        else:
+            if onceki is None:
+                return kayit[1]
+            aralik = kayit[0] - onceki[0]
+            if aralik <= 0:
+                return kayit[1]
+            w = (t - onceki[0]) / aralik
+            return onceki[1] + w * (kayit[1] - onceki[1])
+    return onceki[1]
+
+
 def sayim_per_derece(cpr, oran):
     return cpr * oran / 360.0
 
