@@ -3016,8 +3016,15 @@ PREDICTION 1.0) **oldugu gibi duruyor**; hepsi ya ise yaradi ya notr.
    atis testi; boresight ve `BALLISTIC_PITCH_OFFSET`. Bu cozulmeden nisan
    iyilestirmelerinin sahada karsiligi olmaz.
 2. **Bir kosum daha** (kod degismeden): titresimin 0.12 dereceye dondugu ve
-   edinme asiminin 0.3 derecede kaldigi dogrulanmali. Olcut:
-   `titresim.py` ile RMS, `karsilastir.py` ile yon degisimi.
+   edinme asiminin 0.3 derecede kaldigi dogrulanmali. Olcum araci
+   `kosum_olc.py` (kayit dosyasi verilmezse en yenisini alir ve otonom
+   bolumu kendisi bulur):
+
+       python kosum_olc.py
+       python kosum_olc.py enkoder_kayit/eski.csv enkoder_kayit/yeni.csv
+
+   Arac sisteme dokunmaz, yalnizca `enkoder_kayit/*.csv` okur. Kabul olcutu:
+   titresim RMS < 0.15 derece ve frekans 2-4 Hz bandinda DEGIL.
 3. **Paket 2 (kod):** otonom modda kilit onayini atla (B14); avci kaynakli
    edinmede tek mutlak aci komutu + oturma bekleme; hizalama sicramasini
    dunya acisina yansit.
