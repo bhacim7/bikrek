@@ -3563,3 +3563,105 @@ hizalamasi, delta komut yolu, FAZ 6'nin kendisi.
 "FAZ 6: mutlak yaw ... -> ..." satiri fark 0.5 dereceyi asinca gorunur;
 Pi guncellenince fark 45 dereceye kadar durusta kendiliginden kapanir ve
 bu satir nadirlesir.
+
+### 29.11 `Aşama2Deneme.mp4` + `HedefKilit.mp4` — "yalpali kilit" (2026-09-17, FAZ 6 + cerceve duzeltmesi sonrasi)
+
+Kayit `enkoder_20260917_174120.csv` (sayac sutunu yine gercek sayac).
+Asama2: 17.7 sn, 3 sabit hedef (Fuze-Drone-Helikopter, altlarinda balon),
+17:49:03-17:49:23. HedefKilit: 2.07 sn, Hedef Takip modu (gozcu yok, PID
+tek basina 390 px'ten yaklasiyor), 17:53:04.6-17:53:06.6. Iki video da
+30 fps'de kare kare okundu; durum cubugu ve baslik (yaw) seritleri
+cikarildi; balonlarin goruntudeki konumu renk blob'uyla izlendi.
+
+#### 29.11.1 Asama2 zaman cizelgesi (durum cubugundan)
+
+| t (sn) | durum | not |
+|---|---|---|
+| 0.75 | YONELME +4.6 (su an -4.6) | gozcu devir teslimi |
+| 1.25 | Taret yerlesti | enkoder 3.35, sayac 4.63: **1.28 derece eksik** |
+| 1.5 | DOGRULAMA, hata 56 px | PID kalan yolu suruyor |
+| 1.75 | KILIT Helikopter, 6 px | |
+| 2.0 | ATES 1. atis | |
+| 2.25-3.25 | imha dogrulaniyor, hata -14, -27, -17, -4, +6 px | taret 5.37 -> 4.64 -> 4.89 |
+| 3.5 / 4.75 | 2. ve 3. atis (11 px, 6 px) | hata 3-17 px arasinda dolasiyor |
+| 6.25 | YONELME -3.2 (Fuze) | |
+| 7.25 | KILIT Fuze | 3 atis 7.5-10.5 |
+| 11.75-13.0 | TARAMA "gozcude uygun aday yok" 1.25 sn | |
+| 13.75 | DOGRULAMA Drone, hata 10 / 180 px | pitch 3.5 -> 1.1 iniyor |
+| 14.4 | 1. atis, ham pitch hatasi 21 px | pitch hala hareketli (0.8 derece/sn) |
+| 14.5-17.5 | 2. ve 3. atis; yaw hatasi +7..+34 px, taret 0.56 -> 2.00 sagra suruklenir | |
+
+Balon blob izleme: Helikopter fazinda uc balonun birbirine uzakligi
+237-250 px (+-6 px) — **balon sallanmiyor**. Yalpa taretin kendisi.
+
+#### 29.11.2 Bulgular
+
+**B30 — Devir teslim eksik iniyor (adim kaybi).** Pi 'set_angles' ile
+sayacini hedefe goturuyor, fiziksel taret geride kaliyor: Asama2'de 1.28
+derece (8 derecelik hareket), HedefKilit'te 50 Hz kayitta sayac 2.59'da
+dururken enkoder 5.55 (**2.96 derece**, 10 derecelik hareket, ~40
+derece/sn). Duruşta fark kalici, yani esneme degil adim kaybi. FAZ 6
+oncesi bu gorunmezdi (PC sayaca inaniyordu). Sonuc: her devir teslimden
+sonra PID 1-3 dereceyi ~1.6 derece/sn ile suruyor (1.3 sn kayip).
+
+**B31 — Pi'nin "yeniden yaklasma"si PID ile kavga ediyor.** HedefKilit
+17:53:06.36: taret durunca FAZ 5' hizalamasi sayaci 4.54 -> 7.05 yapti,
+ardindan `ENCODER_REENGAGE` eski (bayat) hedef 4.54'e dogru servoyu
+yeniden acti ve taret FIZIKSEL olarak 7.24 -> 4.26 gitti (3 derece
+sapma), PID geri getirdi, 07.39'da ayni sey 1.1 derece ile tekrarlandi.
+Bu tam olarak "hedefi asip geri gelme". Delta komutlari da hedefi
+"gecerli" isaretledigi icin her durusta tetiklenebiliyor. FAZ 6 ile dis
+dongu PC'de; Pi'nin ikinci bir denetleyici gibi davranmasi zararli.
+
+**B32 — Hizli yaklasmada asim.** HedefKilit: hata 390 px'ten sifira,
+sonra +113 px (1.6 derece) asim, geri donus, -45 px. Iki kaynak:
+(a) `ENCODER_LAG_SEC` = 0.05 fazla: hareket halinde sayac-enkoder farkinin
+adim kaybi disindaki kismi ~0.8 derece / 40 derece/sn = **~20 ms**.
+Gecikme fazla yazilinca gecmis kaydi zamanda geriye kayar, `_angle_at`
+kare anindaki aciyi ILERIDE okur, dunya acisi ileri kayar, taret asar.
+ENKODER_ENTEGRASYON'daki "asiyorsa artir" notu YANLISTI, tersi dogru.
+(b) `current_yaw_angle` ham son enkoder degeri; 40 derece/sn'de 20 ms =
+0.8 derece bayat.
+
+**B33 — Kilitte +-0.3-0.4 derece, ~1.5 sn periyotlu avlanma.** Asama2
+Helikopter: 5.37 -> 4.64 -> 4.89 -> 5.50. Mekanizma: yon degisiminde
+motor ~0.45 derece (32 px) bosluk boyunca doner, kafa kimildamaz; PC bu
+surede her karede KP x hata delta gondermeye devam eder (3 kare x 0.2-0.35
+derece); bosluk bitince kafa birikmis komut kadar gider = 15-35 px asim,
+ters yonde ayni sey. Uzerine B31 biniyor. Balon sabit oldugu icin bu
+yalpa tamamen tarete ait.
+
+**B34 — Pitch hizi ates kapisinda yok.** Drone'a 1. atis pitch 3.5'ten
+1.1'e inerken, ham pitch hatasi 21 px iken acildi (tolerans 10 px);
+`FIRE_MAX_TURRET_RATE_DEG_S` yalniz yaw hizina bakiyor.
+
+**B35 — Derece/piksel supheli.** Zemin sablonuyla olculen sahne kaymasi,
+enkoderin ima ettigi kaymanin Helikopter fazinda ~%75'i, Drone fazinda
+~%45'i (12 mm lens icin `HUNTER_DPP_YAW` = 0.01411 teorik). Ya DPP kucuk
+(gercek ~0.018?) ya da kafa enkoderin dedigi kadar donmuyor. Ikisi de PID
+kazancini dusurur (surunme) ve gozcu/tiklama hedefini kisa birakir.
+Sahada 1 dakikalik test: manuel modda nisangahin 500 px sagina tikla;
+hedef nisangaha tam oturmuyorsa DPP yanlis (eksik kaliyorsa DPP buyutulmeli).
+
+**B36 — Adim kaybi hizla ilgili.** 40-50 derece/sn'de 10 derecelik
+harekette 3 derece kayip. `SERVO_MAX_DEG_PER_SEC` = 50 (Pi). Kosum
+olcumunde "|sayac - enkoder| en buyuk" bu kaybin gostergesi (tur 8: 3.64).
+
+#### 29.11.3 Oneri (Paket 4) — uygulanmadi, kullanici karari bekleniyor
+
+PC tarafi:
+1. `ENCODER_LAG_SEC` 0.05 -> 0.02 (B32a); `current_yaw_angle` = enkoder +
+   hiz x gecikme (B32b).
+2. Kapali dongu YONELME: taret durdu ve |enkoder - hedef| > 0.5 derece ise
+   mutlak komutu (cerceve donusumuyle) yeniden gonder, en fazla 3 kez (B30).
+3. Ates kapisina pitch hizi (sayac gecmisinden) (B34).
+4. Yon degisiminde bosluk enjeksiyonu: PC, komut isareti degisince o
+   yonde bir kez `YAW_BACKLASH_DEG` (0.4) ekler; enkoder fazlasini duzeltir
+   (B33). Bayrakla, kapatilabilir.
+5. DPP saha testi (B35); gerekirse `HUNTER_DPP_YAW` olculen degere.
+
+Pi tarafi (elle yuklenecek):
+6. `ENCODER_REENGAGE = False` (B31) — en onemli Pi degisikligi.
+7. `ENCODER_SNAP_MAX_DEG` 10 -> 45 (29.10, hala yuklenmemis olabilir).
+8. `SERVO_MAX_DEG_PER_SEC` 50 -> 30 denemesi; kosum_olc ile |sayac-enkoder|
+   en buyuk degeri 1 derecenin altina inene kadar (B36).

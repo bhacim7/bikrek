@@ -486,3 +486,17 @@ yanlis yere gitti (`görüntüTıklama.mp4`).
 - Pi: `ENCODER_SNAP_MAX_DEG` 10 -> 45. **Pi'ye yuklenmesi gerekir**
   (`motor_fire_module.py`). Yuklenmese de PC tarafi dogru calisir; sadece
   fark durusta kendiliginden kapanmaz.
+
+
+### DUZELTME (2026-09-17, PROJE_DURUMU 29.11 B32): `ENCODER_LAG_SEC` yonu
+
+Yukaridaki "taret hedefi ASIYORSA artir" notu TERS. Gecikme fazla
+yazilinca enkoder ornekleri zamanda geriye kayar; `_angle_at` kare
+anindaki aciyi hareket yonunde ILERIDE okur, dunya acisi ileri kayar,
+taret ASAR. Dogrusu: **asiyorsa AZALT, yavas/eksik kaliyorsa artir.**
+Sahada olculen rapor gecikmesi ~20 ms (HedefKilit.mp4, 40 derece/sn'de
+adim kaybi disi fark ~0.8 derece); onerilen deger 0.02.
+
+Ayrica: FAZ 6 ile PC dis dongu oldugu icin Pi'deki `ENCODER_REENGAGE`
+(FAZ 5' yeniden yaklasma) PID ile kavga ediyor (hizalama sonrasi bayat
+hedefe 3 derecelik fiziksel sapma olculdu). Kapatilmasi oneriliyor.
