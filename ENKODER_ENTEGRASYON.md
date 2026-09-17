@@ -500,3 +500,9 @@ adim kaybi disi fark ~0.8 derece); onerilen deger 0.02.
 Ayrica: FAZ 6 ile PC dis dongu oldugu icin Pi'deki `ENCODER_REENGAGE`
 (FAZ 5' yeniden yaklasma) PID ile kavga ediyor (hizalama sonrasi bayat
 hedefe 3 derecelik fiziksel sapma olculdu). Kapatilmasi oneriliyor.
+
+Uygulandi (2026-09-17, 29.11.4): `ENCODER_LAG_SEC` 0.02, `current_yaw_angle`
+hiz x gecikme ile ileri aliniyor, kapali dongu YONELME (taret durunca
+enkoder hedeften 0.5 dereceden uzaksa mutlak komut tekrar), yon degisiminde
+0.4 derece bosluk enjeksiyonu (`YAW_BACKLASH_DEG`). Pi: `ENCODER_REENGAGE`
+False, `SERVO_MAX_DEG_PER_SEC` 30 — **Pi'ye yuklenmeli.**

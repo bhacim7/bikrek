@@ -3665,3 +3665,29 @@ Pi tarafi (elle yuklenecek):
 7. `ENCODER_SNAP_MAX_DEG` 10 -> 45 (29.10, hala yuklenmemis olabilir).
 8. `SERVO_MAX_DEG_PER_SEC` 50 -> 30 denemesi; kosum_olc ile |sayac-enkoder|
    en buyuk degeri 1 derecenin altina inene kadar (B36).
+
+#### 29.11.4 Paket 4 UYGULANDI (2026-09-17)
+
+| dosya / yer | ne | onceki -> simdi | neden |
+|---|---|---|---|
+| `config.py` `ENCODER_LAG_SEC` | gecikme | 0.05 -> 0.02 | olculen rapor gecikmesi ~20 ms; fazlasi asim yapiyor (B32a) |
+| `config.py` `ENCODER_RATE_EXTRAPOLATE` | yeni | True | `current_yaw_angle` = enkoder + hiz x gecikme (B32b) |
+| `config.py` `YONELME_TEKRAR_MIN_DEG / _MAX / _ARALIK_SEC / YONELME_DURUS_HIZI_DEG_S` | yeni | 0.5 / 3 / 0.3 / 1.5 | kapali dongu yonelme (B30) |
+| `config.py` `YAW_BACKLASH_DEG`, `PITCH_BACKLASH_DEG` | yeni | 0.4, 0.0 | bosluk enjeksiyonu (B33); 0 = kapali |
+| `encoder_module.py` `hiz_isaretli()` | yeni saf fonksiyon | | isaretli hiz; ileri alma ve kapi icin |
+| `encoder_module.py` `bosluk_enjeksiyonu()` | yeni saf fonksiyon | | yon degisiminde bir kez bosluk ekler; testli |
+| `bukrek_main.py` `_update_encoder_state` | isaretli hiz + ileri alma | | ham enkoder 20 ms bayat |
+| `bukrek_main.py` `_angajman_adimi` TARAMA/YONELME | tekrar sayaci; durunca ve >0.5 derece uzaksa mutlak komut yeniden | | Pi adim kacirinca eksik inis (B30); hareket halinde gonderilmez |
+| `bukrek_main.py` `_taret_pitch_hizi`, `_taret_hizi` | yeni; ates kapisina max(yaw, pitch) | | pitch inerken ates acilmasin (B34) |
+| `bukrek_main.py` `process_tracking` | MAX sinirindan sonra bosluk enjeksiyonu | | B33 |
+| `bukrek_main.py` `send_angle_command` | son hareket yonu guncellenir | | mutlak komuttan sonraki ters delta da bosluk gecer |
+| `motor_fire_module.py` (Pi) `ENCODER_REENGAGE` | | True -> False | hizalama sonrasi bayat hedefe yeniden yaklasma PID ile kavga (B31) |
+| `motor_fire_module.py` (Pi) `SERVO_MAX_DEG_PER_SEC` | | 50 -> 30 | 40-50 derece/sn'de 10 derecede 3 derece adim kaybi (B36) |
+| `tests_yeni_mimari.py` 29 | hiz, bosluk dizisi, config, kaynak, Pi hizalama-sonrasi servo kapali | | |
+
+**Sahada bakilacaklar:** konsolda "YONELME tekrar N" satirlari (1-2 olmali,
+3'e dayaniyorsa DPP/gozcu sorunu); `kosum_olc.py` "|sayac - enkoder| en
+buyuk" < 1 derece (hiz 30 yeterli mi); kilitte yaw yon degisimi sayisi ve
+RMS dusmeli; "taret hareketli" gerekcesi pitch inerken de gorunmeli.
+Bosluk enjeksiyonu asim yaratirsa `YAW_BACKLASH_DEG` 0.25'e dusur, hala
+avlanma varsa 0.6'ya cikar; 0 kapatir.

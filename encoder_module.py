@@ -182,6 +182,38 @@ def sayac_cercevesine(hedef_enk, sayac_yaw, enk_yaw):
     return (float(hedef_enk) + fark + 180.0) % 360.0 - 180.0
 
 
+def hiz_isaretli(gecmis, en_az_dt=0.02):
+    """
+    (zaman, aci) dizisinden ISARETLI hiz (derece/sn); dizi kisa ya da
+    pencere en_az_dt'den darsa None. 29.11 B32b: `current_yaw_angle`
+    bayat enkoderi hiz x gecikme ile ileri almak icin.
+    """
+    if not gecmis or len(gecmis) < 2:
+        return None
+    dt = gecmis[-1][0] - gecmis[0][0]
+    if dt <= en_az_dt:
+        return None
+    return (gecmis[-1][1] - gecmis[0][1]) / dt
+
+
+def bosluk_enjeksiyonu(cikis, son_yon, bosluk):
+    """
+    Yon degisiminde bosluk enjeksiyonu (29.11 B33).
+
+    cikis: bu karenin komutu (derece, 0 = komut yok); son_yon: onceki
+    sifir-disi komutun isareti (-1/0/+1); bosluk: derece (0 = kapali).
+    Doner: (yeni_cikis, yeni_yon). Isaret onceki sifir-disi komuta gore
+    degistiyse cikisa ayni yonde `bosluk` eklenir; ilk komutta (yon 0)
+    eklenmez, sifir komut yonu degistirmez.
+    """
+    if cikis == 0.0:
+        return 0.0, son_yon
+    yon = 1 if cikis > 0 else -1
+    if bosluk > 0.0 and son_yon != 0 and yon != son_yon:
+        cikis += yon * bosluk
+    return cikis, yon
+
+
 def sayim_per_derece(cpr, oran):
     return cpr * oran / 360.0
 

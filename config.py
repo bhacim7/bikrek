@@ -21,7 +21,7 @@ _BURASI = os.path.dirname(os.path.abspath(__file__))
 # --- Model ---
 # Ağırlık dosyası bu dosyayla aynı klasörde. Mutlak yol yazmıyoruz ki proje
 # başka bir makineye taşındığında bozulmasın.
-YOLO_MODEL_PATH = os.path.join(_BURASI, "v25m1056.engine")
+YOLO_MODEL_PATH = os.path.join(_BURASI, "v25L1056.engine")
 
 # Üç aşamanın ÜÇÜ de bu tek modeli kullanır; aşamalar arasında fark yalnızca
 # görev mantığındadır. (Eskiden Aşama 3 ayrı bir model yüklüyordu.)
@@ -117,10 +117,36 @@ ENCODER_CONTROL = True
 # seri + Pi dongusu. 29.3'te hareket halinde ~80 ms olculdu ama bunun bir
 # kismi gercek mekanik gecikme (motor/esneme) ve o telafi EDILMEMELI (kamera
 # da fiziksel aciyi goruyor). Kilitte taret hizi <3 derece/sn oldugundan
-# 0.05 sn'lik yanilma 0.15 derece = 10 px'in altinda kalir. Taret enkoder
-# kontrolunde hedefi ASIYORSA bu deger artirilir, yavas salinim varsa azaltilir.
-ENCODER_LAG_SEC = 0.05
+# 0.05 sn'lik yanilma 0.15 derece = 10 px'in altinda kalir.
+# 0.05 -> 0.02 (2026-09-17, 29.11 B32). HedefKilit.mp4'te 40 derece/sn'de
+# adim kaybi disindaki sayac-enkoder farki ~0.8 derece = ~20 ms. YON:
+# gecikme FAZLA yazilirsa ornekler zamanda geriye kayar, kare anindaki aci
+# hareket yonunde ILERIDE okunur ve taret ASAR. Asiyorsa AZALT, eksik
+# kaliyorsa artir (onceki "asiyorsa artir" notu tersti).
+ENCODER_LAG_SEC = 0.02
+# `current_yaw_angle` = son enkoder + isaretli hiz x ENCODER_LAG_SEC. Ham
+# deger 20 ms bayat; 40 derece/sn'de 0.8 derece. Gecmis kaydi ham kalir.
+ENCODER_RATE_EXTRAPOLATE = True
 ENCODER_LOG_DIR = os.path.join(_BURASI, "enkoder_kayit")
+
+# --- KAPALI DONGU YONELME (2026-09-17, 29.11 B30) ---
+# Gozcu devir tesliminde Pi sayacini hedefe goturuyor ama motor adim
+# kaciriyor: fiziksel taret 1.3-3 derece EKSIK iniyor (Asama2Deneme 1.28,
+# HedefKilit 2.96 derece). Taret durdugunda enkoder hedeften uzaksa mutlak
+# komut (sayac cercevesine cevrilerek) yeniden gonderilir.
+YONELME_TEKRAR_MIN_DEG = 0.5      # bundan yakinsa tekrar yok
+YONELME_TEKRAR_MAX = 3            # aday basina en fazla tekrar
+YONELME_TEKRAR_ARALIK_SEC = 0.3   # iki tekrar arasi en az sure
+YONELME_DURUS_HIZI_DEG_S = 1.5    # bu hizin altinda "durdu" sayilir
+
+# --- BOSLUK ENJEKSIYONU (2026-09-17, 29.11 B33) ---
+# Yon degisiminde motor bosluk boyunca doner, kafa kimildamaz; PC bu
+# surede komut yigar, bosluk bitince kafa birikmis komut kadar gider
+# (Asama2: +-0.3-0.4 derece, 1.5 sn periyot). Komut isareti degisince o
+# yonde BIR KEZ bosluk kadar ek delta gonderilir; fazlasini enkoder
+# duzeltir. 0 = kapali. Olculen: 0.45 (2026-09-17), 1.49 (2026-09-08).
+YAW_BACKLASH_DEG = 0.4
+PITCH_BACKLASH_DEG = 0.0
 
 RPI_IP = '192.168.137.229'
 RPI_PORT = 12345

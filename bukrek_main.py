@@ -246,6 +246,13 @@ class HavaSavunmaArayuz(QWidget):
         # mutlak komutlar (`send_angle_command`) sayac cercevesine cevrilir,
         # FAZ 4 kaydi ve paneldeki delta gercek sayaci gosterir (29.10).
         self._sayac_yaw_son = None
+        # 29.11 (Paket 4): isaretli enkoder hizi (ileri alma icin), kapali
+        # dongu yonelme sayaclari, bosluk enjeksiyonu icin son komut yonu.
+        self._enk_yaw_hizi_isaretli = None
+        self._yonelme_tekrar = 0
+        self._yonelme_son_gonderim = 0.0
+        self._son_yaw_yon = 0
+        self._son_pitch_yon = 0
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
@@ -822,6 +829,35 @@ class HavaSavunmaArayuz(QWidget):
             return config.VELOCITY_FAST_SMOOTHING
         return config.VELOCITY_SMOOTHING
 
+    def _taret_pitch_hizi(self):
+        """Pitch hizi (derece/sn, mutlak) sayac gecmisinden, ~100 ms pencere.
+        Pitch'te enkoder yok; sayac hareket halinde yeterince dogru."""
+        if len(self._angle_history) < 2:
+            return None
+        son = self._angle_history[-1]
+        ilk = None
+        for kayit in reversed(self._angle_history):
+            if son[0] - kayit[0] >= 0.08:
+                ilk = kayit
+                break
+        if ilk is None:
+            return None
+        dt = son[0] - ilk[0]
+        if dt <= 0.02:
+            return None
+        return abs((son[2] - ilk[2]) / dt)
+
+    def _taret_hizi(self):
+        """
+        Ates kapisi icin taret hizi: yaw (enkoder) ve pitch (sayac)
+        hizlarinin BUYUGU. 29.11 B34: kapi yalniz yaw'a bakiyordu; Drone'a
+        ilk atis pitch 3.5'ten 1.1'e inerken, ham pitch hatasi 21 px iken
+        acildi. None: iki olcum de yok.
+        """
+        hizlar = [h for h in (self.taret_yaw_hizi, self._taret_pitch_hizi())
+                  if h is not None]
+        return max(hizlar) if hizlar else None
+
     def _hedef_hizi(self):
         """Hedefin dunya acisal hizi (derece/sn), ates kapisi 2 icin.
         Olcum yoksa None (kapi uygulanmaz)."""
@@ -1138,19 +1174,43 @@ class HavaSavunmaArayuz(QWidget):
             yaw, pitch = secim
             self.send_angle_command(yaw, pitch + config.BALLISTIC_PITCH_OFFSET,
                                     force=True)
+            self._yonelme_tekrar = 0
+            self._yonelme_son_gonderim = time.time()
             self._update_status_label(
                 f"Durum: Aday seçildi, yöneliniyor: {yaw:+.1f}°, {pitch:+.1f}°")
             return None
 
         if m.durum == YONELME:
             if not m.yonelme_adimi(self.current_yaw_angle, self.current_pitch_angle):
-                # Taret henüz oturmadı; hedefi yeniden komut etmeye gerek yok
-                # (pozisyon servosu son hedefi zaten tutuyor).
+                # KAPALI DONGU YONELME (29.11 B30): Pi sayacini hedefe
+                # goturuyor ama motor adim kaciriyor, fiziksel taret 1.3-3
+                # derece eksik iniyor. Taret DURDUYSA ve enkoder hedeften
+                # hala uzaksa mutlak komut yeniden gonderilir; cerceve
+                # donusumu (`send_angle_command`) o anki sayac-enkoder
+                # farkini ekledigi icin ikinci komut dogru yere iner.
+                # Hareket halinde GONDERILMEZ (fark gecici olarak buyuk).
                 if m.durum == YONELME and m.hedef_yaw is not None:
+                    _simdi = time.time()
+                    _duruyor = (self.taret_yaw_hizi is not None
+                                and self.taret_yaw_hizi < config.YONELME_DURUS_HIZI_DEG_S)
+                    _uzak = abs((self.current_yaw_angle - m.hedef_yaw + 180) % 360 - 180)
+                    if (_duruyor and _uzak > config.YONELME_TEKRAR_MIN_DEG
+                            and self._yonelme_tekrar < config.YONELME_TEKRAR_MAX
+                            and _simdi - self._yonelme_son_gonderim
+                                >= config.YONELME_TEKRAR_ARALIK_SEC):
+                        self._yonelme_tekrar += 1
+                        self._yonelme_son_gonderim = _simdi
+                        self.send_angle_command(
+                            m.hedef_yaw, m.hedef_pitch + config.BALLISTIC_PITCH_OFFSET,
+                            force=True)
+                        print(f"YONELME tekrar {self._yonelme_tekrar}: enkoder "
+                              f"{self.current_yaw_angle:+.2f}°, hedef {m.hedef_yaw:+.2f}° "
+                              f"(fark {_uzak:.2f}°)")
                     self._update_status_label(
                         f"Durum: YÖNELME — {m.hedef_yaw:+.1f}°, {m.hedef_pitch:+.1f}° "
                         f"(şu an {self.current_yaw_angle:+.1f}°, "
-                        f"{self.current_pitch_angle:+.1f}°)")
+                        f"{self.current_pitch_angle:+.1f}°"
+                        f"{', tekrar ' + str(self._yonelme_tekrar) if self._yonelme_tekrar else ''})")
                 return None
             self._update_status_label("Durum: Taret yerleşti, doğrulanıyor...")
             return None
@@ -1329,7 +1389,7 @@ class HavaSavunmaArayuz(QWidget):
             self.aktif_cift, self.angajman, self.balon_gercek_goruldu,
             self.is_aimed_at_target, self.current_yaw_angle,
             self.no_fire_yaw_start, self.no_fire_yaw_end,
-            taret_hizi=self.taret_yaw_hizi,
+            taret_hizi=self._taret_hizi(),
             hedef_hizi=self._hedef_hizi())
         if not izin:
             if self.angajman.ates_sayisi > 0:
@@ -1406,17 +1466,23 @@ class HavaSavunmaArayuz(QWidget):
             self._enk_gecmis.append((_simdi, float(_y)))
             while len(self._enk_gecmis) > 1 and _simdi - self._enk_gecmis[0][0] > 0.12:
                 self._enk_gecmis.pop(0)
-            if len(self._enk_gecmis) >= 2:
-                _dt = self._enk_gecmis[-1][0] - self._enk_gecmis[0][0]
-                if _dt > 0.02:
-                    self.taret_yaw_hizi = abs(
-                        (self._enk_gecmis[-1][1] - self._enk_gecmis[0][1]) / _dt)
+            _hiz = encoder_module.hiz_isaretli(self._enk_gecmis)
+            if _hiz is not None:
+                self._enk_yaw_hizi_isaretli = _hiz
+                self.taret_yaw_hizi = abs(_hiz)
             # FAZ 6: kontrol acisi. Rapor gecikmesi geri alinarak damgalanir.
             if getattr(config, 'ENCODER_CONTROL', False):
-                self._enk_aci_gecmisi.append(
-                    (_simdi - getattr(config, 'ENCODER_LAG_SEC', 0.0), float(_y)))
+                _lag = getattr(config, 'ENCODER_LAG_SEC', 0.0)
+                self._enk_aci_gecmisi.append((_simdi - _lag, float(_y)))
                 self._enk_son_rapor = _simdi
-                self.current_yaw_angle = float(_y)
+                # 29.11 B32b: ham deger ~20 ms bayat (40 derece/sn'de 0.8
+                # derece). "Simdiki aci" hiz x gecikme kadar ileri alinir;
+                # gecmis kaydi ham kalir (zaman damgasi zaten duzeltildi).
+                if (getattr(config, 'ENCODER_RATE_EXTRAPOLATE', False)
+                        and _hiz is not None):
+                    self.current_yaw_angle = float(_y) + _hiz * _lag
+                else:
+                    self.current_yaw_angle = float(_y)
         else:
             self._enk_gecmis.clear()
             self.taret_yaw_hizi = None
@@ -2022,6 +2088,15 @@ class HavaSavunmaArayuz(QWidget):
                 print(f"FAZ 6: mutlak yaw {yaw_enk:.2f}° (enkoder) -> "
                       f"{yaw:.2f}° (sayac); sayac {self._sayac_yaw_son:.2f}° "
                       f"enkoder {self.current_yaw_angle:.2f}°")
+
+        # Bosluk enjeksiyonu icin son hareket yonu: mutlak komut da motoru
+        # bir yone surer, sonraki delta ters yondeyse bosluk gecilecek.
+        _fark_yaw = (yaw - self.current_yaw_angle + 180) % 360 - 180
+        if abs(_fark_yaw) > 0.05:
+            self._son_yaw_yon = 1 if _fark_yaw > 0 else -1
+        _fark_pitch = pitch - self.current_pitch_angle
+        if abs(_fark_pitch) > 0.05:
+            self._son_pitch_yon = 1 if _fark_pitch > 0 else -1
 
         command = {"action": "set_angles", "yaw": yaw, "pitch": pitch}
         self.last_angle_command_send_time = current_time
@@ -3302,6 +3377,16 @@ class HavaSavunmaArayuz(QWidget):
             if self.is_in_movement_restricted_zone(predicted_yaw_after_move):
                 output_yaw = 0.0
                 print("Uyarı: Hedef Yaw açısı kısıtlı hareket bölgesinde! Yaw hareketi engellendi.")
+
+        # BOSLUK ENJEKSIYONU (29.11 B33): komut isareti bir onceki sifir-disi
+        # komuta gore degistiyse o yonde bir kez bosluk kadar ek delta.
+        # Motor boslugu aninda gecer, kafa ilk kareden tepki verir; PC'nin
+        # bosluk boyunca komut yigip sonra asmasi (+-0.3-0.4 derece, 1.5 sn)
+        # kesilir. MAX sinirindan SONRA uygulanir (bosluk gercek yol degil).
+        output_yaw, self._son_yaw_yon = encoder_module.bosluk_enjeksiyonu(
+            output_yaw, self._son_yaw_yon, config.YAW_BACKLASH_DEG)
+        output_pitch, self._son_pitch_yon = encoder_module.bosluk_enjeksiyonu(
+            output_pitch, self._son_pitch_yon, config.PITCH_BACKLASH_DEG)
 
         if output_yaw != 0.0 or output_pitch != 0.0:
             self.send_proportional_move_command(output_yaw, output_pitch)

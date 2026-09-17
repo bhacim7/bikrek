@@ -183,7 +183,13 @@ ENCODER_SNAP_MIN_DEG = 0.05    # bundan küçük fark görmezden gelinir (~4.5 s
 # taret turunun yarisi (oran 2) oldugu icin +-90 derece icinde belirsizlik
 # yok; 45 derece guvenli sinir.
 ENCODER_SNAP_MAX_DEG = 45.0    # bundan büyük fark şüpheli (sarma/açılış hatası): uygulanmaz, uyarılır
-ENCODER_REENGAGE = True        # hizalama sonrası hedef uzaksa servoyu tekrar aç
+# True -> False (2026-09-17, PROJE_DURUMU 29.11 B31). FAZ 6 ile dis dongu
+# PC'de (enkoder). Hizalama sonrasi BAYAT hedefe yeniden yaklasmak PID ile
+# kavgaya donustu: HedefKilit.mp4'te taret durunca sayac 4.54 -> 7.05
+# hizalandi, ardindan eski hedef 4.54'e servo acildi ve taret fiziksel
+# olarak 7.24 -> 4.26 gitti (3 derece sapma), PID geri getirdi. Delta
+# komutlari da hedefi "gecerli" isaretledigi icin her durusta tekrarlaniyordu.
+ENCODER_REENGAGE = False       # hizalama sonrası hedef uzaksa servoyu tekrar aç
 ENCODER_REENGAGE_TOL_DEG = 0.10  # bu kadar yakınsa yeniden yaklaşma yok (~9 sayım)
 ENCODER_REENGAGE_MAX = 3       # hedef başına en fazla bu kadar düzeltme hareketi
 
@@ -316,7 +322,12 @@ _servo_bres_pitch = 0.0
 # oldu, yani marj var. 70'e çıkarıldı: kör ilerleme yaw 7.5°, pitch 11.2°
 # (dikey görüşün %20'si) — hâlâ hedefi kareden çıkarmayacak seviyede.
 # Yavaş gelirse artır, aşma/kayıp başlarsa düşür: ayarlanacak ilk yer burası.
-SERVO_MAX_DEG_PER_SEC = 50.0
+# 50 -> 30 (2026-09-17, PROJE_DURUMU 29.11 B36): 40-50 derece/sn'de yaw
+# motoru adim kaciriyor — 10 derecelik harekette 3 derece (HedefKilit.mp4,
+# duruşta kalici sayac-enkoder farki 2.96). Olcum: kosum_olc.py
+# "|sayac - enkoder| en buyuk" 1 derecenin altina inene kadar dusur;
+# hedefler 0.6-2.1 derece/sn geldigi icin 30 takip icin fazlasiyla yeterli.
+SERVO_MAX_DEG_PER_SEC = 30.0
 
 # Sabit bir alt gecikme YETERSİZ kalıyordu. İki eksen ortak darbe saatini
 # paylaşıyor; gecikmeyi adım/derece oranı küçük olan eksenden (pitch)

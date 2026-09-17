@@ -1146,9 +1146,12 @@ kontrol("enkoder None ise hizalama yok", mfm.enkoder_hizala(None, simdi=1.0) is 
 # yeniden yaklasma: hedef 20, servo 'vardi' (sayac 20), enkoder 18.5 diyor
 mfm.set_target_angles(20.0, 0.0)
 kontrol("set_target_angles: hedef gecerli, servo aktif", mfm._servo_hedef_gecerli and mfm._servo_active)
+# Yeniden yaklasma 29.11'de KAPATILDI (PID ile kavga); mekanizma duruyor,
+# asagidaki davranis testleri bayragi gecici olarak acarak calisir.
+mfm.ENCODER_REENGAGE = True
 mfm._servo_active = False; mfm._simulated_yaw = 20.0; mfm._son_adim_zamani = 0.0
 _f = mfm.enkoder_hizala(18.5, simdi=5.0)
-kontrol("varista 1.5 eksik: sayac 18.5, servo TEKRAR ACILDI", abs(_f + 1.5) < 1e-9 and mfm._servo_active and mfm._yeniden_yaklasma == 1, f"{_f} {mfm._servo_active}")
+kontrol("varista 1.5 eksik: sayac 18.5, servo TEKRAR ACILDI (bayrak acikken)", abs(_f + 1.5) < 1e-9 and mfm._servo_active and mfm._yeniden_yaklasma == 1, f"{_f} {mfm._servo_active}")
 mfm._servo_active = False; mfm._simulated_yaw = 19.95; mfm._son_adim_zamani = 0.0
 _f = mfm.enkoder_hizala(19.96, simdi=6.0)
 kontrol("kalan 0.04 < tolerans: yeniden yaklasma YOK", not mfm._servo_active and mfm._yeniden_yaklasma == 1)
@@ -1159,6 +1162,7 @@ for _k in range(3):
 kontrol("hedef basina en fazla 3 duzeltme; 4.'de servo acilmiyor", not mfm._servo_active and mfm._yeniden_yaklasma == 3, f"{mfm._yeniden_yaklasma}")
 mfm.set_target_angles(20.0, 0.0)
 kontrol("yeni hedef sayaci sifirlar", mfm._yeniden_yaklasma == 0)
+mfm.ENCODER_REENGAGE = False
 mfm.set_manual_move_direction(1, 0, 0.5); mfm.set_manual_move_direction(0, 0, 0.5)
 mfm._servo_active = False; mfm._simulated_yaw = 20.0; mfm._son_adim_zamani = 0.0
 _f = mfm.enkoder_hizala(18.5, simdi=20.0)
@@ -1388,7 +1392,7 @@ kontrol("FAZ 6: _angle_at enkoder kontrolde iken enkoder gecmisini kullaniyor",
 kontrol("FAZ 6: enkoder kontrolde iken sayacin yaw'i current_yaw_angle'a yazilmiyor",
         "if self._enkoder_kontrolde():\n            # FAZ 6: yaw ENKODERDEN gelir" in _k27)
 kontrol("FAZ 6: enkoder gecikmesi geri alinarak damgalaniyor",
-        "_simdi - getattr(config, 'ENCODER_LAG_SEC', 0.0)" in _k27)
+        "self._enk_aci_gecmisi.append((_simdi - _lag, float(_y)))" in _k27)
 kontrol("FAZ 6 config: ENCODER_CONTROL acik, gecikme 0-0.15 sn arasinda",
         config.ENCODER_CONTROL and 0.0 <= config.ENCODER_LAG_SEC <= 0.15)
 _m27 = engagement.AngajmanMakinesi(); _m27.basla('task3')
@@ -1429,6 +1433,62 @@ kontrol("FAZ 4 kaydi sayac sutununa gercek sayaci yaziyor",
 _k28m = io.open('motor_fire_module.py', encoding='utf-8').read()
 kontrol("Pi: hizalama siniri 10 dereceden buyuk (sahada 10-22 derece fark olustu)",
         "ENCODER_SNAP_MAX_DEG = 45.0" in _k28m)
+
+# --- 29. PAKET 4 (29.11): ileri alma, kapali dongu yonelme, pitch hizi, bosluk ---
+print()
+print("29. Paket 4 — enkoder ileri alma, yonelme tekrari, pitch hiz kapisi, bosluk enjeksiyonu")
+# isaretli hiz
+kontrol("hiz_isaretli: 0.1 sn'de +2 derece -> +20 derece/sn",
+        abs(_em.hiz_isaretli([(10.0, 5.0), (10.05, 6.0), (10.1, 7.0)]) - 20.0) < 1e-9)
+kontrol("hiz_isaretli: geri giderken negatif", _em.hiz_isaretli([(0.0, 1.0), (0.1, 0.0)]) < 0)
+kontrol("hiz_isaretli: tek ornek -> None", _em.hiz_isaretli([(0.0, 1.0)]) is None)
+kontrol("hiz_isaretli: pencere cok dar -> None", _em.hiz_isaretli([(0.0, 1.0), (0.01, 1.5)]) is None)
+# bosluk enjeksiyonu
+_be = _em.bosluk_enjeksiyonu
+kontrol("bosluk: ilk komutta eklenmez (yon 0)", _be(0.3, 0, 0.4) == (0.3, 1))
+kontrol("bosluk: ayni yonde eklenmez", _be(0.3, 1, 0.4) == (0.3, 1))
+kontrol("bosluk: yon degisince ters yonde bosluk eklenir (-0.2 -> -0.6)",
+        abs(_be(-0.2, 1, 0.4)[0] + 0.6) < 1e-9 and _be(-0.2, 1, 0.4)[1] == -1)
+kontrol("bosluk: sifir komut yonu degistirmez", _be(0.0, -1, 0.4) == (0.0, -1))
+kontrol("bosluk: kapaliyken (0) eklenmez", _be(-0.2, 1, 0.0) == (-0.2, -1))
+_c, _y = 0, 0
+_dizi = []
+for _k in (0.5, 0.3, 0.0, -0.2, -0.1, 0.0, 0.0, 0.15):
+    _c, _y = _be(_k, _y, 0.4); _dizi.append(round(_c, 3))
+kontrol("bosluk: dizi 0.5,0.3,0,-0.2,-0.1,0,0,0.15 -> yalniz iki yon degisiminde ekleme",
+        _dizi == [0.5, 0.3, 0.0, -0.6, -0.1, 0.0, 0.0, 0.55], str(_dizi))
+# config
+kontrol("ENCODER_LAG_SEC 0.02 (olculen ~20 ms)", abs(config.ENCODER_LAG_SEC - 0.02) < 1e-9)
+kontrol("ileri alma acik", config.ENCODER_RATE_EXTRAPOLATE is True)
+kontrol("yonelme tekrari: 0.5 derece / 3 kez / 0.3 sn / durus 1.5 derece/sn",
+        config.YONELME_TEKRAR_MIN_DEG == 0.5 and config.YONELME_TEKRAR_MAX == 3
+        and config.YONELME_TEKRAR_ARALIK_SEC == 0.3 and config.YONELME_DURUS_HIZI_DEG_S == 1.5)
+kontrol("yaw boslugu 0.4, pitch 0", config.YAW_BACKLASH_DEG == 0.4 and config.PITCH_BACKLASH_DEG == 0.0)
+# kaynak kontrolleri
+_k29 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("current_yaw_angle hiz x gecikme ile ileri aliniyor",
+        "self.current_yaw_angle = float(_y) + _hiz * _lag" in _k29)
+kontrol("YONELME'de durunca ve uzaksa mutlak komut tekrar gonderiliyor",
+        "self._yonelme_tekrar += 1" in _k29
+        and _k29.index("self._yonelme_tekrar += 1") < _k29.index("self._yonelme_son_gonderim = _simdi"))
+kontrol("yonelme tekrari hareket halinde yapilmiyor (durus hizi sarti)",
+        "self.taret_yaw_hizi < config.YONELME_DURUS_HIZI_DEG_S" in _k29)
+kontrol("ates kapisi yaw ve pitch hizinin buyugunu aliyor",
+        "taret_hizi=self._taret_hizi()" in _k29 and "def _taret_pitch_hizi" in _k29)
+kontrol("bosluk enjeksiyonu MAX sinirindan sonra, gonderimden once",
+        _k29.index("encoder_module.bosluk_enjeksiyonu(\n            output_yaw")
+        > _k29.index("output_yaw = max(min(output_yaw, self.MAX_OUTPUT_DEGREE)")
+        and _k29.index("encoder_module.bosluk_enjeksiyonu(\n            output_yaw")
+        < _k29.index("self.send_proportional_move_command(output_yaw, output_pitch)"))
+_k29m = io.open('motor_fire_module.py', encoding='utf-8').read()
+kontrol("Pi: yeniden yaklasma KAPALI (PID ile kavga)", "ENCODER_REENGAGE = False" in _k29m)
+kontrol("Pi: tepe hiz 30 derece/sn (adim kaybi)", "SERVO_MAX_DEG_PER_SEC = 30.0" in _k29m)
+# Pi davranisi: REENGAGE kapaliyken hizalama sonrasi servo acilmamali
+mfm._simulated_yaw = 10.0; mfm._servo_active = False; mfm._son_adim_zamani = 0.0
+mfm._servo_hedef_gecerli = True; mfm._target_yaw = 8.0; mfm._yeniden_yaklasma = 0
+mfm.enkoder_hizala(11.0, simdi=1.0)
+kontrol("Pi: hizalama sonrasi bayat hedefe servo ACILMIYOR",
+        mfm._servo_active is False and abs(mfm._simulated_yaw - 11.0) < 1e-9)
 
 print()
 print("=" * 70)
