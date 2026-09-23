@@ -4052,3 +4052,121 @@ Daha buyuk yapilmamali: 14 px + 2 cm balonun kenarina dayaniyor.
 (o zaman `TARGET_LEAD_TIME_SEC` 0.05, sonra `KP_YAW` 0.55). Ates yine
 acilmiyorsa durum cubugundaki gerekce hangi kapinin kestigini soyluyor:
 "nisan tolerans disinda" / "nisan kayiyor" / "balon" / "taret hareketli".
+
+### 29.15 `aşama2son3.mp4` — "her ateşlemede silah takibi bırakıyor" (2026-09-23 gece)
+
+39.8 saniye, Asama 2, 3 hedefe toplam ~9 atis, **0 imha**. Kayit
+`enkoder_20260923_204012.csv`; video t=0 = 20:52:08 (ortalama fark
+**0.044 derece**, eslesme kesin).
+
+Kullanicinin teshisi: "her ateslemede silah takibi birakiyor, duruyor,
+sikiyor ama o sirada hedef gitmeye devam ediyor; o yuzden balona denk
+gelmiyor, sonra da balonun arkasinda kaliyor."
+
+**Teshis birebir dogru cikti ve enkoder kaydinda olculdu.**
+
+#### 29.15.1 B49 — Tetik dizisi komut dongusunu 0.6 saniye blokluyordu
+
+`rpi_motor_server` gelen komutlari TEK bir is parcacinda (`conn.recv` ->
+`process_command`) isliyor. `fire` komutu `motor_fire_module.fire_weapon()`
+cagiriyordu ve servo modunda tetik dizisi:
+
+| adim | sure |
+|---|---|
+| tetigi cek (`FIRE_SERVO_LEG_SEC`) | 0.20 sn |
+| cekili tut (`FIRE_SERVO_HOLD_SEC`) | 0.10 sn |
+| birak (`FIRE_SERVO_LEG_SEC`) | 0.20 sn |
+| darbeyi kes | 0.10 sn |
+| **toplam** | **0.60 sn** |
+
+Bu 0.60 saniye boyunca `process_command` donmuyor, yani PC'den saniyede
+15 kez gelen `set_proportional_angles_delta` komutlari soket tamponunda
+BEKLIYOR. Hareket dongusu (`motion_loop`) ayri is parcacinda oldugu icin
+taret son hedefine varip **duruyor** ve yeni hedef gelmedigi icin orada
+kaliyor. Aci raporu da ayri is parcacinda oldugu icin kayitta bu sure
+boyunca tamamen sabit bir aci goruluyor.
+
+Dahasi, bekleyen deltalar **kayip**: her delta Pi'de `mevcut aci + delta`
+olarak yorumlandigi icin blok bitince yalnizca SONUNCUSU etkili oluyor,
+arada yapilmasi gereken hareket tamamen dusuyor. Yani taret o 0.6 saniyeyi
+sonradan telafi de etmiyor.
+
+**Olcum.** Enkoder acisinin hic degismedigi araliklar gruplandiginda:
+
+| | |
+|---|---|
+| 0.22 sn+ duraklama grubu | **15** |
+| grup basina ortalama toplam durus | **0.56 sn** |
+| video boyunca atis sayisi | ~9-10 |
+
+Ilk hedefteki (F16) eslesme tam:
+
+| atis | durum cubugundan atis ani | hemen sonraki durus |
+|---|---|---|
+| 1. atis | t = 3.4 sn | 3.48 - 4.07 (**0.57 sn**) |
+| 2. atis | t = 4.9 sn | 4.41 - 5.43 (**0.95 sn**, iki atis ust uste) |
+| 3. atis | t = 6.25 sn | 6.35 - 6.93 (**0.54 sn**) |
+
+Ayni araliklarda durum cubugundaki nisan hatasi: 1. atistan sonra
+14 -> 41 px, 3. atistan sonra -30 -> -49 -> **-75 px**. Yani taret dururken
+hedef ~0.75 derece = 53 piksel ilerliyor; balon 15 metrede ~30 piksel.
+Merminin bir balon capi geride kalmasi tam olarak bu.
+
+**Duzeltme:** `fire_weapon()` artik tetik dizisini KENDI is parcacinda
+calistiriyor (`_ates_dizisi`), komut dongusu hic durmuyor. Ust uste ates
+kilidi var (`ates_suruyor_mu`), elle test yolu icin `bloklayarak=True`
+parametresi korundu. Kodun kendi yorumunda da bu uyari duruyordu:
+"Bu cagri Pi komut dongusunde BLOKLAR — CYCLES buyutulurse ayri is
+parcacigina alinmali." Tek atista da bloklamamasi gerekiyormus.
+
+#### 29.15.2 Ates ondelemesi (FIRE_LEAD_TIME_SEC) hazir ama KAPALI
+
+Taret artik ateslerken de takip ettigi icin tetik cekilene kadar nisan
+hedefin uzerinde kaliyor. Geriye yalnizca **merminin ucus suresi** boyunca
+hedefin alacagi yol kaliyor; bunu taretle kapatmak mumkun degil, ates
+anindan once nisani one almak gerekir.
+
+`FIRE_LEAD_TIME_SEC` eklendi ve **0.0** (kapali) birakildi: merminin ucus
+suresi henuz OLCULMEDI, olcmeden deger uydurmak yanlis olur. Sabit
+YALNIZCA ates kararini kaydirir, PID'e hic karismaz (ayri bayrak:
+`ates_nisan_tamam`).
+
+**Nasil olculur:** taret duzgun takip ederken atislar hep hedefin GERIDE
+kaldigi tarafa dusuyorsa (hedef soldan saga geliyorsa mermi solunda
+kaliyorsa) 0.05'er artirin; isabetler hedefin onune gecmeye baslarsa
+geri alin.
+
+#### 29.15.3 Videodaki diger gozlemler
+
+- **Kayma gostergesi calisiyor ve dogru okuyor.** Durum cubugunda
+  "kayma 14/14", "17/14", "22/14", "35/14", "92/14", "160/14" px
+  goruluyor. Yuksek degerler kilidin hemen basinda (taret 128-169
+  piksellik hatadan yakinsarken) — orada ates kesilmesi DOGRU. Kilit
+  oturduktan sonra 14-22'ye iniyor.
+- **Balon grace calisiyor**: "balon 1 kare once", "balon 2 kare once",
+  "balon 3 kare once" yazilari goruluyor, yani balon titremesi artik
+  atesi tek basina kesmiyor.
+- **Devir teslim hala uzak biniyor**: DOGRULAMA aninda nisan hatalari
+  128, 160, 125, 67 piksel. Bir devir teslimde "DOGRULAMA — 0 cift
+  goruluyor" cikti (avci hicbir sey gormedi).
+- **Atis butcesi**: Fuze'de "Balon duruyor ama atis butcesi doldu (3) —
+  siradaki hedefe" goruldu. Butce dolmadan once atislarin hepsi donma
+  penceresine denk geldigi icin bosa gitti.
+
+#### 29.15.4 Degisiklikler
+
+| dosya / yer | ne | onceki -> simdi | neden |
+|---|---|---|---|
+| `motor_fire_module.py` `fire_weapon()` | tetik dizisi ayri is parcacigina alindi; ust uste ates kilidi; `bloklayarak` parametresi | blokluyordu -> bloklamiyor | komut dongusu 0.6 sn duruyordu (B49) |
+| `motor_fire_module.py` `_ates_dizisi()`, `ates_suruyor_mu()` | yeni | | ayni |
+| `motor_fire_module.py` menu testi | `fire_weapon(bloklayarak=True)` | | elle testte "tamamlandi" mesaji gercegi gostersin |
+| `config.py` `FIRE_LEAD_TIME_SEC` | yeni | 0.0 (kapali) | mermi ucus suresi olculunce acilacak |
+| `bukrek_main.py` `ates_nisan_tamam` | yeni bayrak; ates kapisina bu veriliyor | | ates ondelemesi PID'i bozmasin |
+| `tests_yeni_mimari.py` 33 | fire_weapon'in aninda donmesi, arka planda calismasi, ust uste ates kilidi, bloklayarak yolu, ondeleme kaynak kontrolleri | | |
+
+**Beklenti:** atis aninda taret durmayacak, nisan hedefin uzerinde
+kalacak. Enkoder kaydinda 0.5 sn+ duraklama gruplari kaybolmali
+(`kosum_olc.py` ve 29.15.1'deki grup analizi).
+
+**RASPBERRY TARAFINA YUKLENMELI:** `motor_fire_module.py`. Bu paketin ana
+duzeltmesi Pi'de; yuklenmezse hicbir sey degismez.

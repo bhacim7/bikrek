@@ -1209,6 +1209,20 @@ FIRE_MAX_ERROR_DRIFT_PIXELS = 14.0
 # ayirt etme yetenegini kaybetmiyor.
 FIRE_DRIFT_WINDOW_SEC = 0.6
 
+# --- ATES ICIN EK ONDELEME (2026-09-23 gece, 29.15) ---
+# Taret artik ateslerken de takibe devam ediyor (B49), yani tetik cekilene
+# kadar nisan hedefin uzerinde kaliyor. Geriye yalnizca MERMININ UCUS
+# SURESI boyunca hedefin alacagi yol kaliyor; bu sure taretle kapatilamaz,
+# ates anindan ONCE nisani one almak gerekir.
+# Bu sabit YALNIZCA ATES KARARINI etkiler, PID'i etkilemez: taret yine
+# hedefin uzerine nisan alir, ates ise nisan "hedefin ONUNDE dogru yerde"
+# iken acilir.
+# 0.0 = kapali (olculene kadar boyle kalsin).
+# NASIL OLCULUR: taret duzgun takip ederken atislar hep hedefin GERIDE
+# kaldigi tarafa dusuyorsa (hedef soldan saga geliyorsa saginda kaliyorsa)
+# 0.05'er artirin. Isabetler hedefin onune gecmeye baslarsa geri alin.
+FIRE_LEAD_TIME_SEC = 0.0
+
 # Balonun tespiti kare kare titriyor (aşama2Son1.mp4 F16 kilidinde karelerin
 # yaklasik yarisinda "BALON YOK"). Balon 0.2 saniyede kacamayacagina gore
 # son N kare icinde GERCEKTEN gorulmus olmasi ateş icin yeterli; nisan

@@ -160,6 +160,7 @@ class HavaSavunmaArayuz(QWidget):
         self.is_ready_to_engage_from_qr = False
 
         self.is_aimed_at_target = False
+        self.ates_nisan_tamam = False
         self.is_target_active = False
 
         self.missing_frames = 0
@@ -264,6 +265,8 @@ class HavaSavunmaArayuz(QWidget):
         self.hata_degisim_hizi = None
         self._hata_gecmisi = deque(maxlen=60)
         self._balon_kayip_kare = 999
+        # Ates karari icin ayri nisan bayragi (29.15, FIRE_LEAD_TIME_SEC).
+        self.ates_nisan_tamam = False
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
@@ -1424,7 +1427,7 @@ class HavaSavunmaArayuz(QWidget):
 
         izin, gerekce = engagement.ates_serbest_mi(
             self.aktif_cift, self.angajman, self.balon_gercek_goruldu,
-            self.is_aimed_at_target, self.current_yaw_angle,
+            self.ates_nisan_tamam, self.current_yaw_angle,
             self.no_fire_yaw_start, self.no_fire_yaw_end,
             taret_hizi=self._taret_hizi(),
             hedef_hizi=self._hedef_hizi(),
@@ -1668,6 +1671,7 @@ class HavaSavunmaArayuz(QWidget):
         self.reset_pid_state()
         self.is_target_active = False
         self.is_aimed_at_target = False
+        self.ates_nisan_tamam = False
         self.target_destroyed = False
         self.waiting_for_new_engagement_command = False
         self.target_lost_time = 0.0
@@ -1710,6 +1714,7 @@ class HavaSavunmaArayuz(QWidget):
         self.direct_manual_control_group_box.setVisible(False)
         self.is_target_active = False
         self.is_aimed_at_target = False
+        self.ates_nisan_tamam = False
         self.reset_pid_state()
 
     def reset_pid_state(self):
@@ -1791,6 +1796,7 @@ class HavaSavunmaArayuz(QWidget):
         # (Tam Manuel Kontrol'de False kalır — orada YOLO hiç kullanılmaz.)
         self.is_target_active = True
         self.is_aimed_at_target = False
+        self.ates_nisan_tamam = False
 
     def task2(self):
         self.cancel_task()
@@ -1817,6 +1823,7 @@ class HavaSavunmaArayuz(QWidget):
         self.direct_manual_control_group_box.setVisible(False)
         self.is_target_active = True
         self.is_aimed_at_target = False
+        self.ates_nisan_tamam = False
 
     def task3(self):
         """Aşama 3'ü doğrudan başlatır (eski QR tabanlı ayar akışı yerine)."""
@@ -1837,6 +1844,7 @@ class HavaSavunmaArayuz(QWidget):
         self.direct_manual_control_group_box.setVisible(False)
         self.is_target_active = True
         self.is_aimed_at_target = False
+        self.ates_nisan_tamam = False
         self._task3_baslat()
 
     def setup_task3(self):
@@ -1922,6 +1930,7 @@ class HavaSavunmaArayuz(QWidget):
         self.direct_manual_control_group_box.setVisible(False)
         self.is_target_active = True
         self.is_aimed_at_target = False
+        self.ates_nisan_tamam = False
 
     def set_full_manual_mode(self):
         self.cancel_task()
@@ -1939,6 +1948,7 @@ class HavaSavunmaArayuz(QWidget):
             self._update_status_label(f"Hata: Manuel mod başlatma hatası: {str(e)[:50]}...")
         self.is_target_active = False
         self.is_aimed_at_target = False
+        self.ates_nisan_tamam = False
 
     # Operatörün ok tuşlarıyla tareti sürebildiği modlar.
     MANUEL_MODLAR = ('full_manual', 'task1')
@@ -2939,6 +2949,7 @@ class HavaSavunmaArayuz(QWidget):
             else:
                 self.reset_pid_state()
                 self.is_aimed_at_target = False
+                self.ates_nisan_tamam = False
                 if self.active_task not in ['full_manual'] and self.active_task not in self.OTONOM_MODLAR:
                     if not self.target_destroyed and not self.waiting_for_new_engagement_command:
                         self.target_info_label.setText("Hedef Bilgisi: Yok.")
@@ -3190,6 +3201,23 @@ class HavaSavunmaArayuz(QWidget):
         _hata_pitch_px = error_pitch_degree / self.DEGREES_PER_PIXEL_PITCH
         self.is_aimed_at_target = (abs(_hata_yaw_px) <= _tolerans and
                                    abs(_hata_pitch_px) <= _tolerans)
+
+        # ATES KARARI ICIN AYRI NISAN BAYRAGI (29.15). Taret artik
+        # ateslerken de takip ettigi icin tetik cekilene kadar nisan hedefin
+        # uzerinde kalir; geriye yalnizca MERMININ UCUS SURESI boyunca
+        # hedefin alacagi yol kalir ve onu taretle kapatmak mumkun degil.
+        # `FIRE_LEAD_TIME_SEC` yalnizca bu bayragi kaydirir, PID'e HIC
+        # karismaz: taret hedefin uzerinde durmaya devam eder, ates ise
+        # nisan hedefin onunde dogru yerdeyken acilir. Varsayilan 0.
+        _ates_ond = getattr(config, 'FIRE_LEAD_TIME_SEC', 0.0) or 0.0
+        if _ates_ond > 0.0:
+            _ay = _hata_yaw_px + (self.target_world_yaw_rate * _ates_ond
+                                  / self.DEGREES_PER_PIXEL_YAW)
+            _ap = _hata_pitch_px + (self.target_world_pitch_rate * _ates_ond
+                                    / self.DEGREES_PER_PIXEL_PITCH)
+            self.ates_nisan_tamam = (abs(_ay) <= _tolerans and abs(_ap) <= _tolerans)
+        else:
+            self.ates_nisan_tamam = self.is_aimed_at_target
 
         # NISAN HATASININ DEGISIM HIZI (px/sn) — asil ates kapisi (29.13 B44).
         # Isabeti belirleyen taretin ya da hedefin MUTLAK hizi degil, mermi

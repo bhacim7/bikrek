@@ -3,6 +3,7 @@
 # control1.py'deki akıcı ve eşzamanlı motor kontrol mantığı ve parametreleri entegre edilmiştir.
 
 import sys
+import threading
 import time  # time.sleep() kullanmak için eklendi
 import traceback
 import math
@@ -1115,17 +1116,64 @@ def _servo_ates():
     sys.stdout.flush()
 
 
-def fire_weapon():
+_ates_ipi = None                 # calisan ates dizisi is parcacigi
+_ates_kilidi = threading.Lock()
+
+
+def ates_suruyor_mu():
+    """Tetik dizisi su anda calisiyor mu?"""
+    return _ates_ipi is not None and _ates_ipi.is_alive()
+
+
+def fire_weapon(bloklayarak=False):
     """
     Ateşleme mekanizmasını tetikler.
+
+    VARSAYILAN ARTIK BLOKLAMIYOR (2026-09-23 gece, PROJE_DURUMU 29.15 B49).
+    Tetik dizisi (servo modunda 0.20 cekme + 0.10 tutma + 0.20 birakma +
+    0.10 = 0.60 sn) EskIDEN sunucunun KOMUT ALMA is parcacinda calisiyordu.
+    `process_command` o sure boyunca donmedigi icin PC'den gelen
+    `set_proportional_angles_delta` komutlari soket tamponunda bekliyordu:
+    taret son hedefine varip DURUYOR, hedef ilerlemeye devam ediyor.
+    Sahada olculdu (aşama2son3.mp4, enkoder kaydi): HER atisin hemen
+    ardindan taret tam 0.58-0.68 saniye HIC kimildamadi ve o sirada nisan
+    hatasi 14 px'den 75 px'e kadar buyudu; videodaki 18 duraklamanin
+    tamami 3 hedefe atilan 9 atisla birebir ortusuyor.
+    Dahasi bekleyen deltalar kayip: her delta `mevcut aci + delta` olarak
+    yorumlandigi icin blok bitince yalnizca SONUNCUSU etkili oluyor, arada
+    yapilmasi gereken hareket tamamen dusuyor.
+    Artik dizi kendi is parcacinda; komut dongusu hic durmuyor, taret
+    ateşlerken de hedefi takip etmeye devam ediyor.
+
+    :param bloklayarak: True ise dizi cagiran is parcacinda calisir (menu
+        testleri ve tek atislik elle denemeler icin).
+    :return: dizi baslatildiysa True.
     """
+    global _ates_ipi
     print("DEBUG (motor_fire_module): fire_weapon() çağrıldı.")
     sys.stdout.flush()
     if not _gpio_initialized or lgh is None or RELAY_ACTIVE is None or RELAY_INACTIVE is None:
         print("Hata (motor_fire_module): GPIO veya FIRE_PIN başlatılmadı, ateşleme mümkün değil (Simülasyon).")
         sys.stdout.flush()
-        return
+        return False
 
+    if bloklayarak:
+        _ates_dizisi()
+        return True
+
+    with _ates_kilidi:
+        if ates_suruyor_mu():
+            print("UYARI (motor_fire_module): önceki ateş dizisi sürüyor, yeni istek yok sayıldı.")
+            sys.stdout.flush()
+            return False
+        _ates_ipi = threading.Thread(target=_ates_dizisi, name="ates_dizisi",
+                                     daemon=True)
+        _ates_ipi.start()
+    return True
+
+
+def _ates_dizisi():
+    """Tetigi fiilen ceken dizi. Ayri is parcacinda calisir (bkz. fire_weapon)."""
     try:
         if FIRE_MODE == 'servo':
             _servo_ates()
@@ -1618,7 +1666,9 @@ if __name__ == '__main__':
             elif choice == '3':
                 print("Ateşleme testi yapılıyor...")
                 sys.stdout.flush()
-                fire_weapon()
+                # Elle test: dizi bitene kadar beklensin ki ekrandaki
+                # "tamamlandi" mesaji gercekten sonu gostersin.
+                fire_weapon(bloklayarak=True)
                 time.sleep(1)
                 print("Ateşleme testi tamamlandı.")
                 sys.stdout.flush()

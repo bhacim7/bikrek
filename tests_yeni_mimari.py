@@ -1816,6 +1816,80 @@ kontrol("duz kaymada egim tam dogru",
 kontrol("nisan toleransi silah hassasiyetiyle tutarli (12 px = 4.4 cm @ 15 m)",
         11.0 <= config.AIM_TOLERANCE_MIN_PIXELS <= 14.0,
         f"{config.AIM_TOLERANCE_MIN_PIXELS} px")
+
+# --- 33. ATESLEME TAKIBI DURDURMAMALI (29.15 B49) ---
+# Sahada olculdu (aşama2son3.mp4 + enkoder kaydi): HER atisin hemen
+# ardindan taret tam 0.58-0.68 saniye hic kimildamadi; videodaki 18
+# duraklamanin tamami 9 atisla birebir ortustu. Sebep: tetik dizisi
+# (0.20+0.10+0.20+0.10 = 0.60 sn) sunucunun KOMUT ALMA is parcacinda
+# calisiyordu ve o sure boyunca hicbir takip komutu islenmiyordu.
+print()
+print("33. Atesleme takibi durdurmamali — tetik dizisi ayri is parcacinda")
+kontrol("fire_weapon ayri is parcacigi baslatan yapiya sahip",
+        hasattr(mfm, '_ates_dizisi') and hasattr(mfm, 'ates_suruyor_mu'))
+kontrol("baslangicta ates dizisi calismiyor", not mfm.ates_suruyor_mu())
+
+# Gercek davranis testi: GPIO'yu taklit edip tetik dizisini yavaslatiyoruz.
+_eski = (mfm._gpio_initialized, mfm.lgh, mfm.RELAY_ACTIVE, mfm.RELAY_INACTIVE,
+         mfm.FIRE_MODE, mfm._servo_ates)
+try:
+    mfm._gpio_initialized = True
+    mfm.lgh = object()
+    mfm.RELAY_ACTIVE, mfm.RELAY_INACTIVE = 1, 0
+    mfm.FIRE_MODE = 'servo'
+    _izler = []
+
+    def _yavas_ates():
+        _izler.append(('basladi', time.time()))
+        time.sleep(0.30)
+        _izler.append(('bitti', time.time()))
+
+    mfm._servo_ates = _yavas_ates
+    _t0 = time.time()
+    _sonuc = mfm.fire_weapon()
+    _donus = time.time() - _t0
+    kontrol("fire_weapon ANINDA donuyor (komut dongusu bloklanmiyor)",
+            _sonuc is True and _donus < 0.05, f"{_donus*1000:.0f} ms")
+    time.sleep(0.05)
+    kontrol("dizi arka planda calisiyor", mfm.ates_suruyor_mu())
+    kontrol("dizi surerken ikinci istek yok sayiliyor (ust uste ates yok)",
+            mfm.fire_weapon() is False)
+    mfm._ates_ipi.join(timeout=2.0)
+    kontrol("dizi tamamlandi ve bayrak temizlendi",
+            not mfm.ates_suruyor_mu() and len(_izler) == 2)
+    kontrol("dizi gercekten 0.3 sn surdu (ama cagiran beklemedi)",
+            _izler[1][1] - _izler[0][1] >= 0.29,
+            f"{(_izler[1][1]-_izler[0][1])*1000:.0f} ms dizi / {_donus*1000:.0f} ms cagiran")
+    _izler.clear()
+    _t0 = time.time()
+    mfm.fire_weapon(bloklayarak=True)
+    kontrol("bloklayarak=True istendiginde cagiran BEKLIYOR (elle test yolu)",
+            time.time() - _t0 >= 0.29)
+finally:
+    (mfm._gpio_initialized, mfm.lgh, mfm.RELAY_ACTIVE, mfm.RELAY_INACTIVE,
+     mfm.FIRE_MODE, mfm._servo_ates) = _eski
+    mfm._ates_ipi = None
+
+_k33 = io.open('motor_fire_module.py', encoding='utf-8').read()
+kontrol("tetik dizisi FIRE_MODE'a gore hem servo hem role yolunu kapsiyor",
+        "def _ates_dizisi():" in _k33 and "_servo_ates()" in _k33
+        and "LGpio.gpio_write(lgh, FIRE_PIN, RELAY_ACTIVE)" in _k33)
+_k33s = io.open('rpi_motor_server.py', encoding='utf-8').read()
+kontrol("sunucu ates komutunu bloklamadan cagiriyor",
+        "motor_fire_module.fire_weapon()" in _k33s)
+
+# Ates ondelemesi: yalnizca ates karrini kaydirmali, PID'i degil
+kontrol("FIRE_LEAD_TIME_SEC tanimli ve makul (0-0.4 sn)",
+        0.0 <= config.FIRE_LEAD_TIME_SEC <= 0.4, str(config.FIRE_LEAD_TIME_SEC))
+_k33b = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("ates karari ayri bayrak kullaniyor (ates_nisan_tamam)",
+        "self.ates_nisan_tamam, self.current_yaw_angle" in _k33b
+        and "_ates_ond = getattr(config, 'FIRE_LEAD_TIME_SEC'" in _k33b)
+kontrol("ates ondelemesi PID hatasina KARISMIYOR",
+        "output_yaw = pid_yaw + feedforward_yaw" in _k33b
+        and "FIRE_LEAD_TIME_SEC" not in _k33b.split("output_yaw = pid_yaw")[1])
+kontrol("ondeleme 0 iken ates bayragi nisan bayragiyla ayni",
+        "self.ates_nisan_tamam = self.is_aimed_at_target" in _k33b)
 kontrol("balon grace sayaci tutuluyor ve kapiya veriliyor",
         "self._balon_kayip_kare += 1" in _k31
         and "balon_yakin=self._balon_yakin_zamanda()" in _k31)
