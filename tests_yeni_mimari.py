@@ -1250,8 +1250,12 @@ _i, _g = engagement.ates_serbest_mi(**_ort, taret_hizi=None)
 kontrol("enkoder yoksa (None) kapi UYGULANMAZ — eski davranis", _i, _g)
 _i, _g = engagement.ates_serbest_mi(_c22, _m22, True, True, 0.0, 0.0, 0.0)
 kontrol("taret_hizi hic verilmezse de calisir (geriye uyum)", _i, _g)
-kontrol("esik makul: 0 < sinir <= 10 derece/sn",
-        0 < config.FIRE_MAX_TURRET_RATE_DEG_S <= 10.0,
+# Sinir 3 -> 12 (29.13 B44): bu kapi artik yalnizca devir teslim slew'ini
+# (30-130 derece/sn) kesen bir emniyet siniri. Hedefle birlikte donen taret
+# 3-8 derece/sn'ye cikabilir ve bu ates sebebi olmamali; isabet kapisi
+# nisan hatasinin degisim hizi.
+kontrol("taret hizi siniri yalnizca slew'i kesecek kadar yuksek (8-30 derece/sn)",
+        8.0 <= config.FIRE_MAX_TURRET_RATE_DEG_S <= 30.0,
         f"{config.FIRE_MAX_TURRET_RATE_DEG_S} derece/sn")
 
 # --- 23. NISAN KARARI BAYAT OLMAMALI (29.7 B16) ---
@@ -1422,7 +1426,9 @@ _i, _g27 = engagement.ates_serbest_mi(_c27, _m27, True, True, 0.0, 0.0, 0.0,
 kontrol("hedef sallaniyor (sinir+3): ates ENGELLI", not _i and 'hedef hareketli' in _g27, _g27)
 _i, _g27 = engagement.ates_serbest_mi(_c27, _m27, True, True, 0.0, 0.0, 0.0, hedef_hizi=None)
 kontrol("hiz olcumu yoksa kapi uygulanmaz", _i, _g27)
-kontrol("hedef hizi siniri makul (1-5 derece/sn)", 1.0 <= config.FIRE_MAX_TARGET_RATE_DEG_S <= 5.0)
+kontrol("hedef hizi siniri yalnizca asiri durumu keser (5-15 derece/sn)",
+        5.0 <= config.FIRE_MAX_TARGET_RATE_DEG_S <= 15.0,
+        f"{config.FIRE_MAX_TARGET_RATE_DEG_S} derece/sn")
 
 # --- 28. MUTLAK KOMUT CERCEVESI (29.10, görüntüTıklama.mp4) ---
 # FAZ 6 ile PC'nin acisi enkoderden; Pi 'set_angles'i sayaca gore yurutur.
@@ -1480,7 +1486,11 @@ kontrol("ileri alma acik", config.ENCODER_RATE_EXTRAPOLATE is True)
 kontrol("yonelme tekrari: 0.5 derece / 3 kez / 0.3 sn / durus 1.5 derece/sn",
         config.YONELME_TEKRAR_MIN_DEG == 0.5 and config.YONELME_TEKRAR_MAX == 3
         and config.YONELME_TEKRAR_ARALIK_SEC == 0.3 and config.YONELME_DURUS_HIZI_DEG_S == 1.5)
-kontrol("yaw boslugu 0.4, pitch 0", config.YAW_BACKLASH_DEG == 0.4 and config.PITCH_BACKLASH_DEG == 0.0)
+# Bosluk enjeksiyonu 29.13 B43'te KAPATILDI: role gibi davranip limit
+# cevrim uretiyordu. Mekanizma kodda duruyor ama sabit 0 olmali.
+kontrol("bosluk enjeksiyonu KAPALI (role gibi davranip salinim uretiyordu)",
+        config.YAW_BACKLASH_DEG == 0.0 and config.PITCH_BACKLASH_DEG == 0.0,
+        f"yaw {config.YAW_BACKLASH_DEG}, pitch {config.PITCH_BACKLASH_DEG}")
 # kaynak kontrolleri
 _k29 = io.open('bukrek_main.py', encoding='utf-8').read()
 kontrol("current_yaw_angle hiz x gecikme ile ileri aliniyor",
@@ -1627,6 +1637,127 @@ kontrol("hedef ondelemesi hataya giriyor ama world_yaw HAM kaliyor",
 _k30c = io.open('camera_module.py', encoding='utf-8').read()
 kontrol("camera_module kare hizini kameraya soruyor",
         "capture.set(cv2.CAP_PROP_FPS, ayar[\"fps\"])" in _k30c)
+
+# --- 31. PAKET 6 (29.13): BOSLUK ROLESI VE ATES KAPILARI ---
+# Sahada olculdu (aşama2Son1.mp4, 19:24:36-19:25:11): kilitte taret
+# +-0.7 derece salindi, 0.72-0.92 Hz, F16 kilidinde 50/271 komut yon
+# degistirdi ve hicbir balon imha edilemedi. Bir onceki kosumda AYNI KOD
+# uc hedefi de vurmustu. Fark: bosluk enjeksiyonu YALNIZCA hata isaret
+# degistirince tetiklenir; 29.12 olcumunde hata 56 karede hic isaret
+# degistirmemisti, bu kosumda surekli degisti.
+print()
+print("31. Paket 6 — bosluk rolesi kapatildi, ates kapilari yeniden tanimlandi")
+import numpy as _np
+
+
+def _role_sim(bosluk, gurultu_px=3.0, hiz=0.44, fps=15.0, T=0.15, sure=12.0, tohum=1):
+    """Olcum gurultulu kapali dongu; `bosluk` = yon degisiminde enjekte
+    edilen derece. Doner: (hata std px, tepeden tepeye px, isaret degisimi)."""
+    rng = _np.random.default_rng(tohum)
+    dpp = abs(config.HUNTER_DPP_YAW)
+    dt = 1.0 / fps
+    a = 1 - (1 - config.PID_OUTPUT_SMOOTHING) ** (dt * config.PID_SMOOTHING_REF_FPS)
+    olu = config.PID_DEADBAND_PIXELS * dpp
+    esik = config.MIN_OUTPUT_PIXELS * dpp
+    taret = hedef = hafiza = kalan = hiz_tah = 0.0
+    ardisik = 0
+    yon = 0
+    onceki = 0.0
+    gec = _coll.deque([0.0] * max(1, int(round((T + dt) / dt))))
+    izi = []
+    for k in range(int(sure * fps)):
+        hedef += hiz * dt
+        gec.append(hedef)
+        olculen = gec.popleft() + rng.normal(0, gurultu_px * dpp)
+        if k:
+            hiz_tah = 0.3 * ((olculen - onceki) / dt) + 0.7 * hiz_tah
+        onceki = olculen
+        hata = (olculen - taret) + hiz_tah * config.TARGET_LEAD_TIME_SEC
+        pid = config.KP_YAW * hata
+        icinde = abs(hata) < olu
+        ardisik = ardisik + 1 if icinde else 0
+        if icinde:
+            pid = 0.0
+            if ardisik >= config.PID_DEADBAND_SETTLE_FRAMES:
+                hafiza = 0.0
+        else:
+            hafiza = a * pid + (1 - a) * hafiza
+            pid = hafiza
+        cikis = max(-2.0, min(2.0, pid + hiz_tah * dt))
+        if cikis != 0.0:
+            y = 1 if cikis > 0 else -1
+            if bosluk > 0 and yon != 0 and y != yon:
+                cikis += y * bosluk
+            yon = y
+        toplam = cikis + kalan
+        if abs(toplam) < esik:
+            cikis, kalan = 0.0, toplam
+        else:
+            cikis, kalan = toplam, 0.0
+        taret += cikis
+        izi.append((hedef - taret) / dpp)
+    son = _np.array(izi[len(izi) // 2:])
+    return son.std(), son.max() - son.min(), int((_np.diff(_np.sign(son)) != 0).sum())
+
+
+_kapali = _role_sim(0.0)
+_acik = _role_sim(0.4)
+kontrol("bosluk enjeksiyonu ACIKken olcum gurultusu salinimi buyutuyor",
+        _acik[0] > 3 * _kapali[0],
+        f"std {_acik[0]:.1f} px (acik) vs {_kapali[0]:.1f} px (kapali)")
+kontrol("enjeksiyon kapaliyken salinim genligi makul (tepe-tepe < 20 px)",
+        _kapali[1] < 20.0, f"{_kapali[1]:.1f} px")
+_tmz = _role_sim(0.4, gurultu_px=0.0)
+kontrol("gurultu yokken enjeksiyon hic tetiklenmiyor (ikili davranisin sebebi)",
+        _tmz[2] == 0 and abs(_tmz[0] - _role_sim(0.0, gurultu_px=0.0)[0]) < 1e-9,
+        f"isaret degisimi {_tmz[2]}")
+
+# Ates kapilari: hedefle birlikte duzgun giden taret ates edebilmeli
+_m31 = engagement.AngajmanMakinesi()
+_m31.basla('task2')
+_m31.dogrulanan_sinif = 'dusman-Fuze'
+_m31._gec(engagement.ATES)
+_c31 = _cift_at('dusman-Fuze')
+_ort31 = dict(cift=_c31, makine=_m31, balon_gorundu=True, nisan_tamam=True,
+              yaw=0.0, no_fire_start=0.0, no_fire_end=0.0)
+_i, _g = engagement.ates_serbest_mi(**_ort31, taret_hizi=5.0, hedef_hizi=5.0, hata_hizi=4.0)
+kontrol("hedefle BIRLIKTE giden taret (5 derece/sn) ates edebiliyor", _i, _g)
+_i, _g = engagement.ates_serbest_mi(**_ort31, taret_hizi=2.0, hedef_hizi=2.0, hata_hizi=200.0)
+kontrol("nisan hizla kayiyorsa (200 px/sn) ates ENGELLI",
+        not _i and 'kayiyor' in _g, _g)
+_i, _g = engagement.ates_serbest_mi(**_ort31, taret_hizi=40.0, hedef_hizi=2.0, hata_hizi=1.0)
+kontrol("devir teslim slew'inde (40 derece/sn) ates ENGELLI",
+        not _i and 'taret hareketli' in _g, _g)
+_i, _g = engagement.ates_serbest_mi(**_ort31, hata_hizi=None)
+kontrol("hata hizi olculemiyorsa kapi uygulanmaz (geriye uyum)", _i, _g)
+_sinir_px = config.FIRE_MAX_ERROR_DRIFT_PIXELS / config.FIRE_SHOT_LATENCY_SEC
+kontrol("kayma siniri tolerans mertebesinde",
+        config.FIRE_MAX_ERROR_DRIFT_PIXELS <= config.AIM_TOLERANCE_MIN_PIXELS * 1.5,
+        f"{config.FIRE_MAX_ERROR_DRIFT_PIXELS} px ({_sinir_px:.0f} px/sn)")
+
+# Balon grace
+_c31b = _cift_at('dusman-Fuze')
+_c31b.balon = None
+_i, _g = engagement.ates_serbest_mi(cift=_c31b, makine=_m31, balon_gorundu=False,
+                                    nisan_tamam=True, yaw=0.0, no_fire_start=0.0,
+                                    no_fire_end=0.0, balon_yakin=False)
+kontrol("balon hic gorulmediyse ates ENGELLI (grace yok)",
+        not _i and 'balon' in _g, _g)
+_i, _g = engagement.ates_serbest_mi(cift=_c31b, makine=_m31, balon_gorundu=False,
+                                    nisan_tamam=True, yaw=0.0, no_fire_start=0.0,
+                                    no_fire_end=0.0, balon_yakin=True)
+kontrol("balon son birkac karede goruldyse ates SERBEST (tespit titremesi)", _i, _g)
+kontrol("grace penceresi kisa (1-6 kare)", 1 <= config.FIRE_BALLOON_GRACE_FRAMES <= 6,
+        str(config.FIRE_BALLOON_GRACE_FRAMES))
+_k31 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("hata degisim hizi olculuyor ve ates kapisina veriliyor",
+        "self.hata_degisim_hizi = (0.4 * _ham" in _k31
+        and "hata_hizi=self.hata_degisim_hizi" in _k31)
+kontrol("balon grace sayaci tutuluyor ve kapiya veriliyor",
+        "self._balon_kayip_kare += 1" in _k31
+        and "balon_yakin=self._balon_yakin_zamanda()" in _k31)
+kontrol("durum cubugu kayma miktarini gosteriyor (operator sebebi gorsun)",
+        "kayma {self.hata_degisim_hizi * config.FIRE_SHOT_LATENCY_SEC:.0f}" in _k31)
 
 print()
 print("=" * 70)

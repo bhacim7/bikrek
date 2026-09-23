@@ -260,6 +260,12 @@ class HavaSavunmaArayuz(QWidget):
         # MIN_OUTPUT esiginin altinda kalan komut artigi (29.12 B41).
         self._min_kalan_yaw = 0.0
         self._min_kalan_pitch = 0.0
+        # Nisan hatasinin degisim hizi (px/sn) ve balon grace sayaci (29.13).
+        self.hata_degisim_hizi = None
+        self._onceki_hata_yaw_px = 0.0
+        self._onceki_hata_pitch_px = 0.0
+        self._hata_hiz_zamani = None
+        self._balon_kayip_kare = 999
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
@@ -836,6 +842,19 @@ class HavaSavunmaArayuz(QWidget):
             return config.VELOCITY_FAST_SMOOTHING
         return config.VELOCITY_SMOOTHING
 
+    def _balon_yakin_zamanda(self):
+        """
+        Balon SON BIRKAC KAREDE gercekten goruldu mu? (29.13 B45)
+
+        Balonun tespiti kare kare titriyor (sahada kilitte karelerin ~yarisi
+        "BALON YOK"), ama balon 0.2 saniyede kacamaz. Grace penceresi
+        icindeyken nisan noktasi `nisan_ofseti` ile balonun en son OLCULEN
+        yerinden turetiliyor, yani hayali bir noktaya degil son gerculen
+        olcume ates ediliyor.
+        """
+        _g = getattr(config, 'FIRE_BALLOON_GRACE_FRAMES', 0) or 0
+        return _g > 0 and self._balon_kayip_kare <= _g
+
     def _taret_pitch_hizi(self):
         """Pitch hizi (derece/sn, mutlak) sayac gecmisinden, ~100 ms pencere.
         Pitch'te enkoder yok; sayac hareket halinde yeterince dogru."""
@@ -1259,11 +1278,24 @@ class HavaSavunmaArayuz(QWidget):
             # Nişan durumu ve balon görünürlüğü de yazılıyor: otonom modda
             # durum çubuğunun tek yazarı burası, operatörün "neden ateş
             # etmiyor" sorusunu ekrandan yanıtlayabilmesi gerekiyor.
-            _bal = "balon VAR" if self.balon_gercek_goruldu else "BALON YOK"
+            if self.balon_gercek_goruldu:
+                _bal = "balon VAR"
+            elif self._balon_yakin_zamanda():
+                _bal = f"balon {self._balon_kayip_kare} kare önce"
+            else:
+                _bal = "BALON YOK"
             _nis = "nişan TAMAM" if self.is_aimed_at_target else "nişan bekliyor"
+            # KAYMA: nisan hatasinin mermi ucusu boyunca kayacagi miktar —
+            # ates kararini belirleyen asil sayi (29.13 B44). Ekranda
+            # gorunmeli, yoksa "neden sikmadi" sorusu ekrandan yanitlanamiyor.
+            if self.hata_degisim_hizi is None:
+                _kay = ""
+            else:
+                _kay = (f" | kayma {self.hata_degisim_hizi * config.FIRE_SHOT_LATENCY_SEC:.0f}"
+                        f"/{config.FIRE_MAX_ERROR_DRIFT_PIXELS:.0f} px")
             self._update_status_label(
                 f"Durum: {m.durum} — {m.dogrulanan_sinif or '?'}"
-                f"{' [çapa]' if kopruden else ''} | {_bal} | {_nis} "
+                f"{' [çapa]' if kopruden else ''} | {_bal} | {_nis}{_kay} "
                 f"({len(ciftler)} kayıt, imha {m.imha_sayisi})")
             self.aktif_cift = secili
             return self._nisan_tespiti(secili)
@@ -1397,7 +1429,9 @@ class HavaSavunmaArayuz(QWidget):
             self.is_aimed_at_target, self.current_yaw_angle,
             self.no_fire_yaw_start, self.no_fire_yaw_end,
             taret_hizi=self._taret_hizi(),
-            hedef_hizi=self._hedef_hizi())
+            hedef_hizi=self._hedef_hizi(),
+            hata_hizi=self.hata_degisim_hizi,
+            balon_yakin=self._balon_yakin_zamanda())
         if not izin:
             if self.angajman.ates_sayisi > 0:
                 # Zaten ateş edilmiş ve pencere 'tekrar' demişti, ama ateş
@@ -1691,6 +1725,9 @@ class HavaSavunmaArayuz(QWidget):
         self._olu_ardisik_pitch = 0
         self._min_kalan_yaw = 0.0
         self._min_kalan_pitch = 0.0
+        self.hata_degisim_hizi = None
+        self._hata_hiz_zamani = None
+        self._balon_kayip_kare = 999
         self.integral_yaw = 0.0
         self.last_error_yaw = 0.0
         self.integral_pitch = 0.0
@@ -3155,6 +3192,27 @@ class HavaSavunmaArayuz(QWidget):
         _hata_pitch_px = error_pitch_degree / self.DEGREES_PER_PIXEL_PITCH
         self.is_aimed_at_target = (abs(_hata_yaw_px) <= _tolerans and
                                    abs(_hata_pitch_px) <= _tolerans)
+
+        # NISAN HATASININ DEGISIM HIZI (px/sn) — asil ates kapisi (29.13 B44).
+        # Isabeti belirleyen taretin ya da hedefin MUTLAK hizi degil, mermi
+        # ucus suresi boyunca nisan noktasinin hedefe gore ne kadar
+        # kayacagi. Taret hedefle birlikte duzgun giderse bu sifira yakindir.
+        # EMA ile yumusatiliyor: tek karelik tespit gurultusu kapiyi
+        # gereksiz yere kapatmasin.
+        _dt_h = current_frame_time - (self._hata_hiz_zamani or current_frame_time)
+        if self._hata_hiz_zamani is not None and 0.0 < _dt_h < 0.5:
+            _ham = math.hypot(_hata_yaw_px - self._onceki_hata_yaw_px,
+                              _hata_pitch_px - self._onceki_hata_pitch_px) / _dt_h
+            self.hata_degisim_hizi = (0.4 * _ham + 0.6 * (self.hata_degisim_hizi or 0.0))
+        self._onceki_hata_yaw_px = _hata_yaw_px
+        self._onceki_hata_pitch_px = _hata_pitch_px
+        self._hata_hiz_zamani = current_frame_time
+
+        # Balon GERCEKTEN en son kac kare once goruldu (ates grace'i, B45).
+        if self.balon_gercek_goruldu:
+            self._balon_kayip_kare = 0
+        else:
+            self._balon_kayip_kare += 1
 
         # Kilit durumundayken nişan tutuldu mu diye durum makinesini besle.
         # Ateş, tolerans AIM_HOLD_FRAMES kare korunduktan sonra serbest kalır.

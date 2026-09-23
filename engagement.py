@@ -870,7 +870,7 @@ class AngajmanMakinesi:
 
 def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
                     yaw, no_fire_start, no_fire_end, taret_hizi=None,
-                    hedef_hizi=None):
+                    hedef_hizi=None, hata_hizi=None, balon_yakin=False):
     """
     Ateş kilidi — hepsi birden sağlanmalı.
 
@@ -913,12 +913,31 @@ def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
     # kontrol ediyoruz: balonu eşleşmemiş bir çifte ateş, "maketin altında
     # balon var" varsayımının çöktüğü anlamına gelir ve o an nişan alınan
     # nokta maketten TÜRETİLMİŞ bir tahmindir — yani görülmemiş bir yere ateş.
-    if cift.balon is None:
+    #
+    # KISA SUREL GRACE (2026-09-23, 29.13 B45): balonun TESPITI kare kare
+    # titriyor (sahada F16 kilidinde karelerin ~yarisinda "BALON YOK";
+    # balon 15 metrede yalnizca ~30 piksel). Balon fiziksel olarak 0.2
+    # saniyede kacamaz, o yuzden SON BIRKAC KAREDE gercekten gorulmus
+    # olmasi yeterli sayiliyor; nisan noktasi o sirada `nisan_ofseti` ile
+    # balonun en son OLCULEN yerinden turetiliyor. `balon_yakin` bu grace'i
+    # cagirandan alir; False ise eski kati davranis gecerli.
+    if cift.balon is None and not balon_yakin:
         return False, 'cifte balon eslesmemis (nisan noktasi tahmini)'
-    if not balon_gorundu:
+    if not balon_gorundu and not balon_yakin:
         return False, 'balon bu karede tespit edilmedi'
     if not nisan_tamam:
         return False, 'nisan tolerans disinda'
+    # NISAN HATASININ DEGISIM HIZI — asil isabet kapisi (29.13 B44).
+    # Mermi FIRE_SHOT_LATENCY_SEC sonra variyor; o sure icinde nisan
+    # noktasinin hedefe gore kayacagi miktar toleransi asmamali. Taret
+    # hedefle birlikte duzgun gidiyorsa hata degismez ve mutlak hizlar
+    # buyuk olsa bile atis serbesttir — istenen davranis tam olarak budur.
+    _gec = getattr(config, 'FIRE_SHOT_LATENCY_SEC', 0.0) or 0.0
+    _kayma_siniri = getattr(config, 'FIRE_MAX_ERROR_DRIFT_PIXELS', 0.0) or 0.0
+    if hata_hizi is not None and _gec > 0 and _kayma_siniri > 0:
+        _kayma = abs(hata_hizi) * _gec
+        if _kayma > _kayma_siniri:
+            return False, f'nisan kayiyor: atisa kadar {_kayma:.0f} px'
     # TARET HAREKET HALINDEYKEN ATES ETME. `taret_hizi` enkoderden olculen
     # mutlak yaw hizi (derece/sn); None ise enkoder yok/saglıksiz demektir ve
     # kapi uygulanmaz. Gerekce config.FIRE_MAX_TURRET_RATE_DEG_S yaninda.

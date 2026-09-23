@@ -3844,3 +3844,140 @@ teshis edildiginin kanitidir.
    sonra `FEEDFORWARD_VELOCITY_DEADBAND` 0.5.
 4. Kamera 30 fps vermiyorsa (acilis satirinda yazar) `HUNTER_USE_MJPG`
    True denenir; goruntu bozulursa geri alinir.
+
+### 29.13 `aşama2Son1.mp4` — Paket 5 sonrasi KARARSIZLIK (2026-09-23 aksam)
+
+34.8 saniye, Asama 2, 3 hedef. Kayit `enkoder_20260923_191030.csv`;
+video t=0 = 19:24:36.38 (4 fps'te okunan 36 yaw degeriyle arama, ortalama
+fark **0.032 derece** — eslesme kesin). Sonuc: **4 atis, 0 imha.**
+
+Kullanicinin kritik gozlemi: **ayni kodla bundan onceki kosumda uc hedefin
+ucu de 10 metreye gelmeden vuruldu.** Yani kod bozuk degil, sistem KARARSIZ.
+
+#### 29.13.1 Olculen
+
+| olcum | aşama2son (29.12, Paket 4) | aşama2Son1 (Paket 5) |
+|---|---|---|
+| kilitte titresim RMS | 0.27 derece | **0.75-0.79 derece** |
+| kilitte tepeden tepeye | ~0.6 derece | **5.1-6.2 derece** |
+| nisan hatasi isaret degisimi | **0 / 56 kare** | surekli (+56 .. -61 px) |
+| komut yon degisimi (kilit) | — | **50 / 271** ve **47 / 248** |
+| baskin salinim frekansi | — | **0.72-0.92 Hz** |
+| imha | 3 (bir onceki kosumda) | **0** |
+
+Durum cubugundan okunan nisan hatasi dizisi (Fuze kilidi): -19, -8, 13,
+-17, 8, -8, -2, -28, 3, -21, 4, 34, 27, -1, 24, 35, -25, 56, -1, -26, 2,
+-25, 27, 26, 21, -18, 23, 5, -29 px. 29.12'deki tek tarafli +14 px'lik
+kalici hatanin yerini simetrik bir SALINIM almis.
+
+#### 29.13.2 B43 — Kok neden: bosluk enjeksiyonu bir ROLE
+
+Paket 4'te eklenen `YAW_BACKLASH_DEG = 0.4` (29.11 B33), komut isareti her
+degistiginde tarete **0.4 derece = 28 piksellik** bir tekme atiyor. Bu bir
+role (relay) nonlineeritesidir:
+
+1. Tespit gurultusu (~3 px) nisan hatasinin isaretini dondurur.
+2. Role 28 px'lik tekmeyi atar, hata ters tarafa gecer.
+3. Isaret yine doner, tekme yine gelir. Dongu kendini besler.
+
+Olu zamanli bir dongude role tipik olarak `1/(4T)` frekansinda limit cevrim
+uretir: T = 0.22 sn -> **1.1 Hz**. Sahada olculen baskin frekans
+**0.72-0.92 Hz**. Benzetim (tests 31. bolum, ayni gurultu ve ayni sabitler):
+
+| kosul | hata std | tepeden tepeye | isaret degisimi |
+|---|---|---|---|
+| enjeksiyon KAPALI, gurultu 3 px | 2.0 px | 9.0 px | 32 |
+| enjeksiyon 0.4 derece, gurultu 3 px | **12.7 px** | **40.7 px** | 44 |
+| enjeksiyon 0.4 derece, gurultu YOK | 1.0 px | 2.1 px | **0** |
+
+Son satir **ikili davranisin aciklamasi**: enjeksiyon yalnizca isaret
+degisirse tetiklenir. 29.12 olcumunde hata 56 karede hic isaret
+degistirmemisti (tek tarafli +14 px), yani role hic devreye girmedi ve o
+kosum duzgun gecti. Paket 5 dongunun tepkisini artirinca hata sifiri
+gecmeye basladi ve role kilitlendi. "Ayni kodla bir kosum mukemmel, digeri
+felaket" tam olarak budur.
+
+Ayrica enjeksiyon FAZ 6 ile **cifte telafi**: enkoder kafanin kimildamadigini
+zaten soyluyor, denetleyici komut vermeye devam ediyor, bosluk kapali
+dongude kendiliginden kapaniyor.
+
+**Duzeltme: `YAW_BACKLASH_DEG` 0.4 -> 0.0.** Mekanizma kodda duruyor, sabit
+sifir; test sifir oldugunu guvenceye aliyor.
+
+#### 29.13.3 B44 — Ates kapilari yanlis seyi olcuyordu
+
+`FIRE_MAX_TURRET_RATE_DEG_S = 3.0` ve `FIRE_MAX_TARGET_RATE_DEG_S = 2.0`
+MUTLAK hizlara bakiyordu. Ama hedefi duzgun takip eden bir taret, hedefin
+hizinda doner — yani kapilar tam da istenen davranisi ("hedefle birlikte
+giderken sik") imkansiz kiliyordu. Sahada gorulen gerekceler:
+"taret hareketli: 3.2 derece/sn", "hedef hareketli: 2.8 derece/sn".
+
+Isabeti belirleyen sey mutlak hiz degil, mermi ucusu (~0.25 sn) boyunca
+nisan noktasinin hedefe gore **ne kadar kayacagi**. Taret hedefle birlikte
+kusursuz giderse bu sifirdir; taret salinyorsa buyuktur.
+
+Yeni kapi: `|hata_degisim_hizi| x FIRE_SHOT_LATENCY_SEC <=
+FIRE_MAX_ERROR_DRIFT_PIXELS` (10 px). Eski kapilar emniyet sinirina cekildi
+(taret 12, hedef 8 derece/sn) — yalnizca devir teslim slew'ini ve elle
+savrulan hedefi keserler.
+
+#### 29.13.4 B45 — Balon tespiti titriyor, ates bu yuzden kesiliyor
+
+F16 kilidinde durum cubugu **kare kare** "balon VAR" / "BALON YOK" arasinda
+gidip geldi (karelerin yaklasik yarisi). Balon 15 metrede yalnizca ~30
+piksel. Bunun iki sonucu var:
+- `ates_serbest_mi` iki ayri kosulda ("cifte balon eslesmemis", "balon bu
+  karede tespit edilmedi") atesi kesiyor. Sahada "cifte balon eslesmemis
+  (nisan noktasi tahmini)" gerekcesi 22'lik butcenin 3, 5, 15, 20.
+  karelerinde sayildi ve hedef birakildi.
+- BALON YOK karelerinde nisan noktasi maketten turetildigi icin pitch
+  hatasi siciriyor (-60, +27, +22, -31 px ardisik karelerde).
+
+Balon 0.2 saniyede kacamayacagina gore **son 3 karede gercekten gorulmus
+olmasi** ates icin yeterli sayiliyor (`FIRE_BALLOON_GRACE_FRAMES = 3`);
+nisan noktasi o sirada `nisan_ofseti` ile balonun **en son olculen** yerinden
+turetiliyor, yani hayali bir noktaya degil son gercek olcume ates ediliyor.
+Kimlik kontrolu (dusman_mi, dost gorunumu) degismedi.
+
+#### 29.13.5 Diger gozlemler
+
+- **Kamera 30 fps'i kabul etmedi.** Baslik cubugundaki kare sayaci: 13114
+  (t=0) -> 13615 (t=33.5) = 501 kare / 33.5 sn = **14.96 fps**. Paket 5'te
+  eklenen `CAP_PROP_FPS = 30` istegi surucu tarafindan yok sayilmis.
+  Sonraki adim: `HUNTER_USE_MJPG = True` denemek (acilis satirinda
+  gerceklesen format ve fps yaziliyor).
+- **Ekrandaki "Hata" ile ates karari ayni sayi degil.** Durum cubugundaki
+  "Hata: Yaw Xpx" HAM piksel hatasi (kare cekilme anindaki), ates karari ise
+  olu zaman telafili hatayi kullaniyor. Operator "tolerans icinde gorunuyor
+  ama sikmiyor" diye okuyor. Durum cubuguna artik **kayma** (mermi ucusu
+  boyunca beklenen kayma / sinir) yaziliyor; ates kararini belirleyen sayi
+  bu.
+- **Devir teslim hala uzak biniyor**: YONELME sonrasi ilk hatalar 166 px,
+  104 px. Son hedefte (Drone) sistem hedefi tamamen kaybetti
+  ("KILIT — hedef bu karede yok (0 kayit)" dort kare ust uste).
+
+#### 29.13.6 Paket 6 UYGULANDI
+
+| dosya / yer | ne | onceki -> simdi | neden |
+|---|---|---|---|
+| `config.py` `YAW_BACKLASH_DEG` | **kapatildi** | 0.4 -> 0.0 | role gibi davranip 0.72-0.92 Hz limit cevrim uretiyordu (B43) |
+| `config.py` `TARGET_LEAD_TIME_SEC` | | 0.15 -> 0.10 | ondeleme hiz gurultusunu hataya tasiyor; marj birakildi |
+| `config.py` `FIRE_MAX_TURRET_RATE_DEG_S` | emniyet sinirina cekildi | 3.0 -> 12.0 | hedefle birlikte donen taret ates edebilmeli (B44) |
+| `config.py` `FIRE_MAX_TARGET_RATE_DEG_S` | emniyet sinirina cekildi | 2.0 -> 8.0 | ayni gerekce (B44) |
+| `config.py` `FIRE_SHOT_LATENCY_SEC`, `FIRE_MAX_ERROR_DRIFT_PIXELS` | yeni | 0.25, 10.0 | asil isabet kapisi: nisan hatasinin ucus boyunca kaymasi (B44) |
+| `config.py` `FIRE_BALLOON_GRACE_FRAMES` | yeni | 3 | balon tespiti kare kare titriyor (B45) |
+| `engagement.py` `ates_serbest_mi` | `hata_hizi` ve `balon_yakin` parametreleri; kayma kapisi; balon grace | | B44, B45 |
+| `bukrek_main.py` `process_tracking` | nisan hatasinin degisim hizi (EMA) olculuyor; balon kayip kare sayaci | | B44, B45 |
+| `bukrek_main.py` `_balon_yakin_zamanda()` | yeni | | B45 |
+| `bukrek_main.py` KILIT durum metni | "balon N kare once" ve "kayma X/Y px" | | operator ates sebebini ekrandan gorsun |
+| `tests_yeni_mimari.py` 31 | role benzetimi (enjeksiyon acik/kapali/gurultusuz), ates kapilari, balon grace, kaynak kontrolleri | | |
+
+**Beklenti:** kilitte titresim 0.75 dereceden 0.25 derece altina inmeli
+(role kalkinca benzetim 12.7 px -> 2.0 px veriyor); nisan hatasi salinim
+yerine tek tarafli kucuk bir artiga donmeli; hedefle birlikte giderken ates
+serbest kalmali.
+
+**Sahada bakilacaklar:** durum cubugunda "kayma X/10 px" — X surekli 10'un
+ustundeyse takip hala salinyor demektir (once `TARGET_LEAD_TIME_SEC` 0.05,
+sonra `KP_YAW` 0.55). "balon N kare once" yazisi sik gorunuyorsa balon
+tespiti dataset isi. `kosum_olc.py` ile titresim RMS < 0.25 derece.

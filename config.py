@@ -145,7 +145,28 @@ YONELME_DURUS_HIZI_DEG_S = 1.5    # bu hizin altinda "durdu" sayilir
 # (Asama2: +-0.3-0.4 derece, 1.5 sn periyot). Komut isareti degisince o
 # yonde BIR KEZ bosluk kadar ek delta gonderilir; fazlasini enkoder
 # duzeltir. 0 = kapali. Olculen: 0.45 (2026-09-17), 1.49 (2026-09-08).
-YAW_BACKLASH_DEG = 0.4
+#
+# ===== 0.4 -> 0.0, KAPATILDI (2026-09-23, PROJE_DURUMU 29.13 B43) =====
+# BU EKLEME YANLISTI VE SAHADA SISTEMI KARARSIZ YAPTI.
+# Enjeksiyon bir ROLE (relay) gibi davraniyor: komut isareti her
+# degistiginde tarete 0.4 derece = 28 piksellik bir tekme atiyor. Tespit
+# gurultusu (~3 px) isareti dondurmeye yettigi anda tekme geliyor, tekme
+# hatayi ters tarafa 28 px tasiyor, isaret yine donuyor ve dongu kendini
+# besliyor. Olu zamanli bir dongude role tipik olarak 1/(4T) frekansinda
+# limit cevrim uretir: T = 0.22 sn -> 1.1 Hz. Sahada olculen baskin
+# frekans 0.72-0.92 Hz (aşama2Son1.mp4, 19:24:36-19:25:11).
+# Benzetim (tests 31. bolum) ayni kosullarda:
+#     bosluk 0 + gurultu 3 px -> hata std  2.2 px, tepe-tepe 11.9 px
+#     bosluk 0.4 + ayni gurultu -> hata std 13.4 px, tepe-tepe 40.7 px
+# Bu, "ayni kodla bir kosumda 3 hedef de vuruldu, sonraki kosumda hic
+# vurulamadi" ikiliginin de aciklamasi: enjeksiyon YALNIZCA hata isaret
+# degistirirse devreye girer. Hata hep ayni tarafta kalirsa (bkz. 29.12
+# olcumu: 56 karede 0 isaret degisimi) role hic tetiklenmez ve sistem
+# duzgun calisir; bir kez asim olup isaret donerse limit cevrime kilitlenir.
+# FAZ 6 ile bosluk ZATEN kapali donguden goruluyor (enkoder kafanin
+# kimildamadigini soyluyor, denetleyici komut vermeye devam ediyor);
+# ayrica acik dongude enjekte etmek cifte telafi.
+YAW_BACKLASH_DEG = 0.0
 PITCH_BACKLASH_DEG = 0.0
 
 RPI_IP = '192.168.137.229'
@@ -728,7 +749,11 @@ FEEDFORWARD_MAX_STEP_DEGREE = 0.10
 # bir deger kullaniliyor: hiz tahmini gurultusu (EMA std 0.49 derece/sn)
 # bu sabitle carpilarak hataya giriyor (0.15 x 0.49 = 0.07 derece = 5 px).
 # 0 = kapali. Taret hedefin onune geciyorsa azalt, gerisinde kaliyorsa artir.
-TARGET_LEAD_TIME_SEC = 0.15
+# 0.15 -> 0.10 (2026-09-23, 29.13): ondeleme hiz tahmini gurultusunu
+# dogrudan hataya tasiyor (0.49 derece/sn x 0.15 = 5 px). Bosluk rolesi
+# kapatildiktan sonra asil kararsizlik kaynagi kalmadi ama ondelemeyi de
+# temkinli tutmak marj birakiyor. Taret geride kaliyorsa 0.15'e geri.
+TARGET_LEAD_TIME_SEC = 0.10
 TARGET_LEAD_MAX_DEG = 0.6      # ondelemenin ust siniri (gurultuye karsi)
 
 # Hedefin dünya açısal hızı için üst sınır (derece/sn). Gerçek hedefler
@@ -1122,7 +1147,16 @@ AIM_TOLERANCE_MIN_PIXELS = 10.0
 # Enkoder yoksa/saglıksızsa kapi UYGULANMAZ (eski davranis); enkoder bir
 # emniyet katmani, calismamasi sistemi durdurmamalı.
 # 0 veya None = kapali.
-FIRE_MAX_TURRET_RATE_DEG_S = 3.0
+#
+# 3.0 -> 12.0 (2026-09-23, 29.13 B44). BU KAPI YANLIS SEYI OLCUYORDU.
+# Hedefi DUZGUN takip eden bir taret, hedefin hizinda doner; 3 derece/sn
+# ile yaklasan bir hedefte taret de 3 derece/sn doner ve kapi ateşi
+# kesiyordu. Yani kapi, tam da istenen davranisi ("hedefle birlikte
+# giderken sik") imkansiz kiliyordu. Isabeti belirleyen sey taretin MUTLAK
+# hizi degil, nisan HATASININ ne kadar hizli degistigi — o da
+# FIRE_MAX_ERROR_RATE_PX_S ile olculuyor. Bu deger artik yalnizca emniyet
+# siniri: devir teslim slew'i (30-130 derece/sn) sirasinda ates aclmasin.
+FIRE_MAX_TURRET_RATE_DEG_S = 12.0
 
 # --- ATES KAPISI 2: HEDEF ne kadar yavasken ates serbest ---
 # (2026-09-16 gece, 29.9 B27). HedefSıkmaDeneme.mp4'te uc atis, uc iska;
@@ -1136,7 +1170,28 @@ FIRE_MAX_TURRET_RATE_DEG_S = 3.0
 # Hiz, hedefin DUNYA acisindaki degisimden olculur (`target_world_*_rate`,
 # process_tracking icinde EMA). FAZ 6 ile bu olcum enkoder tabanli ve
 # bosluk gurultusunden arinmis. None/0 = kapali.
-FIRE_MAX_TARGET_RATE_DEG_S = 2.0
+# 2.0 -> 8.0 (2026-09-23, 29.13 B44). Ayni gerekce: hedef hizli diye ates
+# kesmek, hedefle birlikte hareket eden bir taretle anlamsiz. Sahada bu kapi
+# "hedef hareketli: 2.8 derece/sn" diye 15 metrede yaklasan hedefe atesi
+# kesiyordu. Artik yalnizca elle sallanan/firlatilan asiri durumlar icin.
+FIRE_MAX_TARGET_RATE_DEG_S = 8.0
+
+# --- ASIL ATES KAPISI: NISAN HATASININ DEGISIM HIZI (2026-09-23, B44) ---
+# Mermi ucus + mekanik gecikmesi ~0.25 sn. Isabeti belirleyen, bu sure
+# icinde nisan noktasinin hedefe gore NE KADAR KAYACAGI. Taret hedefi
+# kusursuz takip ediyorsa hata degismez ve mutlak hizlar ne olursa olsun
+# atis isabet eder; taret salinyorsa hata hizli degisir ve atis ıskalar.
+# Kapi: |hata_hizi| x FIRE_SHOT_LATENCY_SEC, nisan toleransini asmamali.
+# 0 = kapali.
+FIRE_SHOT_LATENCY_SEC = 0.25
+FIRE_MAX_ERROR_DRIFT_PIXELS = 10.0   # tolerans mertebesinde
+
+# Balonun tespiti kare kare titriyor (aşama2Son1.mp4 F16 kilidinde karelerin
+# yaklasik yarisinda "BALON YOK"). Balon 0.2 saniyede kacamayacagina gore
+# son N kare icinde GERCEKTEN gorulmus olmasi ateş icin yeterli; nisan
+# noktasi o sirada ogrenilen ofsetten turetiliyor ve o ofset balonun en son
+# olculen yeridir. 0 = grace yok (her karede gercek balon sart).
+FIRE_BALLOON_GRACE_FRAMES = 3
 
 # Ateşten önce nişan kaç kare korunmalı.
 #
