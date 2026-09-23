@@ -267,6 +267,12 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
 
                         capture.set(cv2.CAP_PROP_FRAME_WIDTH, ayar["width"])
                         capture.set(cv2.CAP_PROP_FRAME_HEIGHT, ayar["height"])
+                        # KARE HIZI ISTEGI (2026-09-23, 29.12 B40). Eskiden
+                        # hic istenmiyordu ve surucu 15 fps veriyordu; denetim
+                        # dongusu kamera hizinda calistigi icin bu, takibin
+                        # yapisal tavaniydi. Cozunurlukten SONRA ayarlanir.
+                        if ayar.get("fps"):
+                            capture.set(cv2.CAP_PROP_FPS, ayar["fps"])
                         actual_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
                         actual_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
                         actual_fps = capture.get(cv2.CAP_PROP_FPS)

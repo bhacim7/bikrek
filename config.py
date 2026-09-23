@@ -21,7 +21,7 @@ _BURASI = os.path.dirname(os.path.abspath(__file__))
 # --- Model ---
 # Ağırlık dosyası bu dosyayla aynı klasörde. Mutlak yol yazmıyoruz ki proje
 # başka bir makineye taşındığında bozulmasın.
-YOLO_MODEL_PATH = os.path.join(_BURASI, "v25L1056.engine")
+YOLO_MODEL_PATH = os.path.join(_BURASI, "v26L1056.engine")
 
 # Üç aşamanın ÜÇÜ de bu tek modeli kullanır; aşamalar arasında fark yalnızca
 # görev mantığındadır. (Eskiden Aşama 3 ayrı bir model yüklüyordu.)
@@ -240,6 +240,20 @@ HUNTER_HEIGHT = 1200
 # Kare hızı 30'un belirgin altına düşerse buraya True'ya dön.
 HUNTER_USE_MJPG = False
 
+# --- ISTENEN KARE HIZI ---
+# Bu ayar EKSIKTI: kod `CAP_PROP_FPS`'e hic dokunmuyordu, surucu kendi
+# varsayilanini veriyordu. Sahada olculdu (aşama2son.mp4, baslik cubugundaki
+# kare sayaci): 236 kare / 15.75 sn = 15.0 fps. DENETIM DONGUSU KAMERA
+# HIZINDA CALISIR — 15 fps demek her komut arasinda 67 ms, olu zamanin
+# buyuk kismi ve takibin "basamakli" gorunmesinin yapisal tavani demek.
+# 30 fps kontrol gecikmesini yariya indirir.
+# None = dokunma (eski davranis). Kamera veremiyorsa acilis satirinda
+# gerceklesen fps yazilir; 30 alinamazsa HUNTER_USE_MJPG = True denenmeli
+# (YUY2 1920x1200 @30 = 138 MB/s, bazi suruculer UVC tanimlayicisinda
+# sikistirmasiz formati yalnizca 15 fps'te veriyor).
+HUNTER_FPS = 30
+SPOTTER_FPS = 30
+
 # --- UVC DENETİMLERİ (beyaz dengesi, pozlama, odak) ---
 #
 # Bu blok EKSİKTİ: yukarıdaki yorum "otomatik pozlama ve otomatik beyaz
@@ -318,9 +332,11 @@ KAMERA_KONTROLLERI = {
 # bir satır yetiyor.
 KAMERA_AYARLARI = {
     "spotter": {"indices": SPOTTER_CAMERA_INDICES, "width": SPOTTER_WIDTH,
-                "height": SPOTTER_HEIGHT, "mjpg": SPOTTER_USE_MJPG},
+                "height": SPOTTER_HEIGHT, "mjpg": SPOTTER_USE_MJPG,
+                "fps": SPOTTER_FPS},
     "hunter":  {"indices": HUNTER_CAMERA_INDICES, "width": HUNTER_WIDTH,
-                "height": HUNTER_HEIGHT, "mjpg": HUNTER_USE_MJPG},
+                "height": HUNTER_HEIGHT, "mjpg": HUNTER_USE_MJPG,
+                "fps": HUNTER_FPS},
 }
 
 # --- YAZILIM BEYAZ DENGESİ (avcı) ---
@@ -581,7 +597,19 @@ KP_PITCH = 0.6
 # GERI ACMA KOSULU: hedef hizi 5 derece/sn'yi gecen bir senaryo (yakin
 # mesafede hizli gecis) girerse once 0.3 ile denenmeli, ve ancak
 # FEEDFORWARD_VELOCITY_DEADBAND gercek hizin ustune cekildikten sonra.
-FEEDFORWARD_GAIN = 0.0
+#
+# 0.0 -> 1.0 ve FORMUL DEGISTI (2026-09-23, PROJE_DURUMU 29.12 B38).
+# ESKI FORMUL BIRIM OLARAK YANLISTI: `ff = hiz x LEAD_TIME x GAIN` bir
+# KONUM (derece) idi ama HER KAREDE delta komut olarak gonderiliyordu.
+# Delta komutta taret hizi = delta x kare_hizi oldugundan eski formul
+# taret hizini hiz x 0.22 x 0.8 x 15 = hedefin 2.6 KATINA cikariyordu.
+# "Feedforward acinca taret savruluyor" deneyimi (Paket 1'de 0'a cekilme
+# sebebi) bu birim hatasiydi, feedforward fikrinin kendisi degil.
+# DOGRUSU: bir karede hedefin gittigi yol kadar delta ver:
+#     feedforward = hedef_hizi x delta_time x FEEDFORWARD_GAIN
+# GAIN = 1.0 tam hiz eslemesi. Taret hedefin gerisinde kaliyorsa 1.1-1.2,
+# asip oniune geciyorsa 0.8 denenir.
+FEEDFORWARD_GAIN = 1.0
 
 # Duyarga gecikmesi (saniye): kamera + çıkarım + açı raporu + motor tepkisi.
 # EKRAN KAYDINDAN ÖLÇÜLDÜ: hedef sabit hızla giderken kalan piksel hatası
@@ -639,10 +667,19 @@ VELOCITY_DECAY_SMOOTHING = 0.75
 # sızıntı da küçük. Sahada oturmuş halde ölçülen sahte hız 1.1 derece/sn idi
 # (geniş kamera, taret dururken); avcıda ~0.4 bekleniyor.
 # SAHADA DOĞRULANMALI: sabit hedefte titreme başlarsa 1.5-2.0'a çekin.
-FEEDFORWARD_VELOCITY_DEADBAND = 1.0
+#
+# 1.0 -> 0.30 (2026-09-23, 29.12 B38). Sahada olculdu (aşama2son.mp4,
+# F16 yaklasmasi): hedefin gercek acisal hizi 0.44 derece/sn, yani eski
+# 1.0'lik olu bant yuzunden feedforward karelerin %87'sinde TAM SIFIRDI —
+# tam ihtiyac duyulan rejimde kapaliydi. Yumusak bant 0.30-0.60 arasinda
+# acildigi icin gurultu (EMA sonrasi std 0.49 derece/sn) tam katki
+# uretemez; sabit hedefte titreme baslarsa 0.5'e cekin.
+FEEDFORWARD_VELOCITY_DEADBAND = 0.30
 
 # Feedforward katkısının üst sınırı (derece).
-FEEDFORWARD_MAX_DEGREE = 5.0
+# 5.0 -> 1.0: yeni formulde ff = hiz x delta_time, en buyuk hizda
+# (30 derece/sn, 15 fps) 2.0 derece eder; komut siniri zaten 2.0.
+FEEDFORWARD_MAX_DEGREE = 1.0
 
 # --- Feedforward kapıları ---
 # Üçü de aynı gerçeğe dayanır: hız tahmininin güvenilirliği duruma göre çok
@@ -675,7 +712,24 @@ FEEDFORWARD_ERROR_GATE_PIXELS = (112.0, 448.0)
 # takibin akıcı değil kasıntılı görünmesinin doğrudan sebebi buydu.
 # Ölçümde yön değiştirme sayısı 157'den 69'a indi, ortalama hata da
 # 32.2'den 31.4 piksele düştü — yumuşatmanın bedeli yok.
-FEEDFORWARD_MAX_STEP_DEGREE = 0.25
+# 0.25 -> 0.10 (2026-09-23): yeni formulde feedforward eskisinin 0.38'i
+# kadar; eski sinir hic baglamiyordu, yani koruma kalkmisti. Ayni ORANI
+# korumak icin 0.25 x 0.38 = 0.095 -> 0.10.
+FEEDFORWARD_MAX_STEP_DEGREE = 0.10
+
+# --- HEDEF HAREKETI ICIN KONUM ONDELEMESI (2026-09-23, 29.12 B39) ---
+# `_angle_at(capture_t)` TARETIN kare cekilirkenki acisini telafi eder ama
+# HEDEFIN o andan beri gittigi yolu telafi etmez. Kalan hata = hedef_hizi x
+# olu_zaman. FEEDFORWARD_LEAD_TIME yorumunda anlatilan 0.22 sn'lik olcum
+# tam olarak budur (kalan piksel hatasi / hedef hizi, 14 kesitte ayni cikti).
+# Hedefin dunya acisi bu kadar ILERI tasinir; boylece taret "hedefin oldugu
+# yere" degil "olacagi yere" nisan alir. Mermi ucus suresi (~0.25 sn) de
+# ayni yonde calisir, o yuzden olculen 0.22 yerine ONA YAKIN ama temkinli
+# bir deger kullaniliyor: hiz tahmini gurultusu (EMA std 0.49 derece/sn)
+# bu sabitle carpilarak hataya giriyor (0.15 x 0.49 = 0.07 derece = 5 px).
+# 0 = kapali. Taret hedefin onune geciyorsa azalt, gerisinde kaliyorsa artir.
+TARGET_LEAD_TIME_SEC = 0.15
+TARGET_LEAD_MAX_DEG = 0.6      # ondelemenin ust siniri (gurultuye karsi)
 
 # Hedefin dünya açısal hızı için üst sınır (derece/sn). Gerçek hedefler
 # 0.5-2.6 derece/sn; bu sınır hesap hatalarına karşı emniyet. Elle test
@@ -709,8 +763,28 @@ PREDICTION_MAX_RATE_DEG_S = 1.0
 # 1920x1080'e geçildiği için eşikler 1.5 katına çıkarıldı.
 # 7 piksel = 0.100 derece = 15 metrede 2.6 cm (1280'de 5 px = 0.107 idi),
 # yani açısal anlamı neredeyse aynı kaldı.
-PID_DEADBAND_PIXELS = 7.0
-MIN_OUTPUT_PIXELS = 4.0
+# 7.0 -> 5.0 (2026-09-23, 29.12 B37). Olu bant, hedef HAREKETLIYKEN
+# dogrudan kalici nisan hatasina donusuyordu: taret bant icinde hic
+# kimildamiyor, hedef kaciyor, hata bandi asinca taret firliyor. Hiz ileri
+# beslemesi (B38) artik hizi kendi tasidigi icin olu bandin tek isi sabit
+# hedefte avlanmayi kesmek; 5 px = 0.071 derece bunun icin yeterli.
+# Kilitte 2-4 Hz titreme geri gelirse 7.0'a donun.
+PID_DEADBAND_PIXELS = 5.0
+# Olu bantta ARDISIK bu kadar kare kalinirsa "hedef gercekten durdu" sayilir
+# ve cikis suzgecinin hafizasi sifirlanir (artimli komutun kuyrugu kesilir,
+# 29.6). Daha kisa dipler hafizayi SILMEZ: eskiden tek karelik bir dip bile
+# hafizayi siliyor ve suzgec sifirdan rampa yaptigi icin taret 4-5 kare
+# (0.3 sn) hic komut almiyordu — sahada olculen merdiven basamaklari buydu
+# (aşama2son.mp4: karelerin %55'inde taret tamamen duruyor).
+PID_DEADBAND_SETTLE_FRAMES = 3
+# 4.0 -> 2.5: 1 yaw adimi 0.0375 derece = 2.7 px, 1 pitch adimi 1.6 px.
+# 4 px kucuk duzeltmeleri eliyordu. ARTIK ELENEN KOMUT KAYBOLMUYOR: esik
+# altinda kalan miktar birikip esigi asinca gonderiliyor (29.12 B41).
+# Birikim olmadan sub-piksel komutlar hem PC'de (bu esik) hem Pi'de
+# (`set_proportional_angles_delta` hedefi HER KAREDE mevcut acidan yeniden
+# kurdugu icin adim artigi atiliyor) tamamen kayboluyordu; kare hizi
+# arttikca kare basina dusen komut kuculdugu icin bu kayip buyuyor.
+MIN_OUTPUT_PIXELS = 2.5
 
 # --- REZONANS SONUMLEME (PID cikis suzgeci) ---
 #
@@ -760,6 +834,16 @@ MIN_OUTPUT_PIXELS = 4.0
 # MAX_OUTPUT_DEGREE = 2.0 de yerinde kaliyor (o degisiklik ise ise yaradi:
 # edinme asimi 5.8 -> 0.3 derece).
 PID_OUTPUT_SMOOTHING = 0.30
+
+# Yukaridaki katsayi KARE BASINA tanimli, yani sonumun gercek zamandaki
+# hizi kare hizina bagli. 15 fps'te ayarlanmisti; kamera 30 fps verirse ayni
+# katsayi suzgeci iki kat hizlandirir ve olu zaman sabit kaldigi icin
+# sonum azalir (benzetimde 9 derece/sn'de hata 28.6 -> 35.5 px). Katsayi
+# artik su referansa gore kare suresiyle olceklenir:
+#     a = 1 - (1 - PID_OUTPUT_SMOOTHING) ** (delta_time * PID_SMOOTHING_REF_FPS)
+# 15 fps'te 0.30 (degisiklik yok), 30 fps'te 0.163 — gercek zamandaki sonum
+# ayni kalir. 0 = olcekleme kapali (eski davranis).
+PID_SMOOTHING_REF_FPS = 15.0
 
 # Bir aday hedefe kilitlenmeden önce ard arda kaç karede aynı yerde görülmeli.
 # YOLO tek tük yanlış pozitif üretiyor ve hayaletler 1-2 kare sürüyor.

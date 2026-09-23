@@ -253,6 +253,13 @@ class HavaSavunmaArayuz(QWidget):
         self._yonelme_son_gonderim = 0.0
         self._son_yaw_yon = 0
         self._son_pitch_yon = 0
+        # Olu bantta ardisik kare sayaci (29.12 B37): cikis suzgecinin
+        # hafizasi ancak hedef GERCEKTEN durunca silinir.
+        self._olu_ardisik_yaw = 0
+        self._olu_ardisik_pitch = 0
+        # MIN_OUTPUT esiginin altinda kalan komut artigi (29.12 B41).
+        self._min_kalan_yaw = 0.0
+        self._min_kalan_pitch = 0.0
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
@@ -1680,6 +1687,10 @@ class HavaSavunmaArayuz(QWidget):
         # hedefin cikisini sizdirmasin.
         self._pid_cikis_yaw = 0.0
         self._pid_cikis_pitch = 0.0
+        self._olu_ardisik_yaw = 0
+        self._olu_ardisik_pitch = 0
+        self._min_kalan_yaw = 0.0
+        self._min_kalan_pitch = 0.0
         self.integral_yaw = 0.0
         self.last_error_yaw = 0.0
         self.integral_pitch = 0.0
@@ -3109,8 +3120,24 @@ class HavaSavunmaArayuz(QWidget):
         world_yaw = yaw_at_capture + capture_error_yaw
         world_pitch = pitch_at_capture + capture_error_pitch
 
-        error_yaw_degree = (world_yaw - self.current_yaw_angle + 180) % 360 - 180
-        error_pitch_degree = (world_pitch - self.current_pitch_angle + 180) % 360 - 180
+        # HEDEF HAREKETI ICIN KONUM ONDELEMESI (2026-09-23, 29.12 B39).
+        # `_angle_at(capture_t)` TARETIN kare cekilirkenki acisini telafi
+        # eder ama HEDEFIN o andan beri gittigi yolu etmez; kalan hata
+        # hedef_hizi x olu_zaman kadardir. Onceki karenin yumusatilmis hizi
+        # kullaniliyor (bu karenin hizi asagida hesaplaniyor); bir karelik
+        # bayatlik 67 ms, ondelemenin kendisinden kucuk.
+        # DIKKAT: `world_yaw` HAM kalmali — hiz turevi asagida ondan
+        # aliniyor, ondelenmis degerin turevi gurultuyu buyutur.
+        _ond = getattr(config, 'TARGET_LEAD_TIME_SEC', 0.0)
+        if _ond > 0.0:
+            _ond_max = getattr(config, 'TARGET_LEAD_MAX_DEG', 0.6)
+            _ond_yaw = max(-_ond_max, min(_ond_max, self.target_world_yaw_rate * _ond))
+            _ond_pitch = max(-_ond_max, min(_ond_max, self.target_world_pitch_rate * _ond))
+        else:
+            _ond_yaw = _ond_pitch = 0.0
+
+        error_yaw_degree = (world_yaw + _ond_yaw - self.current_yaw_angle + 180) % 360 - 180
+        error_pitch_degree = (world_pitch + _ond_pitch - self.current_pitch_angle + 180) % 360 - 180
 
         # --- BAYAT NISAN (2026-09-16 aksam, 29.7 bolum B16) ---
         # Nisan karari eskiden HAM piksel hatasina bakiyordu: `error_yaw_pixel`
@@ -3248,7 +3275,17 @@ class HavaSavunmaArayuz(QWidget):
         k_yaw = _db_katsayi(self.target_world_yaw_rate) * kapi
         k_pitch = _db_katsayi(self.target_world_pitch_rate) * kapi
 
-        lead = config.FEEDFORWARD_LEAD_TIME * config.FEEDFORWARD_GAIN
+        # BIRIM DUZELTMESI (2026-09-23, 29.12 B38): komut ARTIMLI gidiyor
+        # (`set_proportional_angles_delta`), yani taretin hizi
+        # delta x kare_hizi. Eski formul `hiz x LEAD_TIME x GAIN` bir KONUM
+        # idi ve her karede delta olarak gonderilince taret hizi hedefin
+        # 0.22 x 0.8 x 15 = 2.6 KATINA cikiyordu; "feedforward acinca taret
+        # savruluyor" bundandi ve Paket 1'de kazanc 0'a cekilmisti.
+        # Dogrusu: bir karede hedefin gittigi yol kadar delta ver.
+        # Olu zaman telafisi ayri bir is ve TARGET_LEAD_TIME_SEC ile
+        # hedefin dunya acisina KONUM ondelemesi olarak yapiliyor.
+        _dt_ff = min(max(delta_time, 0.0), 0.2)
+        lead = _dt_ff * config.FEEDFORWARD_GAIN
         feedforward_yaw = self.target_world_yaw_rate * lead * k_yaw
         feedforward_pitch = self.target_world_pitch_rate * lead * k_pitch
 
@@ -3273,30 +3310,39 @@ class HavaSavunmaArayuz(QWidget):
         self.integral_yaw += error_yaw_degree * delta_time
         self.integral_yaw = max(min(self.integral_yaw, 20.0), -20.0)
 
+        # PID CIKISI ARTIK FEEDFORWARD'I ICERMIYOR (2026-09-23, 29.12 B37).
+        # Olu bant ve cikis suzgeci YALNIZCA P/I/D'ye uygulanir; feedforward
+        # en sonda eklenir. Eskiden feedforward de toplamin icindeydi ve olu
+        # bant onu da sifirliyordu. Sonucu sahada olculdu (aşama2son.mp4,
+        # 2.96-6.56 sn): hedef 0.44 derece/sn ile yaklasirken nisan hatasi
+        # 56 karenin HEPSINDE ayni isaretliydi (ort +14.1 px, hic sifiri
+        # gecmedi) ve karelerin yalnizca %25'i 10 px'lik tolerans icindeydi.
+        # Mekanizma: hata bandin altina duser dusmez taret TAMAMEN duruyor
+        # (karelerin %55'i), hedef kaciyor, hata bandi asinca taret firliyor.
         derivative_yaw = (error_yaw_degree - self.last_error_yaw) / delta_time if delta_time > 0 else 0
-        output_yaw = (self.KP_YAW * error_yaw_degree +
-                      self.KI_YAW * self.integral_yaw +
-                      self.KD_YAW * derivative_yaw +
-                      feedforward_yaw)
+        pid_yaw = (self.KP_YAW * error_yaw_degree +
+                   self.KI_YAW * self.integral_yaw +
+                   self.KD_YAW * derivative_yaw)
         self.last_error_yaw = error_yaw_degree
 
         self.integral_pitch += error_pitch_degree * delta_time
         self.integral_pitch = max(min(self.integral_pitch, 20.0), -20.0)
 
         derivative_pitch = (error_pitch_degree - self.last_error_pitch) / delta_time if delta_time > 0 else 0
-        output_pitch = (self.KP_PITCH * error_pitch_degree +
-                        self.KI_PITCH * self.integral_pitch +
-                        self.KD_PITCH * derivative_pitch +
-                        feedforward_pitch)
+        pid_pitch = (self.KP_PITCH * error_pitch_degree +
+                     self.KI_PITCH * self.integral_pitch +
+                     self.KD_PITCH * derivative_pitch)
         self.last_error_pitch = error_pitch_degree
 
         _olu_yaw = abs(error_yaw_degree) < self.pid_deadband_yaw
         _olu_pitch = abs(error_pitch_degree) < self.pid_deadband_pitch
+        self._olu_ardisik_yaw = self._olu_ardisik_yaw + 1 if _olu_yaw else 0
+        self._olu_ardisik_pitch = self._olu_ardisik_pitch + 1 if _olu_pitch else 0
         if _olu_yaw:
-            output_yaw = 0.0
+            pid_yaw = 0.0
             self.integral_yaw = 0.0
         if _olu_pitch:
-            output_pitch = 0.0
+            pid_pitch = 0.0
             self.integral_pitch = 0.0
 
         # --- REZONANS SÖNÜMLEME ---
@@ -3322,20 +3368,50 @@ class HavaSavunmaArayuz(QWidget):
         #   - takip sirasinda suzgec calismaya devam ediyor (rezonans sonumu
         #     duruyor). Suzgeci tamamen kapatmak 3.45 Hz'lik titremeyi geri
         #     getirmisti (titresim RMS 0.121 -> 0.345 derece).
+        #
+        # HAFIZA SILME ARTIK ANINDA DEGIL (2026-09-23, 29.12 B37). Yukaridaki
+        # cozum sabit hedef icin dogruydu ama HAREKETLI hedefte zarar
+        # veriyordu: hata bandin icine tek kare girse bile hafiza siliniyor,
+        # cikinca suzgec SIFIRDAN rampa yapiyor ve
+        #     ilk gonderilebilir komut = MIN_OUTPUT / (a x KP) esigine
+        # ulasana kadar 4-5 kare (15 fps'te 0.30 sn) HIC KOMUT GITMIYORDU.
+        # Sahada olculdu (aşama2son.mp4): taret karelerin %55'inde tamamen
+        # duruyor, 0.3-0.7 sn'lik duraklamalardan sonra 0.1-0.4 derecelik
+        # basamaklarla siciyor — kullanicinin "yalpali, akici degil" dedigi
+        # merdiven bu. Artik hafiza ancak ARDISIK PID_DEADBAND_SETTLE_FRAMES
+        # kare olu bantta kalinirsa siliniyor (hedef gercekten durdu); kisa
+        # dipler rampayi bozmuyor. Kuyruk yine yok: olu bantta cikisin
+        # KENDISI sifirlaniyor, yalnizca hafiza korunuyor.
+        # Suzgec katsayisi KARE SURESIYLE olceklenir (29.12 B42): 0.30
+        # 15 fps'te ayarlanmisti, kamera 30 fps verirse ayni katsayi
+        # suzgeci gercek zamanda iki kat hizlandirip sonumu dusururdu.
         _a = config.PID_OUTPUT_SMOOTHING
+        _ref = getattr(config, 'PID_SMOOTHING_REF_FPS', 0.0)
+        if _a > 0.0 and _ref > 0.0 and 0.0 < delta_time < 0.5:
+            _a = 1.0 - (1.0 - _a) ** (delta_time * _ref)
+            _a = min(1.0, max(config.PID_OUTPUT_SMOOTHING * 0.2, _a))
+        _yerlesme = getattr(config, 'PID_DEADBAND_SETTLE_FRAMES', 1)
         if _a > 0.0:
             if _olu_yaw:
-                self._pid_cikis_yaw = 0.0
-                output_yaw = 0.0
+                pid_yaw = 0.0
+                if self._olu_ardisik_yaw >= _yerlesme:
+                    self._pid_cikis_yaw = 0.0
             else:
-                output_yaw = _a * output_yaw + (1.0 - _a) * self._pid_cikis_yaw
-                self._pid_cikis_yaw = output_yaw
+                self._pid_cikis_yaw = _a * pid_yaw + (1.0 - _a) * self._pid_cikis_yaw
+                pid_yaw = self._pid_cikis_yaw
             if _olu_pitch:
-                self._pid_cikis_pitch = 0.0
-                output_pitch = 0.0
+                pid_pitch = 0.0
+                if self._olu_ardisik_pitch >= _yerlesme:
+                    self._pid_cikis_pitch = 0.0
             else:
-                output_pitch = _a * output_pitch + (1.0 - _a) * self._pid_cikis_pitch
-                self._pid_cikis_pitch = output_pitch
+                self._pid_cikis_pitch = _a * pid_pitch + (1.0 - _a) * self._pid_cikis_pitch
+                pid_pitch = self._pid_cikis_pitch
+
+        # FEEDFORWARD EN SONDA EKLENIR: olu bant ve suzgec ona dokunmaz.
+        # Hedef hareket ettigi surece taret hata sifir olsa bile onunla
+        # birlikte kayar; oransal terim yalnizca ARTIK hatayi kapatir.
+        output_yaw = pid_yaw + feedforward_yaw
+        output_pitch = pid_pitch + feedforward_pitch
 
         # SUZGEC SARMA ONLEME — YALNIZCA GERCEK DOYGUNLUKTA (MAX sinirinda).
         #
@@ -3364,10 +3440,32 @@ class HavaSavunmaArayuz(QWidget):
             if abs(output_pitch) > self.MAX_OUTPUT_DEGREE:
                 self._pid_cikis_pitch = math.copysign(self.MAX_OUTPUT_DEGREE, output_pitch)
 
-        if 0 < abs(output_yaw) < self.MIN_OUTPUT_DEGREE_THRESHOLD:
+        # ALT ESIK ARTIGI ARTIK BIRIKIYOR (2026-09-23, 29.12 B41).
+        # Eskiden esigin altindaki komut sessizce ATILIYORDU. Pi de ayni seyi
+        # yapiyor: `set_proportional_angles_delta` hedefi HER KAREDE mevcut
+        # aciden yeniden kurdugu icin yarim adimlik artik oraya da tasinmiyor.
+        # Sonuc: yavas hedefte (0.44 derece/sn) kare basina gereken komut
+        # esigin altinda kaliyor ve taret, oransal terim esigi asacak kadar
+        # hata biriktirene dek HIC hareket etmiyor. Kare hizi arttikca kare
+        # basina dusen komut kuculdugu icin bu kayip buyuyor — 30 fps'e
+        # cikmak bu duzeltme olmadan takibi IYILESTIRMEZDI.
+        # Artik esik alti miktar saklanip esigi asinca gonderiliyor; toplam
+        # yol korunuyor, yalnizca zamana yayiliyor.
+        _esik = self.MIN_OUTPUT_DEGREE_THRESHOLD
+        _t_yaw = output_yaw + self._min_kalan_yaw
+        if abs(_t_yaw) < _esik:
+            self._min_kalan_yaw = _t_yaw
             output_yaw = 0.0
-        if 0 < abs(output_pitch) < self.MIN_OUTPUT_DEGREE_THRESHOLD:
+        else:
+            self._min_kalan_yaw = 0.0
+            output_yaw = _t_yaw
+        _t_pitch = output_pitch + self._min_kalan_pitch
+        if abs(_t_pitch) < _esik:
+            self._min_kalan_pitch = _t_pitch
             output_pitch = 0.0
+        else:
+            self._min_kalan_pitch = 0.0
+            output_pitch = _t_pitch
 
         output_yaw = max(min(output_yaw, self.MAX_OUTPUT_DEGREE), -self.MAX_OUTPUT_DEGREE)
         output_pitch = max(min(output_pitch, self.MAX_OUTPUT_DEGREE), -self.MAX_OUTPUT_DEGREE)

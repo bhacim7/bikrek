@@ -3691,3 +3691,156 @@ buyuk" < 1 derece (hiz 30 yeterli mi); kilitte yaw yon degisimi sayisi ve
 RMS dusmeli; "taret hareketli" gerekcesi pitch inerken de gorunmeli.
 Bosluk enjeksiyonu asim yaratirsa `YAW_BACKLASH_DEG` 0.25'e dusur, hala
 avlanma varsa 0.6'ya cikar; 0 kapatir.
+
+### 29.12 `aşama2son.mp4` — "merkezden takip edemiyoruz" (2026-09-23, Paket 4 sonrasi)
+
+31.2 saniye, Asama 2, 3 hedef (F16 / Drone / Fuze), silah ve kamera
+kalibrasyonu kullaniciya gore tamam (15 metrede sapma 1-2 cm). Video 30
+fps'de kare kare okundu; baslik cubugu (yaw + enkoder) ve durum cubugu
+(durum, nisan hatasi px) seritleri cikarildi. Enkoder kaydiyla eslestirme:
+video t=0 = `enkoder_20260923_164354.csv` icinde 16:44:46 (4 fps'te okunan
+64 yaw degeri ile arama, ortalama fark 0.133 derece).
+
+**Iyi haber once: DATASET GERCEKTEN DUZELDI.** Kilit suresince sinif bir kez
+bile kaymadi — F16 angajmani boyunca "dusman-F16", Drone boyunca
+"dusman-Drone", Fuze boyunca "dusman-Fuze". Onceki kosumda (29.9) maket
+karelerin %45'inde Fuze, %20'sinde Helikopter, %15'inde Drone, %18'inde
+balon etiketi aliyordu ve her kayma kilidi dusuruyordu. `[capa]` yazisi tum
+videoda yalnizca 2 karede gorundu, yani balon capasina neredeyse hic
+ihtiyac kalmadi. Guvenler 0.85-0.95.
+
+#### 29.12.1 Olculen: nisan hatasi HIC sifiri gecmiyor
+
+Kullanicinin isaret ettigi 2.96-6.56 sn araligi (F16 takibi), durum
+cubugundan 15 fps'te 56 ornek:
+
+| olcum | deger |
+|---|---|
+| yaw nisan hatasi | ort **+14.1 px**, medyan +14, aralik +2 .. +24 |
+| isaret degisimi | **0** (56 karenin hepsi ayni tarafta) |
+| 10 px tolerans icinde | karelerin **%25**'i |
+| pitch nisan hatasi | ort -6.5 px (o da tek tarafli) |
+| hedefin gercek acisal hizi | 0.44 derece/sn |
+| taretin tamamen durdugu kare | **%55** |
+| taret hareketi | 0.1-0.4 derecelik basamaklar, aralarinda 0.3-0.7 sn duraklama |
+
+Yani taret hedefi ortalamada yakaliyor (1.7 derece / 3.6 sn = 0.47 derece/sn
+vs hedefin 0.44) ama bunu MERDIVEN cikarak yapiyor: duruyor, hata birikiyor,
+firliyor. Nisangah hedefin uzerine ancak salinimin bir fazinda denk geliyor
+ve ates tam o anda aciliyor — kullanicinin "ortaya denk geldigi an sikiyor"
+gozlemi birebir dogru.
+
+#### 29.12.2 Kok neden zinciri (dordu birden)
+
+**B37 — Olu bant feedforward'i da olduruyordu ve suzgec hafizasini siliyordu.**
+`output = KP*hata + ... + feedforward` tek bir toplamdi ve olu bant bu
+TOPLAMI sifirliyordu. Hedef hareketliyken hata bandin altina duser dusmez
+taret tamamen duruyor. Ustune 29.6'da eklenen "olu banda girince suzgec
+hafizasini bosalt" kurali vardi: tek karelik bir dip bile hafizayi siliyor,
+cikinca suzgec sifirdan rampa yapiyor ve
+`ilk gonderilebilir komut = MIN_OUTPUT / (a x KP)` esigine ulasana kadar
+4-5 kare (0.30 sn) HIC komut gitmiyordu. Olculen %55 durus ve 0.3-0.7 sn'lik
+duraklamalar tam olarak bu.
+
+**B38 — Feedforward'in birimi yanlisti, o yuzden kapaliydi.** Eski formul
+`ff = hiz x LEAD_TIME x GAIN` bir KONUM (derece) uretiyordu ama bu deger HER
+KAREDE delta komut olarak gonderiliyordu. Delta komutta taret hizi
+`delta x kare_hizi` oldugu icin eski formul taret hizini hedefin
+`0.22 x 0.8 x 15 = 2.6 KATINA` cikariyordu. "Feedforward acinca taret
+savruluyor" deneyimi (Paket 1'de kazancin 0'a cekilme sebebi) fikrin degil
+birimin hatasiydi. Ayrica `FEEDFORWARD_VELOCITY_DEADBAND = 1.0` derece/sn
+idi ve hedefin gercek hizi 0.44 derece/sn — yani kazanc acik olsa bile
+feedforward karelerin %87'sinde TAM SIFIR olurdu.
+
+**B39 — Hedefin olu zaman boyunca gittigi yol telafi edilmiyordu.**
+`_angle_at(capture_t)` TARETIN kare cekilirkenki acisini telafi ediyor ama
+HEDEFIN o andan beri gittigi yolu etmiyor. Kalan hata = hedef_hizi x
+olu_zaman. `FEEDFORWARD_LEAD_TIME` yorumundaki 0.22 sn'lik saha olcumu
+(kalan piksel hatasi / hedef hizi, 14 kesitte ayni cikmis) tam olarak budur
+ama hicbir yerde KULLANILMIYORDU.
+
+**B41 — Esik altindaki komutlar sessizce atiliyordu.** `MIN_OUTPUT_PIXELS`
+altindaki cikis sifirlaniyor ve KAYBOLUYOR. Pi de ayni seyi yapiyor:
+`set_proportional_angles_delta` hedefi her karede MEVCUT aciden yeniden
+kurdugu icin yarim adimlik artik oraya da tasinmiyor. 0.44 derece/sn'de
+kare basina gereken komut 15 fps'te 2.0 px, 30 fps'te 1.0 px — esik 4 px
+oldugu icin ikisi de atiliyor. Bu yuzden **kare hizini yukseltmek tek
+basina takibi iyilestirmezdi**, once bu duzelmeliydi.
+
+**B40 — Kamera 15 fps.** Baslik cubugundaki kare sayaci: 236 kare / 15.75 sn
+= 15.0 fps. Kod `CAP_PROP_FPS`'e hic dokunmuyordu, surucu varsayilani
+geliyordu. Denetim dongusu kamera hizinda calistigi icin bu, komutlar arasi
+67 ms ve takibin basamakli gorunmesinin yapisal tavani.
+
+**B42 — Suzgec katsayisi kare hizina bagliydi.** `PID_OUTPUT_SMOOTHING`
+KARE BASINA tanimli; 15 fps'te ayarlanmisti. 30 fps'te ayni katsayi suzgeci
+gercek zamanda iki kat hizlandirip sonumu dusuruyor (benzetimde 9 derece/sn
+hedefte hata 28.6 -> 35.5 px). Kare hizini yukseltmeden once bu da
+duzelmeliydi.
+
+#### 29.12.3 Benzetim: olculen 14 px yeniden uretildi
+
+Gercek zinciri taklit eden kapali dongu benzetimi (olu bant -> suzgec ->
+MIN_OUTPUT -> MAX, 0.15+1/fps saniyelik olu zamanli geri besleme)
+`tests_yeni_mimari.py` 30. bolume eklendi. Sonuclar (kalici yaw hatasi, px):
+
+| hedef hizi | ESKI (15 fps) | YENI (15 fps) | YENI (30 fps) |
+|---|---|---|---|
+| 0.44 derece/sn (sahadaki F16) | **+15.6** (olculen +14.1) | +3.1 | +2.1 |
+| 1.5 derece/sn | +31.4 | +0.8 | +1.0 |
+| 4 derece/sn | +83.7 | +12.7 | +11.1 |
+| sabit hedef | 0.0 | 0.0 | 0.0 |
+
+Benzetimin eski ayarla sahadaki sayiyi yeniden uretmesi, mekanizmanin dogru
+teshis edildiginin kanitidir.
+
+#### 29.12.4 Videodaki diger bulgular
+
+- **Devir teslim hala uzak biniyor.** YONELME sonrasi DOGRULAMA/KILIT
+  anindaki hatalar: 142, 153, 162, 126 px (~2 derece). Paket 4'un kapali
+  dongu yonelmesi calisti ("tekrar 1" durum cubuginda goruldu) ama bir
+  tekrar yetmemis.
+- **Ates penceresinde hata cok buyuyor.** "imha dogrulaniyor" sirasinda
+  20, 45, 56, 60, 67, 84 px'e kadar cikan hatalar var; "Ates engellendi:
+  nisan tolerans disinda" 22 kez ust uste sayilip **hedef birakiliyor**
+  ("Ates aclamiyor — hedef birakiliyor"). Sebeplerden biri asagidaki.
+- **"cifte balon eslesmemis (nisan noktasi tahmini)"** gerekcesi goruldu:
+  balon esleismeyince nisan noktasi maketten TURETILIYOR ve her kaynak
+  degisimi nisan noktasinda sicrama uretiyor.
+- **"ATES — None (3. hedef, 2. atis)"**: durum metninde sinif None. Kilitli
+  cift kaybolmusken ATES durumunda kalinmis; zararsiz ama hedefin gercekten
+  ne oldugu belirsiz.
+- **Hedef kaybi tahmini** bir kez devreye girdi ("tahminle takip, 7 kare
+  kaldi") ve toparladi.
+
+#### 29.12.5 Paket 5 UYGULANDI
+
+| dosya / yer | ne | onceki -> simdi | neden |
+|---|---|---|---|
+| `config.py` `FEEDFORWARD_GAIN` | birim degisti, acildi | 0.0 -> 1.0 | ff artik `hiz x delta_time`; 1.0 = tam hiz eslemesi (B38) |
+| `config.py` `FEEDFORWARD_VELOCITY_DEADBAND` | | 1.0 -> 0.30 | gercek hedef hizi 0.44; eski bant ff'i %87 kapatiyordu (B38) |
+| `config.py` `FEEDFORWARD_MAX_DEGREE` | | 5.0 -> 1.0 | yeni formulde ust sinir zaten 2 derece |
+| `config.py` `FEEDFORWARD_MAX_STEP_DEGREE` | | 0.25 -> 0.10 | yeni ff eskisinin 0.38'i; eski sinir hic baglamiyordu |
+| `config.py` `TARGET_LEAD_TIME_SEC`, `TARGET_LEAD_MAX_DEG` | yeni | 0.15, 0.6 | hedefin olu zamanda gittigi yol (B39) |
+| `config.py` `PID_DEADBAND_PIXELS` | | 7.0 -> 5.0 | olu bandin maliyeti hareketli hedefte kalici hata (B37) |
+| `config.py` `PID_DEADBAND_SETTLE_FRAMES` | yeni | 3 | hafiza ancak hedef GERCEKTEN durunca silinir (B37) |
+| `config.py` `MIN_OUTPUT_PIXELS` | | 4.0 -> 2.5 | ~1 motor adimi; artik artik kaybolmuyor (B41) |
+| `config.py` `PID_SMOOTHING_REF_FPS` | yeni | 15.0 | suzgec katsayisi kare suresiyle olceklenir (B42) |
+| `config.py` `HUNTER_FPS`, `SPOTTER_FPS` | yeni | 30 | kare hizi artik ISTENIYOR (B40) |
+| `camera_module.py` kamera acilisi | `CAP_PROP_FPS` ayarlaniyor | | B40 |
+| `bukrek_main.py` `process_tracking` PID | cikis P/I/D ve feedforward olarak AYRILDI; ff olu bant ve suzgecin disinda, en sonda ekleniyor | | B37/B38 |
+| `bukrek_main.py` olu bant | `_olu_ardisik_*` sayaci; hafiza yalniz yerlesince silinir | | B37 |
+| `bukrek_main.py` hata hesabi | hedefin dunya acisina konum ondelemesi (`world_yaw` HAM kalir) | | B39 |
+| `bukrek_main.py` MIN_OUTPUT | esik alti artik `_min_kalan_*` ile birikiyor | | B41 |
+| `bukrek_main.py` suzgec katsayisi | `delta_time` ile olcekleniyor | | B42 |
+| `tests_yeni_mimari.py` | olu bant olcutu yeniden tanimlandi; kuyruk/hafiza kontrolleri guncellendi; 30. bolum (kapali dongu benzetimi, esik birikimi, kaynak kontrolleri) | | |
+
+**Ayar sirasi (biri digerini maskeler, teker teker degistirin):**
+1. Taret hedefin ONUNE geciyorsa once `TARGET_LEAD_TIME_SEC` 0.10'a, sonra
+   gerekirse `FEEDFORWARD_GAIN` 0.8'e.
+2. Taret GERIDE kaliyorsa `FEEDFORWARD_GAIN` 1.2, sonra
+   `TARGET_LEAD_TIME_SEC` 0.20.
+3. Kilitte titreme/avlanma baslarsa `PID_DEADBAND_PIXELS` 7.0'a geri,
+   sonra `FEEDFORWARD_VELOCITY_DEADBAND` 0.5.
+4. Kamera 30 fps vermiyorsa (acilis satirinda yazar) `HUNTER_USE_MJPG`
+   True denenir; goruntu bozulursa geri alinir.

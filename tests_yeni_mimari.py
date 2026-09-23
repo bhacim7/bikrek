@@ -482,15 +482,23 @@ _dogrudan = balon_aci / _gs * config.IMG_WIDTH
 kontrol("model uzayi boyutu yalnizca gorus acisina bagli",
         abs(_balon_model - _dogrudan) < 0.5,
         f"{_balon_model:.1f} == {_dogrudan:.1f}")
-# Tespit gurultusu esikleri KAYNAK COZUNURLUGE bagli; 1280x720'de kaldigimiz
-# icin eski (sahada ayarlanmis) degerler aynen gecerli olmali.
-# Tespit gurultusu kaynak genisligiyle olcekleniyor (model girisi 1056 sabit).
-# Esikler bu orana gore ayarlanmis olmali; 1280'de 5 px, 1920'de 7 px.
-_beklenen_olu = round(5.0 * (config.HUNTER_WIDTH / 1280.0))
-kontrol("olu bant kaynak cozunurluge gore olceklenmis",
-        abs(config.PID_DEADBAND_PIXELS - _beklenen_olu) <= 1.0,
-        f"{config.PID_DEADBAND_PIXELS} px (beklenen ~{_beklenen_olu}) = "
-        f"{config.PID_DEADBAND_PIXELS*config.HUNTER_DPP_YAW:.3f} derece")
+# OLU BANDIN OLCUTU DEGISTI (2026-09-23, 29.12 B37). Eskiden "tespit
+# gurultusu kaynak cozunurlukle olceklenir" kuralina baglanmisti (1280'de
+# 5 px -> 1920'de 8 px). Sahada olculdu ki olu bandin gercek maliyeti
+# gurultu degil, HAREKETLI hedefte kalici nisan hatasi: taret bant icinde
+# hic kimildamadigi icin hedef kaciyor (aşama2son.mp4: hata 56 karenin
+# hepsinde ayni isaretli, ort +14.1 px). Yeni olcut ikili:
+#   (a) olu bant nisan TOLERANSINDAN kucuk olmali — yoksa "bandin icinde"
+#       olmak "nisan tamam" anlamina gelmez ve sistem toleransa giremez;
+#   (b) bir motor adimindan buyuk olmali — yoksa taret adim cozunurlugunde
+#       avlanir (1 yaw adimi = 0.0375 derece = 2.7 px).
+_adim_px = (1.0 / 26.667) / abs(config.HUNTER_DPP_YAW)
+kontrol("olu bant nisan toleransindan kucuk (yoksa toleransa hic girilemez)",
+        config.PID_DEADBAND_PIXELS < config.AIM_TOLERANCE_MIN_PIXELS,
+        f"{config.PID_DEADBAND_PIXELS} px < {config.AIM_TOLERANCE_MIN_PIXELS} px")
+kontrol("olu bant bir motor adimindan buyuk (adim cozunurlugunde avlanma yok)",
+        config.PID_DEADBAND_PIXELS > _adim_px,
+        f"{config.PID_DEADBAND_PIXELS} px > {_adim_px:.1f} px (1 adim)")
 # En sik yapilan hata: cozunurluk degistirilip derece/piksel unutuluyor
 # (veya tersi). Ima edilen ODAK UZAKLIGI bu ikisinin BIRLIKTE dogru olmasini
 # gerektirir; biri degisip digeri kalirsa odak sacma bir degere firlar.
@@ -933,10 +941,19 @@ import math as _math
 _a = config.PID_OUTPUT_SMOOTHING
 kontrol("PID cikis suzgeci ETKIN (0 ise rezonans sonumu yok)", _a > 0.0, f"{_a}")
 _kaynak = io.open('bukrek_main.py', encoding='utf-8').read()
-kontrol("olu banda girilince suzgec hafizasi bosaltiliyor (kuyruk kesme)",
-        "if _olu_yaw:\n                self._pid_cikis_yaw = 0.0" in _kaynak
-        and "if _olu_pitch:\n                self._pid_cikis_pitch = 0.0" in _kaynak,
+# KUYRUK KESME DURUYOR AMA HAFIZA SILME GECIKTIRILDI (29.12 B37):
+# olu bantta cikisin KENDISI sifirlaniyor (kuyruk yok), hafiza ise ancak
+# ardisik PID_DEADBAND_SETTLE_FRAMES kare bant icinde kalinirsa siliniyor.
+kontrol("olu bantta cikis sifirlaniyor (kuyruk kesme yerinde)",
+        "if _olu_yaw:\n                pid_yaw = 0.0" in _kaynak
+        and "if _olu_pitch:\n                pid_pitch = 0.0" in _kaynak,
         "bukrek_main.process_tracking icindeki kuyruk kesme satirlari")
+kontrol("suzgec hafizasi ancak YERLESINCE siliniyor (kisa dip rampayi bozmuyor)",
+        "if self._olu_ardisik_yaw >= _yerlesme:\n                    self._pid_cikis_yaw = 0.0" in _kaynak
+        and "if self._olu_ardisik_pitch >= _yerlesme:\n                    self._pid_cikis_pitch = 0.0" in _kaynak,
+        "olu bant yerlesme sayaci")
+kontrol("yerlesme esigi 2-6 kare arasinda", 2 <= config.PID_DEADBAND_SETTLE_FRAMES <= 6,
+        str(config.PID_DEADBAND_SETTLE_FRAMES))
 if _a > 0:
     _fc = -_math.log(1 - _a) * 30.0 / (2 * _math.pi)
     _kaz = lambda f: 1.0 / _math.sqrt(1 + (f / _fc) ** 2)
@@ -1489,6 +1506,127 @@ mfm._servo_hedef_gecerli = True; mfm._target_yaw = 8.0; mfm._yeniden_yaklasma = 
 mfm.enkoder_hizala(11.0, simdi=1.0)
 kontrol("Pi: hizalama sonrasi bayat hedefe servo ACILMIYOR",
         mfm._servo_active is False and abs(mfm._simulated_yaw - 11.0) < 1e-9)
+
+# --- 30. PAKET 5 (29.12): AKICI TAKIP ---
+# Sahada olculdu (aşama2son.mp4, 2.96-6.56 sn): hedef 0.44 derece/sn ile
+# yaklasirken nisan hatasi 56 karenin HEPSINDE ayni isaretli (ort +14.1 px,
+# hic sifiri gecmiyor), karelerin yalnizca %25'i 10 px toleransta, taretin
+# %55'i tamamen duruyor. Asagidaki kapali dongu benzetimi ayni zinciri
+# (olu bant -> suzgec -> MIN_OUTPUT -> MAX, olu zamanli geri besleme)
+# taklit eder ve ESKI ayarlarla o 14 pikseli yeniden uretir.
+print()
+print("30. Paket 5 — akici takip (feedforward birimi, olu bant, esik birikimi)")
+import collections as _coll
+
+
+def _takip_sim(hiz, fps=15.0, ff=False, olu_px=5.0, min_px=2.5, yerlesme=3,
+               ondeleme=0.0, birikim=False, a_olcekle=True,
+               kp=None, T_sabit=0.15, sure=8.0):
+    """Kapali dongu takip benzetimi. Doner: son yarinin ortalama hatasi (px)."""
+    dpp = abs(config.HUNTER_DPP_YAW)
+    kp = config.KP_YAW if kp is None else kp
+    dt = 1.0 / fps
+    a = config.PID_OUTPUT_SMOOTHING
+    if a_olcekle and config.PID_SMOOTHING_REF_FPS > 0:
+        a = 1.0 - (1.0 - a) ** (dt * config.PID_SMOOTHING_REF_FPS)
+    olu, esik, ust = olu_px * dpp, min_px * dpp, 2.0
+    taret = hedef = hafiza = kalan = 0.0
+    ardisik = 0
+    gecikme = _coll.deque([0.0] * max(1, int(round((T_sabit + dt) / dt))))
+    hatalar = []
+    n = int(sure * fps)
+    for k in range(n):
+        hedef += hiz * dt
+        gecikme.append(hedef)
+        olculen = gecikme.popleft()
+        gercek = hedef - taret
+        hata = (olculen - taret) + (hiz * ondeleme if ff else 0.0)
+        pid = kp * hata
+        icinde = abs(hata) < olu
+        ardisik = ardisik + 1 if icinde else 0
+        if icinde:
+            pid = 0.0
+            if ardisik >= yerlesme:
+                hafiza = 0.0
+        else:
+            hafiza = a * pid + (1 - a) * hafiza
+            pid = hafiza
+        cikis = pid + (hiz * dt if ff else 0.0)
+        cikis = max(-ust, min(ust, cikis))
+        if birikim:
+            toplam = cikis + kalan
+            if abs(toplam) < esik:
+                cikis, kalan = 0.0, toplam
+            else:
+                cikis, kalan = toplam, 0.0
+        elif 0 < abs(cikis) < esik:
+            cikis = 0.0
+        taret += cikis
+        if k > n * 0.5:
+            hatalar.append(gercek / dpp)
+    return sum(hatalar) / len(hatalar)
+
+
+_eski = _takip_sim(0.44, ff=False, olu_px=7.0, min_px=4.0, yerlesme=1,
+                   birikim=False, a_olcekle=False)
+kontrol("ESKI ayarlar sahada olculen kalici hatayi yeniden uretiyor (+14 px civari)",
+        12.0 <= _eski <= 19.0, f"{_eski:.1f} px (sahada +14.1)")
+_yeni = _takip_sim(0.44, ff=True, ondeleme=config.TARGET_LEAD_TIME_SEC, birikim=True)
+kontrol("YENI ayarlarla ayni hedefte kalici hata nisan toleransinin altinda",
+        abs(_yeni) < config.AIM_TOLERANCE_MIN_PIXELS,
+        f"{_yeni:.1f} px < {config.AIM_TOLERANCE_MIN_PIXELS} px (eski {_eski:.1f})")
+kontrol("YENI, ESKI'den en az 3 kat iyi", abs(_yeni) * 3 < abs(_eski),
+        f"{_yeni:.1f} vs {_eski:.1f}")
+for _h in (1.5, 4.0):
+    _v = _takip_sim(_h, ff=True, ondeleme=config.TARGET_LEAD_TIME_SEC, birikim=True)
+    _e = _takip_sim(_h, ff=False, olu_px=7.0, min_px=4.0, yerlesme=1,
+                    birikim=False, a_olcekle=False)
+    kontrol(f"{_h} derece/sn hedefte yeni ayar eskiden iyi", abs(_v) < abs(_e) / 2.0,
+            f"{_v:.1f} vs {_e:.1f} px")
+kontrol("sabit hedefte kalici hata yok (olu bant avlanma uretmiyor)",
+        abs(_takip_sim(0.0, ff=True, ondeleme=config.TARGET_LEAD_TIME_SEC, birikim=True)) < 1.0)
+kontrol("30 fps'te takip 15 fps'ten kotu DEGIL (suzgec kare suresiyle olcekli)",
+        abs(_takip_sim(0.44, fps=30.0, ff=True, ondeleme=config.TARGET_LEAD_TIME_SEC,
+                       birikim=True)) <= abs(_yeni) + 1.0)
+
+# Esik birikimi: toplam yol korunmali
+_esik_d = config.MIN_OUTPUT_PIXELS * abs(config.HUNTER_DPP_YAW)
+_kalan, _gonderilen = 0.0, 0.0
+_kucuk = _esik_d / 4.0
+for _ in range(40):
+    _t = _kucuk + _kalan
+    if abs(_t) < _esik_d:
+        _kalan = _t
+    else:
+        _gonderilen += _t
+        _kalan = 0.0
+kontrol("esik alti komutlar birikip toplam yolu koruyor",
+        abs(_gonderilen + _kalan - 40 * _kucuk) < 1e-9,
+        f"gonderilen {_gonderilen:.4f} + kalan {_kalan:.4f}")
+kontrol("birikimsiz olsaydi 40 karede hic komut gitmezdi",
+        _kucuk < _esik_d)
+
+# config ve kaynak kontrolleri
+kontrol("feedforward ACIK ve kazanc makul", 0.5 <= config.FEEDFORWARD_GAIN <= 1.5,
+        str(config.FEEDFORWARD_GAIN))
+kontrol("feedforward hiz olu bandi gercek hedef hizinin altinda (0.44 derece/sn)",
+        config.FEEDFORWARD_VELOCITY_DEADBAND < 0.44, str(config.FEEDFORWARD_VELOCITY_DEADBAND))
+kontrol("hedef ondelemesi 0-0.3 sn arasinda", 0.0 <= config.TARGET_LEAD_TIME_SEC <= 0.3)
+kontrol("kamera kare hizi isteniyor", config.KAMERA_AYARLARI['hunter'].get('fps') == config.HUNTER_FPS
+        and config.HUNTER_FPS >= 30)
+_k30 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("feedforward KARE SURESIYLE olcekleniyor (konum degil hiz)",
+        "lead = _dt_ff * config.FEEDFORWARD_GAIN" in _k30)
+kontrol("feedforward olu banttan SONRA, suzgecin disinda ekleniyor",
+        "output_yaw = pid_yaw + feedforward_yaw" in _k30
+        and _k30.index("output_yaw = pid_yaw + feedforward_yaw")
+            > _k30.index("self._pid_cikis_yaw = _a * pid_yaw"))
+kontrol("hedef ondelemesi hataya giriyor ama world_yaw HAM kaliyor",
+        "error_yaw_degree = (world_yaw + _ond_yaw" in _k30
+        and "self._last_world_yaw = world_yaw" in _k30)
+_k30c = io.open('camera_module.py', encoding='utf-8').read()
+kontrol("camera_module kare hizini kameraya soruyor",
+        "capture.set(cv2.CAP_PROP_FPS, ayar[\"fps\"])" in _k30c)
 
 print()
 print("=" * 70)
