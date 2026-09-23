@@ -367,6 +367,8 @@ class AngajmanMakinesi:
         self._balon_gecmisi = []
         self._ates_oncesi_balon_orani = None
         self.dogrulama_notu = ''       # imha dogrulanamadiysa sebebi
+        # KILIT'te balonun hic gorulmedigi surenin baslangici (29.18 B55)
+        self._balonsuz_baslangic = None
 
         # Balon en son görüldüğünde ölçülen bağıl konumu (nişan sürekliliği).
         self.nisan_ofseti = None
@@ -397,6 +399,7 @@ class AngajmanMakinesi:
                 self._balon_gecmisi = []
                 self._ates_oncesi_balon_orani = None
                 self.dogrulama_notu = ''
+                self._balonsuz_baslangic = None
 
     def gecen(self):
         return time.time() - self.durum_zamani
@@ -779,6 +782,29 @@ class AngajmanMakinesi:
         # imha dogrulamasinin taban orani bu (29.16 B50).
         self.balon_gozlemi(balon_gorundu)
 
+        # BALONSUZ KILIT HIZLI ELENIR (2026-09-23 gece, 29.18 B55).
+        # Sahada olculdu (aşama2son6.mp4): imha edilen F16'nin karkasina
+        # kilitlenildi, balon hic gorulmedi ve sistem `ENGAGE_LOCK_TIMEOUT`
+        # (8 sn) dolana kadar orada bekledi — 29.4 saniyelik turun 8.75
+        # saniyesi tek bir olu kilitte gecti. Nisan MUKEMMELDI (kayma 1-5
+        # px, "nisan TAMAM") ama balon olmadigi icin ATES'e hic gecilemedi:
+        # `_nisan_ardisik` yalnizca balon goruluyorsa artiyor. Yani hicbir
+        # ilerleme olmadan bekleniyordu. Balonsuz gecen sure esigi asinca
+        # DAR yaricapla (komsu hedefi kapatmasin) kara listeye alinip
+        # TARAMA'ya donuluyor.
+        _bsuz = getattr(config, 'LOCK_NO_BALLOON_GIVEUP_SEC', 0.0) or 0.0
+        if balon_gorundu:
+            self._balonsuz_baslangic = None
+        elif _bsuz > 0:
+            if self._balonsuz_baslangic is None:
+                self._balonsuz_baslangic = time.time()
+            elif time.time() - self._balonsuz_baslangic > _bsuz:
+                self.kara_listeye_al(
+                    config.BLACKLIST_NO_BALLOON_TTL_SEC, 'kilitte balon yok',
+                    yaricap=config.BLACKLIST_NO_BALLOON_RADIUS_DEG)
+                self._gec(TARAMA)
+                return False
+
         tolerans = max(config.AIM_TOLERANCE_MIN_PIXELS,
                        nisan_yaricap_px * config.AIM_TOLERANCE_RATIO)
         if nisan_hatasi_px <= tolerans and balon_gorundu:
@@ -790,6 +816,29 @@ class AngajmanMakinesi:
             self._gec(ATES)
             return True
         return False
+
+    def kara_liste_disinda(self, ciftler, acilar):
+        """
+        Kara listedeki acilarda duran ciftleri eler (29.18 B54).
+
+        KARA LISTE ESKIDEN YALNIZCA TARAMA'DA BAKILIYORDU. Sahada olculdu
+        (aşama2son6.mp4): +2.9 derecedeki F16 imha edilip 12 saniyeligine
+        kara listeye alindi, TARAMA dogru sekilde baska bir adaya
+        (+6.8 derece) yoneldi, ama DOGRULAMA ve KILIT kara listeye hic
+        bakmadigi icin sistem taret oraya varinca ayni olu F16'ya
+        (+1.6 derece, kara listenin TAM ICINDE) kilitlendi ve 8.75 saniye
+        orada kaldi. Filtre artik angajmanin her asamasinda uygulaniyor.
+        """
+        if not getattr(config, 'LOCK_SKIP_BLACKLISTED', True):
+            return list(ciftler), list(acilar)
+        acilar = list(acilar) + [None] * max(0, len(ciftler) - len(acilar))
+        yeni_c, yeni_a = [], []
+        for c, a in zip(ciftler, acilar):
+            if a is not None and self.kara_liste.icinde_mi(a[0], a[1]):
+                continue
+            yeni_c.append(c)
+            yeni_a.append(a)
+        return yeni_c, yeni_a
 
     def balon_gozlemi(self, goruldu):
         """
@@ -915,7 +964,9 @@ class AngajmanMakinesi:
 
     def imha_edildi(self):
         self.imha_sayisi += 1
-        self.kara_listeye_al(config.BLACKLIST_TTL_SEC, 'imha')
+        self.kara_listeye_al(config.BLACKLIST_TTL_SEC, 'imha',
+                             yaricap=getattr(config, 'BLACKLIST_KILL_RADIUS_DEG',
+                                             None))
         self.aktif_iz_id = None
         self._gec(TARAMA)
 
@@ -931,7 +982,8 @@ class AngajmanMakinesi:
         self.kara_listeye_al(
             getattr(config, 'BLACKLIST_GIVEUP_TTL_SEC',
                     config.BLACKLIST_VERIFY_TTL_SEC),
-            'imha edilemedi')
+            'imha edilemedi',
+            yaricap=getattr(config, 'BLACKLIST_KILL_RADIUS_DEG', None))
         self.aktif_iz_id = None
         self._gec(TARAMA)
 

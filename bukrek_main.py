@@ -1184,6 +1184,11 @@ class HavaSavunmaArayuz(QWidget):
         çerçevesinde olduğu için taretin mevcut konumundan bağımsızdır.
         """
         m = self.angajman
+        # KARA LISTE ARTIK HER ASAMADA UYGULANIYOR (29.18 B54). Eskiden
+        # yalnizca TARAMA aday secerken bakiliyordu; DOGRULAMA ve KILIT
+        # kara listeye hic bakmadigi icin imha edilmis bir hedefe yeniden
+        # kilitlenilebiliyordu (sahada 8.75 saniye kayip).
+        ciftler, acilar = m.kara_liste_disinda(ciftler, acilar)
         if m.durum == TARAMA:
             # ÖNCE AVCI. Elimizdeki karede angaje edilebilir bir çift varsa
             # gözcüye hiç gidilmez; ister bunu açıkça söylüyor ve sahada

@@ -1994,6 +1994,85 @@ kontrol("vazgecilen hedef kara listesi tur suresine gore makul (3-10 sn)",
         f"{config.BLACKLIST_GIVEUP_TTL_SEC} sn")
 kontrol("vazgecme TTL'i imha TTL'inden kisa (vurulamayan hedefe daha cabuk donulsun)",
         config.BLACKLIST_GIVEUP_TTL_SEC < config.BLACKLIST_TTL_SEC)
+
+# --- 36. OLU KILIT (29.18) ---
+# Sahada olculdu (aşama2son6.mp4): +2.9 derecedeki F16 imha edildi ve 12
+# saniyeligine kara listeye alindi. TARAMA dogru sekilde baska bir adaya
+# (+6.8 derece) yoneldi, ama DOGRULAMA ve KILIT kara listeye hic bakmadigi
+# icin sistem ayni olu F16'ya (+1.6 derece, kara listenin TAM ICINDE)
+# kilitlendi. Nisan mukemmeldi (kayma 1-5 px, "nisan TAMAM") ama balon
+# olmadigi icin ATES'e hic gecilemedi ve 29.4 saniyelik turun 8.75
+# saniyesi orada gecti. Imha 1/3.
+print()
+print("36. Olu kilit — kara liste her asamada, balonsuz kilit hizli eleniyor")
+_m36 = engagement.AngajmanMakinesi()
+_m36.basla('task2')
+_c_a, _c_b = _cift_at('dusman-F16'), _cift_at('dusman-Helikopter')
+_a_a, _a_b = (2.9, 1.0), (6.8, 1.0)
+_m36.hedef_yaw, _m36.hedef_pitch = _a_a
+_m36.imha_edildi()                      # gercek imha yolundan kara listeye al
+_kc, _ka = _m36.kara_liste_disinda([_c_a, _c_b], [_a_a, _a_b])
+kontrol("imha edilen acidaki cift angajmandan ELENIYOR",
+        len(_kc) == 1 and _kc[0] is _c_b and _ka[0] == _a_b,
+        f"{len(_kc)} cift kaldi")
+_kc, _ka = _m36.kara_liste_disinda([_c_a, _c_b], [(1.6, 1.0), _a_b])
+kontrol("kara liste yaricapi icindeki (1.3 derece oteki) cift de ELENIYOR",
+        len(_kc) == 1 and _kc[0] is _c_b)
+# KOMSU HEDEF KAPANMAMALI: sahada iki hedef 3.9 derece arayla duruyordu.
+kontrol("3.9 derece otedeki KOMSU hedef angajmanda kaliyor",
+        _m36.kara_liste.icinde_mi(_a_a[0], _a_a[1])
+        and not _m36.kara_liste.icinde_mi(_a_b[0], _a_b[1]),
+        f"imha yaricapi {config.BLACKLIST_KILL_RADIUS_DEG} derece")
+kontrol("imha yaricapi genel yaricaptan dar",
+        config.BLACKLIST_KILL_RADIUS_DEG < config.BLACKLIST_RADIUS_DEG)
+_m36.kara_liste.temizle()
+_kc, _ka = _m36.kara_liste_disinda([_c_a, _c_b], [_a_a, _a_b])
+kontrol("kara liste bosken hicbir cift elenmiyor", len(_kc) == 2)
+_kc, _ka = _m36.kara_liste_disinda([_c_a], [])
+kontrol("acisi bilinmeyen cift elenmiyor (bilgi yoksa dislama yok)", len(_kc) == 1)
+_k36 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("filtre durum makinesinin HER asamasindan once uygulaniyor",
+        "ciftler, acilar = m.kara_liste_disinda(ciftler, acilar)" in _k36
+        and _k36.index("m.kara_liste_disinda(ciftler, acilar)")
+            < _k36.index("secim = m.tarama_adimi("))
+
+# Balonsuz kilit
+_m36b = engagement.AngajmanMakinesi()
+_m36b.basla('task2')
+_m36b.dogrulanan_sinif = 'dusman-F16'
+_m36b._gec(engagement.KILIT)
+_m36b.kilit_aci = (1.6, 1.0)
+_m36b.hedef_yaw, _m36b.hedef_pitch = 1.6, 1.0
+for _ in range(5):
+    _m36b.kilit_adimi(2.0, 15.0, False)
+kontrol("balonsuz kilit hemen birakilmiyor (tespit titremesine pay)",
+        _m36b.durum == engagement.KILIT, _m36b.durum)
+_m36b._balonsuz_baslangic -= config.LOCK_NO_BALLOON_GIVEUP_SEC + 0.1
+_m36b.kilit_adimi(2.0, 15.0, False)
+kontrol("balonsuz sure dolunca KILIT birakiliyor",
+        _m36b.durum == engagement.TARAMA, _m36b.durum)
+kontrol("birakilan olu kilit DAR yaricapla kara listeye aliniyor",
+        _m36b.kara_liste.icinde_mi(1.6, 1.0)
+        and not _m36b.kara_liste.icinde_mi(1.6 + config.BLACKLIST_NO_BALLOON_RADIUS_DEG + 0.5, 1.0))
+_m36c = engagement.AngajmanMakinesi()
+_m36c.basla('task2')
+_m36c.dogrulanan_sinif = 'dusman-F16'
+_m36c._gec(engagement.KILIT)
+_m36c.hedef_yaw, _m36c.hedef_pitch = 0.0, 0.0
+for _ in range(4):
+    _m36c.kilit_adimi(200.0, 15.0, False)
+_m36c.kilit_adimi(200.0, 15.0, True)          # balon bir kez gorundu
+kontrol("balon bir kez gorununce balonsuz sayaci sifirlaniyor",
+        _m36c._balonsuz_baslangic is None and _m36c.durum == engagement.KILIT)
+kontrol("balonsuz vazgecme suresi grace penceresinden uzun",
+        config.LOCK_NO_BALLOON_GIVEUP_SEC
+        > config.FIRE_BALLOON_GRACE_FRAMES / 15.0,
+        f"{config.LOCK_NO_BALLOON_GIVEUP_SEC} sn > "
+        f"{config.FIRE_BALLOON_GRACE_FRAMES/15.0:.2f} sn")
+kontrol("kilit zaman asimi tur suresine gore makul (2-5 sn)",
+        2.0 <= config.ENGAGE_LOCK_TIMEOUT <= 5.0, f"{config.ENGAGE_LOCK_TIMEOUT} sn")
+kontrol("balonsuz vazgecme, genel kilit zaman asimindan ONCE devreye giriyor",
+        config.LOCK_NO_BALLOON_GIVEUP_SEC < config.ENGAGE_LOCK_TIMEOUT)
 kontrol("balon grace sayaci tutuluyor ve kapiya veriliyor",
         "self._balon_kayip_kare += 1" in _k31
         and "balon_yakin=self._balon_yakin_zamanda()" in _k31)

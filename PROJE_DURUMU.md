@@ -4408,3 +4408,109 @@ kisaltmayi deneriz.
 
 `BLACKLIST_GIVEUP_TTL_SEC = 5.0` kullanicinin sectigi degerle birakildi;
 saha kaydi bu degerin dogru oldugunu gosteriyor (29.17.2 madde 3).
+
+### 29.18 `aşama2son6.mp4` — OLU KILIT: turun 8.75 saniyesi imha edilmis hedefte gecti
+
+29.4 saniye, Asama 2, 3 hedef (F16 / Helikopter / Drone). Kayit
+`enkoder_20260923_223730.csv`; video t=0 = 22:48:43 (ortalama fark
+0.043 derece). **Sonuc: imha 1 / 3.** Bir onceki kosumda (29.17) ayni
+duzenekte 3/3 ve 20.7 saniye alinmisti.
+
+#### 29.18.1 Tur cizelgesi ve taret acisi
+
+| t (sn) | taret | olay |
+|---|---|---|
+| 1.5-2.6 | +2.7 .. +2.9 | KILIT F16, **1 atis** |
+| 4.25 | +2.9 | **IMHA DOGRULANDI** (imha 1) — hizli ve temiz |
+| 4.5 | +6.3 | YONELME +6.8 (yeni aday) |
+| **5.0-12.5** | **+1.5 .. +1.9** | **KILIT — dusman-F16, BALON YOK, 8.75 saniye** |
+| 13.0-14.5 | +4.5 -> +11.4 | YONELME +11.0 |
+| 15.0-21.2 | +8.6 .. +12.9 | Helikopter, 3 atis, imha ONAYLANMADI -> 'pes' |
+| 21.5-23.0 | +5.8 -> +1.3 | YONELME +0.5 |
+| 23.5-27.0 | -4.6 .. -14.5 | Drone, kayma 224 -> 11, 1 atis |
+| 27.5+ | -14.6 | kullanici durdurdu |
+
+#### 29.18.2 B54 — Kara liste yalnizca TARAMA'da uygulaniyordu
+
+Enkoder kaydindan kesin: F16 **+2.9 derecede** imha edildi ve 12
+saniyeligine kara listeye alindi. TARAMA dogru davrandi ve **+6.8
+derecedeki** baska bir adaya yoneldi. Ama taret oraya varinca sistem
+**+1.6 derecedeki** — yani kara listenin tam icindeki — olu F16'ya
+kilitlendi ve 8.75 saniye orada kaldi.
+
+Sebep: `kara_liste.icinde_mi` yalnizca iki yerde cagriliyordu —
+gozcu adaylarini siralarken (`aday_sirala`) ve `tarama_adimi` icinde.
+**DOGRULAMA ve KILIT kara listeye hic bakmiyordu.** Bir kez kilitlenince
+balon capasi en yakin balonlu/maketli cifti izliyor ve olu hedefi
+yeniden benimsiyordu.
+
+Durum cubugu bunu net gosteriyor: 35 ardisik ornekte
+`KILIT — dusman-F16 | BALON YOK | nisan TAMAM | kayma 1-5 px`.
+**Nisan kusursuzdu**, kayma 14 piksel sinirinin cok altindaydi — ama
+balon olmadigi icin `kilit_adimi` `_nisan_ardisik`'i hic artirmadi ve
+ATES'e hic gecilemedi. Yani bekleyerek kazanilabilecek hicbir sey yoktu;
+sistem sadece `ENGAGE_LOCK_TIMEOUT` (8 sn) dolsun diye bekledi.
+
+**Duzeltme:** `AngajmanMakinesi.kara_liste_disinda(ciftler, acilar)`
+eklendi ve `_angajman_adimi` durum makinesinin HER asamasindan once
+uyguluyor. Kara listedeki acida duran cift angajmana hic girmiyor.
+
+#### 29.18.3 B55 — Balonsuz kilit 8 saniye tutuluyordu
+
+Yukaridaki filtre bu senaryoyu kapatiyor, ama balonu gercekten
+gorunmeyen CANLI bir hedefte ayni olu bekleme tekrarlanabilir. Bu yuzden
+ikinci bir cikis eklendi: KILIT'te balon `LOCK_NO_BALLOON_GIVEUP_SEC`
+(1.2 sn) boyunca HIC gorulmezse hedef DAR yaricapla
+(`BLACKLIST_NO_BALLOON_RADIUS_DEG` 1.5 derece,
+`BLACKLIST_NO_BALLOON_TTL_SEC` 3 sn) kara listeye alinip TARAMA'ya
+donuluyor. 1.2 saniye, balon tespitinin kare kare titremesine
+(`FIRE_BALLOON_GRACE_FRAMES` 0.2 sn) fazlasiyla pay birakiyor.
+
+`ENGAGE_LOCK_TIMEOUT` da 8.0 -> **4.0** saniyeye indirildi: 8 saniye
+20-30 saniyelik bir turun ucte biri. Bu timeout artik yalnizca "balon
+goruluyor ama nisan bir turlu oturmuyor" halinde devrede.
+
+#### 29.18.4 B56 — Kara liste yaricapi komsu hedefi de kapatiyordu
+
+Kara liste her asamada uygulanmaya baslayinca varsayilan
+`BLACKLIST_RADIUS_DEG = 4.0` tehlikeli hale geldi: 15 metrede 1.05 metre
+yanal bolge kapatir. Bu kosumda iki hedef **3.9 derece** arayla
+duruyordu (+2.9 ve +6.8) — yani birini imha etmek digerini de angajman
+disi birakirdi. Imha ve vazgecme kayitlari icin ayri ve dar bir yaricap
+tanimlandi: `BLACKLIST_KILL_RADIUS_DEG = 2.5` derece (15 metrede 0.65
+metre). Vurulan hedefin karkasini kapatir, 1 metre otedekini serbest
+birakir. Hedef yaklastikca acisi kaydigi icin dar yaricap bazen
+yetmeyebilir; o bosluğu B55'teki 1.2 saniyelik cikis kapatiyor.
+
+#### 29.18.5 Kalan gozlemler
+
+- **Helikopter 3 atista imha ONAYLANMADI** ve 'pes' ile birakildi.
+  Ates sirasindaki nisan hatalari buyuktu (yaw 47, -29, -30, 19, 29;
+  pitch -16, 20, 50, -152). Yeni 35 karelik butce sayesinde ucuncu
+  atisa kadar gidebildi (eski 22 ile daha erken birakilirdi), ama
+  nisan kalitesi dusuktu. Bir sonraki kosumda "kayma" degerleri
+  izlenmeli.
+- **F16'nin ilk angajmani ornek nitelikte**: kilit 1.5, atis 2.6,
+  imha 4.25 — 2.75 saniyede tek atisla imha.
+- Ates sonrasi TANI PENCERESI (29.17) bu kosumda konsola yaziyor
+  olmali; kullanicinin o satirlari paylasmasi Pi yukleme sorusunu
+  kapatacak.
+
+#### 29.18.6 Degisiklikler
+
+| dosya / yer | ne | onceki -> simdi | neden |
+|---|---|---|---|
+| `engagement.py` `kara_liste_disinda()` | YENI | | kara liste her asamada (B54) |
+| `bukrek_main.py` `_angajman_adimi` | filtre durum makinesinden once | | B54 |
+| `engagement.py` `kilit_adimi` | balonsuz sure sayaci, dolunca dar kara liste + TARAMA | | B55 |
+| `config.py` `LOCK_NO_BALLOON_GIVEUP_SEC` | yeni | 1.2 | B55 |
+| `config.py` `LOCK_SKIP_BLACKLISTED` | yeni | True | B54 (kapatilabilir) |
+| `config.py` `ENGAGE_LOCK_TIMEOUT` | | 8.0 -> 4.0 | olu kilit turun ucte birini yiyordu |
+| `config.py` `BLACKLIST_KILL_RADIUS_DEG` | yeni | 2.5 | komsu hedef kapanmasin (B56) |
+| `engagement.py` `imha_edildi`, `imha_edilemedi` | dar yaricapla kara listeye aliyor | | B56 |
+| `tests_yeni_mimari.py` 36 | filtre, komsu hedef, balonsuz cikis, sabit tutarliligi | | |
+
+**Beklenti:** imha edilen hedefe yeniden kilitlenme imkansiz; balonu
+gorunmeyen hedefte en fazla 1.2 saniye kaybedilir (once 8.75 saniye).
+Bu kosumdaki 8.75 saniye geri kazanilirsa tur suresi 20 saniyenin
+altina inmeli.

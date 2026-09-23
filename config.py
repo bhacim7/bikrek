@@ -1068,7 +1068,25 @@ ENGAGE_SLEW_TIMEOUT = 2.5
 # bu timeout yalnizca 'maket var ama sinif tutarsiz' durumunda devrede
 # kaliyor ve orada da 1.0 saniye yeterli (30 karede 4 ardisik ayni sinif).
 ENGAGE_VERIFY_TIMEOUT = 1.0
-ENGAGE_LOCK_TIMEOUT = 8.0
+# 8.0 -> 4.0 (2026-09-23 gece, 29.18). 8 saniye, 20-30 saniyelik bir turun
+# ucte biri; sahada olu bir kilit turun 8.75 saniyesini yedi. Bu timeout
+# artik yalnizca "balon goruluyor ama nisan bir turlu oturmuyor" halinde
+# devrede: balonsuz kilit LOCK_NO_BALLOON_GIVEUP_SEC ile cok daha once
+# eleniyor.
+ENGAGE_LOCK_TIMEOUT = 4.0
+
+# KILIT'te balon bu kadar sure HIC gorulmezse hedef birakilir (saniye).
+# Sahada (aşama2son6.mp4) imha edilmis F16'nin karkasina kilitlenildi:
+# nisan mukemmeldi (kayma 1-5 px, "nisan TAMAM") ama balon olmadigi icin
+# ATES'e hic gecilemedi ve `_nisan_ardisik` hic artmadi — yani bekleyerek
+# hicbir sey kazanilmiyordu. Balon tespiti kare kare titredigi icin
+# (FIRE_BALLOON_GRACE_FRAMES) bu sure birkac karelik kesintiyi tolere
+# edecek kadar uzun, olu kilidi kesecek kadar kisa olmali.
+LOCK_NO_BALLOON_GIVEUP_SEC = 1.2
+
+# Kara liste angajmanin HER asamasinda uygulansin mi (29.18 B54).
+# False = eski davranis (yalnizca TARAMA'da bakilir).
+LOCK_SKIP_BLACKLISTED = True
 
 # Doğrulama: maket sınıfı kaç kare üst üste aynı çıkmalı, hangi güvenin
 # üstünde. Aşama 3'te dost vurmak diskalifiye olduğu için katı tutuldu.
@@ -1332,6 +1350,15 @@ TRACK_REACQUIRE_PIXELS = 150.0
 # anlamsız, taret döndükçe referans kayar).
 BLACKLIST_RADIUS_DEG = 4.0
 BLACKLIST_TTL_SEC = 12.0          # imha edilenler için
+# IMHA/VAZGECME KAYDININ YARICAPI (2026-09-23 gece, 29.18 B54).
+# Varsayilan 4.0 derece 15 metrede 1.05 metre yanal bolge kapatir; kara
+# liste artik angajmanin HER asamasinda uygulandigi icin bu genislik
+# KOMSU hedefi de angajman disi birakabilirdi (sahada iki hedef 3.9 derece
+# arayla duruyordu). 2.5 derece = 15 metrede 0.65 metre: vurulan hedefin
+# karkasini kapatir, 1 metre otedeki hedefi serbest birakir.
+# Hedef yaklastikca acisi kaydigi icin dar yaricap bazen yetmeyebilir;
+# o durumu LOCK_NO_BALLOON_GIVEUP_SEC 1.2 saniyede kesiyor.
+BLACKLIST_KILL_RADIUS_DEG = 2.5
 # Atis butcesi dolan (vurulamayan) hedef icin (2026-09-23 gece, 29.16).
 # Eskiden BLACKLIST_VERIFY_TTL_SEC (1.5 sn) kullaniliyordu; sistem siradaki
 # hedefe yonelip donmeye bile firsat bulamadan ayni hedefe geri donuyordu.
