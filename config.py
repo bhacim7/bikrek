@@ -754,6 +754,24 @@ FEEDFORWARD_MAX_STEP_DEGREE = 0.10
 # kapatildiktan sonra asil kararsizlik kaynagi kalmadi ama ondelemeyi de
 # temkinli tutmak marj birakiyor. Taret geride kaliyorsa 0.15'e geri.
 TARGET_LEAD_TIME_SEC = 0.10
+
+# --- NISAN NOKTASI YUMUSATMA (2026-09-23 gece, 29.19 B58) ---
+# Sahada olculdu (aşama2son7.mp4, kilit oturduktan sonraki 98 ornek):
+#   taretin KENDI titremesi (enkoder)      : 2-4 px
+#   nisan hatasinin kare-kare DEGISIMI     : yaw 10.5 px, pitch 11.6 px
+#   nisan hatasi RMS                       : yaw 23.8 px, pitch 14.3 px
+# Yani hatanin buyuk kismi taretten DEGIL, NISAN NOKTASININ KENDISINDEN
+# geliyor: 30 piksellik balonun kutusu kare kare oynuyor ve balon
+# gorulmedigi karelerde nokta maketten turetiliyor; her gecis noktayi
+# ziplatiyor. Denetleyici bu ziplamalari sadakatle takip ediyordu.
+# Cozum: hedefin DUNYA acisi (konum) kisa bir EMA'dan geciriliyor.
+# Gecikme bedeli (1-a)/a x kare_suresi = 0.08 sn, ve hedef ondelemesi
+# (TARGET_LEAD_TIME_SEC 0.10) bunu zaten fazlasiyla karsiliyor.
+# Buyuk siçramalarda (hedef degisimi, edinme) suzgec ATLANIR, yoksa yeni
+# hedefe yaklasma yavaslardi.
+# 0 = kapali (eski davranis).
+AIM_POINT_SMOOTHING = 0.45
+AIM_POINT_SNAP_DEG = 1.0      # bu kadar buyuk sicramada suzgec atlanir
 TARGET_LEAD_MAX_DEG = 0.6      # ondelemenin ust siniri (gurultuye karsi)
 
 # Hedefin dünya açısal hızı için üst sınır (derece/sn). Gerçek hedefler

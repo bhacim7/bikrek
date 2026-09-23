@@ -671,7 +671,7 @@ class AngajmanMakinesi:
                         and _aci_uzakligi(a, self.kilit_aci) > yaricap):
                     continue
                 if a is not None:
-                    self.kilit_aci = a
+                    self._capayi_guncelle(a)
                 self.kopru_kare = 0
                 self.capa_kayip = 0
                 self.dost_ardisik = 0
@@ -706,10 +706,29 @@ class AngajmanMakinesi:
         else:
             self.dost_ardisik = 0
 
-        self.kilit_aci = aday_aci
+        self._capayi_guncelle(aday_aci)
         self.capa_kayip = 0
         self.kopru_kare += 1          # istatistik: kac kare capayla gidildi
         return aday, True
+
+    def _capayi_guncelle(self, aci):
+        """
+        Kilit capasini ve KARA LISTE MERKEZINI birlikte gunceller (29.19 B57).
+
+        `hedef_yaw/hedef_pitch` eskiden YALNIZCA TARAMA'da (gozcunun verdigi
+        aciyla) yaziliyordu ve KILIT boyunca hic guncellenmiyordu. Kara
+        liste ise merkez olarak bu alanlari kullanir. Hedef yaklastikca
+        gercek acisi gozcunun ilk tahmininden uzaklastigi icin imha /
+        vazgecme / balonsuz cikis kayitlari YANLIS ACIYA dusuyordu.
+        Sahada olculdu (aşama2son7.mp4): t=10.5'te F16 icin atis butcesi
+        doldu ve hedef "birakildi", ama kara liste kaydi yanlis yere
+        dustugu icin sistem 0.5 SANIYE sonra ayni hedefe geri kilitlendi;
+        o tek hedef turun 12.5 saniyesini yedi.
+        """
+        if aci is None:
+            return
+        self.kilit_aci = aci
+        self.hedef_yaw, self.hedef_pitch = aci
 
     def _kilit_hedefi_sec_eski(self, ciftler, acilar):
         """config.LOCK_BALLOON_ANCHOR = False iken eski uc kademeli secim."""
@@ -717,7 +736,7 @@ class AngajmanMakinesi:
         for c, a in zip(ciftler, acilar):
             if c.maket is not None and c.sinif == self.dogrulanan_sinif:
                 if a is not None:
-                    self.kilit_aci = a
+                    self._capayi_guncelle(a)
                 self.kopru_kare = 0
                 self.yabanci_maket_ardisik = 0
                 return c, False

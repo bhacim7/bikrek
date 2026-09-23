@@ -269,6 +269,9 @@ class HavaSavunmaArayuz(QWidget):
         self.ates_nisan_tamam = False
         # Ates sonrasi tani penceresi (29.17): komut vs fiili donus.
         self._ates_tani = None
+        # Nisan noktasi suzgeci (29.19 B58): hedefin yumusatilmis dunya acisi
+        self._suzgec_world_yaw = None
+        self._suzgec_world_pitch = None
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
@@ -1763,6 +1766,8 @@ class HavaSavunmaArayuz(QWidget):
         self.hata_degisim_hizi = None
         self._hata_gecmisi.clear()
         self._balon_kayip_kare = 999
+        self._suzgec_world_yaw = None
+        self._suzgec_world_pitch = None
         self.integral_yaw = 0.0
         self.last_error_yaw = 0.0
         self.integral_pitch = 0.0
@@ -3197,6 +3202,30 @@ class HavaSavunmaArayuz(QWidget):
 
         world_yaw = yaw_at_capture + capture_error_yaw
         world_pitch = pitch_at_capture + capture_error_pitch
+
+        # NISAN NOKTASI YUMUSATMA (2026-09-23 gece, 29.19 B58).
+        # Olculdu: taretin kendi titremesi 2-4 px iken nisan hatasinin
+        # kare-kare degisimi 10-12 px. Yani artik baskin hata kaynagi
+        # denetleyici degil, NISAN NOKTASININ kendisi (balon kutusunun
+        # titremesi + balon gorulmeyen karelerde noktanin maketten
+        # turetilmesi). Hedefin dunya acisi kisa bir EMA'dan geciriliyor;
+        # boylece denetleyici tespit gurultusunu kovalamiyor.
+        # Buyuk sicrama = yeni hedef ya da edinme: suzgec ATLANIR.
+        _ay = getattr(config, 'AIM_POINT_SMOOTHING', 0.0) or 0.0
+        if _ay > 0.0:
+            _snap = getattr(config, 'AIM_POINT_SNAP_DEG', 1.0)
+            if (self._suzgec_world_yaw is None
+                    or abs(world_yaw - self._suzgec_world_yaw) > _snap
+                    or abs(world_pitch - self._suzgec_world_pitch) > _snap):
+                self._suzgec_world_yaw = world_yaw
+                self._suzgec_world_pitch = world_pitch
+            else:
+                self._suzgec_world_yaw = (_ay * world_yaw
+                                          + (1 - _ay) * self._suzgec_world_yaw)
+                self._suzgec_world_pitch = (_ay * world_pitch
+                                            + (1 - _ay) * self._suzgec_world_pitch)
+            world_yaw = self._suzgec_world_yaw
+            world_pitch = self._suzgec_world_pitch
 
         # HEDEF HAREKETI ICIN KONUM ONDELEMESI (2026-09-23, 29.12 B39).
         # `_angle_at(capture_t)` TARETIN kare cekilirkenki acisini telafi

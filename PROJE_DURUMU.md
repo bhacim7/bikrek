@@ -4514,3 +4514,108 @@ yetmeyebilir; o bosluğu B55'teki 1.2 saniyelik cikis kapatiyor.
 gorunmeyen hedefte en fazla 1.2 saniye kaybedilir (once 8.75 saniye).
 Bu kosumdaki 8.75 saniye geri kazanilirsa tur suresi 20 saniyenin
 altina inmeli.
+
+### 29.19 `aşama2son7.mp4` — 3 imha ama 32 saniye; artik BASKIN HATA KAYNAGI NISAN NOKTASI
+
+32.4 saniye, Asama 2, 3 hedef (F16 / Fuze / Drone). Kayit
+`enkoder_20260923_230650.csv`; video t=0 = 23:12:27. **imha 3 / 3**, ama
+bir onceki iyi kosumda (29.17) ayni is 20.7 saniyede bitmisti.
+
+#### 29.19.1 Zaman nereye gitti
+
+| t (sn) | taret | hedef | sure |
+|---|---|---|---|
+| 0.0-2.5 | -2.26 | bos | 2.5 |
+| 3.0-15.5 | -1.6 .. +2.1 | **F16** | **12.5 sn**, 4 atis |
+| 16.0-22.5 | -8.0 .. -12.7 | Fuze | 6.5 sn |
+| 23.5-29.5 | +9.0 .. +13.6 | Drone | 6.0 sn |
+
+Fuze ve Drone 6-6.5 saniyede hallediliyor; **F16 tek basina 12.5 saniye
+yedi.** Tur suresinin yarisi tek hedefte.
+
+#### 29.19.2 B57 — Kara liste merkezi BAYAT bir aciya dusuyordu
+
+t=10.5'te durum cubugu: *"Atis butcesi doldu (3) — siradaki hedefe.
+Balon hala duruyor."* Yani `imha_edilemedi()` calisti ve hedef 5
+saniyeligine kara listeye alindi. **0.5 saniye sonra, t=11.0'da sistem
+ayni F16'ya geri kilitlendi.**
+
+Sebep: `kara_listeye_al` merkez olarak `hedef_yaw/hedef_pitch` kullaniyor,
+ama bu alanlar **yalnizca TARAMA'da** (gozcunun verdigi ilk tahminle)
+yaziliyordu. KILIT boyunca hic guncellenmiyordu. Hedef yaklastikca gercek
+acisi gozcunun ilk tahmininden uzaklasiyor ve kara liste kaydi BOS BIR
+ACIYA dusuyor. Kayit hedefi kapatmadigi icin sistem hemen geri
+kilitleniyor.
+
+Bu, 29.18'de eklenen "kara liste her asamada uygulanir" filtresini de
+etkisiz birakiyordu: filtre dogru calisiyor ama listedeki KAYIT yanlis
+yerde.
+
+**Duzeltme:** capa guncellemeleri tek bir yerden geciyor
+(`_capayi_guncelle`) ve `kilit_aci` ile birlikte `hedef_yaw/hedef_pitch`
+de guncelleniyor. Artik imha / vazgecme / balonsuz cikis / dost-birakma
+kayitlarinin hepsi hedefin GERCEK acisina dusuyor.
+
+#### 29.19.3 B58 — Baskin hata kaynagi artik denetleyici DEGIL, nisan noktasi
+
+Kilit oturduktan sonraki 98 ornek olculdu (durum cubugundaki ham piksel
+hatalari) ve enkoderle karsilastirildi:
+
+| olcum | yaw | pitch |
+|---|---|---|
+| nisan hatasi RMS | 23.8 px | 14.3 px |
+| nisan hatasi medyan mutlak | 20 px | 10 px |
+| tolerans (12 px) icinde kalan kare | %38 | %57 |
+| **hatanin kare-kare DEGISIMI** | **10.5 px** | **11.6 px** |
+| taretin KENDI titremesi (29.17) | **2-4 px** | — |
+
+Sonuc net: **taret artik cok temiz doniyor (2-4 px), ama nisan noktasi
+kare kare 10-12 piksel ziplyor.** Denetleyici bu ziplamalari sadakatle
+takip ediyor. Yani kalan hatanin kaynagi kontrol degil, OLCUM:
+- 15 metrede balon yalnizca ~30 piksel; kutusu kare kare oynuyor,
+- balon gorulmeyen karelerde nisan noktasi maketten turetiliyor
+  ("balon N kare once"), her gecis noktayi kaydiriyor.
+
+Bir de beklentiyi duzelten bir bulgu: **pitch degil YAW daha kotu**
+(RMS 23.8 vs 14.3). Onceki oturumlarda pitch'in daha kotu oldugu
+varsayilmisti; olcum bunu curuttu.
+
+**Duzeltme:** hedefin DUNYA acisi kisa bir EMA'dan geciriliyor
+(`AIM_POINT_SMOOTHING = 0.45`). Gurultu x0.54'e iniyor, eklenen gecikme
+81 ms ve hedef ondelemesi (100 ms) bunu zaten karsiliyor. Buyuk
+sicramalarda (yeni hedef, edinme) suzgec ATLANIYOR, hedef degisiminde
+sifirlaniyor. Piksele degil dunya acisina uygulandigi icin taretin
+hareketi suzgece girmiyor.
+
+#### 29.19.4 Degismeyen ama not edilen
+
+- **Atis anindaki nisan iyi:** sekiz atista ortalama |yaw| 8.4 px,
+  |pitch| 12.0 px. Yalnizca bir atis pitch 37 px ile acildi. Yani
+  "transient sirasinda ates" yaygin bir sorun DEGIL; yeni bir kapi
+  eklemeye gerek yok.
+- **Kayma kapisi calisiyor:** "nisan kayiyor: atisa kadar 16/17/22/30 px"
+  gerekceleri goruldu, hepsi gercek kayma anlarinda.
+- **35 karelik atis butcesi ise yariyor:** F16'da ucuncu atisa kadar
+  gidilebildi (eski 22 ile daha erken birakilirdi).
+- Kosumun ilk 2.5 saniyesi bos ("Hazir") — kullanicinin baslatma ani,
+  sisteme ait degil.
+
+#### 29.19.5 Degisiklikler
+
+| dosya / yer | ne | onceki -> simdi | neden |
+|---|---|---|---|
+| `engagement.py` `_capayi_guncelle()` | YENI; tum capa guncellemeleri buradan | | kara liste merkezi kilit acisini takip etsin (B57) |
+| `engagement.py` `kilit_hedefi_sec`, `_kilit_hedefi_sec_eski` | capa guncellemesi helper uzerinden | | B57 |
+| `config.py` `AIM_POINT_SMOOTHING` | yeni | 0.45 | nisan noktasi gurultusu (B58) |
+| `config.py` `AIM_POINT_SNAP_DEG` | yeni | 1.0 | buyuk sicramada suzgeci atla |
+| `bukrek_main.py` `process_tracking` | hedefin dunya acisina EMA | | B58 |
+| `tests_yeni_mimari.py` 37 | kara liste merkezi takibi, suzgec gurultu/gecikme dengesi, sicrama ve sifirlama | | |
+
+**Beklenti:** F16 senaryosundaki "birak, 0.5 saniye sonra geri kilitlen"
+dongusu bitmeli; nisan hatasinin RMS'i 24 px'ten ~15 px'e inmeli ve
+tolerans icinde kalan kare orani %38'den belirgin artmali.
+
+**Sonraki adim (kod degil, veri):** kalan hatanin geri kalani balon
+kutusunun kendi titremesinden geliyor. Egitim setinde balonun kucuk
+(25-40 px) oldugu karelerde kutu kararliligi artirilmali; bu olculebilir
+bir dataset isi ve koddan cozulemez.

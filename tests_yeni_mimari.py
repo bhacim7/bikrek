@@ -2073,6 +2073,66 @@ kontrol("kilit zaman asimi tur suresine gore makul (2-5 sn)",
         2.0 <= config.ENGAGE_LOCK_TIMEOUT <= 5.0, f"{config.ENGAGE_LOCK_TIMEOUT} sn")
 kontrol("balonsuz vazgecme, genel kilit zaman asimindan ONCE devreye giriyor",
         config.LOCK_NO_BALLOON_GIVEUP_SEC < config.ENGAGE_LOCK_TIMEOUT)
+
+# --- 37. KARA LISTE MERKEZI ve NISAN NOKTASI GURULTUSU (29.19) ---
+# Sahada olculdu (aşama2son7.mp4): t=10.5'te F16'nin atis butcesi doldu ve
+# hedef birakildi, ama kara liste kaydi GOZCUNUN ILK tahminine dustugu icin
+# sistem 0.5 saniye sonra ayni hedefe geri kilitlendi; o tek hedef turun
+# 12.5 saniyesini yedi.
+print()
+print("37. Kara liste merkezi kilit acisini takip etmeli; nisan noktasi yumusatma")
+_m37 = engagement.AngajmanMakinesi()
+_m37.basla('task2')
+_m37.hedef_yaw, _m37.hedef_pitch = 9.0, 1.0      # gozcunun ILK tahmini
+_m37.dogrulanan_sinif = 'dusman-F16'
+_m37._gec(engagement.KILIT)
+_m37.kilit_aci = (9.0, 1.0)
+# Hedef yaklasirken acisi KADEME KADEME kayiyor (her kare capa yaricapi
+# icinde); capa onu takip etmeli ve kara liste merkezi de onunla gitmeli.
+_c37 = _cift_at('dusman-F16')
+for _yeni in [8.5, 8.0, 7.2, 6.4, 5.6, 4.8, 4.0, 3.2, 2.5]:
+    _m37.kilit_hedefi_sec([_c37], [(_yeni, 1.0)])
+kontrol("kilit acisi kaydikca kara liste MERKEZI de kayiyor",
+        abs(_m37.hedef_yaw - 2.5) < 1e-9,
+        f"hedef_yaw {_m37.hedef_yaw}")
+_m37.imha_edilemedi()
+kontrol("vazgecme kaydi hedefin GERCEK acisina dusuyor",
+        _m37.kara_liste.icinde_mi(2.5, 1.0), "2.5 derece kara listede")
+kontrol("gozcunun eski tahmini artik gereksiz yere kapatilmiyor",
+        not _m37.kara_liste.icinde_mi(9.0, 1.0), "9.0 derece serbest")
+_k37 = io.open('engagement.py', encoding='utf-8').read()
+kontrol("capa guncellemesi tek noktadan geciyor (_capayi_guncelle)",
+        _k37.count("self.kilit_aci = a\n") == 0
+        and "def _capayi_guncelle" in _k37)
+
+# Nisan noktasi yumusatma
+kontrol("nisan noktasi suzgeci acik ve makul (0.2-0.8)",
+        0.2 <= config.AIM_POINT_SMOOTHING <= 0.8, str(config.AIM_POINT_SMOOTHING))
+_a37 = config.AIM_POINT_SMOOTHING
+_gurultu_azaltma = (_a37 / (2 - _a37)) ** 0.5
+_gecikme = (1 - _a37) / _a37 / 15.0
+kontrol("suzgec gurultuyu belirgin azaltiyor (>%35)",
+        _gurultu_azaltma < 0.65, f"gurultu x{_gurultu_azaltma:.2f}")
+kontrol("eklenen gecikme hedef ondelemesinden kucuk (telafi ediliyor)",
+        _gecikme < config.TARGET_LEAD_TIME_SEC,
+        f"{_gecikme*1000:.0f} ms < {config.TARGET_LEAD_TIME_SEC*1000:.0f} ms")
+_k37b = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("suzgec dunya acisina uygulaniyor (piksele degil)",
+        "self._suzgec_world_yaw = (_ay * world_yaw" in _k37b)
+kontrol("buyuk sicramada suzgec ATLANIYOR (yeni hedefe yaklasma yavaslamasin)",
+        "> _snap" in _k37b and "self._suzgec_world_yaw = world_yaw" in _k37b)
+kontrol("hedef degisiminde suzgec sifirlaniyor",
+        "self._suzgec_world_yaw = None" in _k37b.split("def reset_pid_state")[1][:600])
+# Benzetim: 10 px'lik olcum gurultusu ne kadar azaliyor
+_rng37 = _np.random.default_rng(3)
+_ham = _rng37.normal(0, 10.0, 600)
+_s = 0.0; _ciktı = []
+for _v in _ham:
+    _s = _a37 * _v + (1 - _a37) * _s
+    _ciktı.append(_s)
+kontrol("benzetim: 10 px gurultu suzgecten sonra belirgin azaliyor",
+        _np.std(_ciktı) < 10.0 * 0.7,
+        f"{_np.std(_ham):.1f} px -> {_np.std(_ciktı):.1f} px")
 kontrol("balon grace sayaci tutuluyor ve kapiya veriliyor",
         "self._balon_kayip_kare += 1" in _k31
         and "balon_yakin=self._balon_yakin_zamanda()" in _k31)
