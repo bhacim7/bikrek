@@ -267,6 +267,8 @@ class HavaSavunmaArayuz(QWidget):
         self._balon_kayip_kare = 999
         # Ates karari icin ayri nisan bayragi (29.15, FIRE_LEAD_TIME_SEC).
         self.ates_nisan_tamam = False
+        # Ates sonrasi tani penceresi (29.17): komut vs fiili donus.
+        self._ates_tani = None
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
@@ -1468,6 +1470,20 @@ class HavaSavunmaArayuz(QWidget):
 
         self.send_command_to_rpi({"action": "fire"})
         self.last_fire_time = time.time()
+        # ATES SONRASI TANI PENCERESI (29.17). Pi'de tetik dizisi ayri is
+        # parcacigina alindi (29.15 B49) ama sahada atislarin ardindan hala
+        # duraklamalar goruluyordu ve bunlarin olu banttan mi yoksa Pi'nin
+        # komut dongusunun bloklanmasindan mi geldigi ayirt edilemiyordu.
+        # Pencere boyunca PC'nin GONDERDIGI toplam komut ile taretin
+        # FIILEN dondugu aci karsilastiriliyor: komut cok, donme yoksa
+        # Pi komutlari islemiyordur (eski motor_fire_module yuklu demektir).
+        self._ates_tani = {
+            'baslangic': self.last_fire_time,
+            'aci0': self.current_yaw_angle,
+            'komut': 0.0,
+            'kare': 0,
+            'komutsuz': 0,
+        }
         self.angajman.ates_kaydet()
         self._update_status_label(
             f"Durum: ATEŞ — {self.aktif_cift.sinif} "
@@ -3592,6 +3608,27 @@ class HavaSavunmaArayuz(QWidget):
             output_yaw, self._son_yaw_yon, config.YAW_BACKLASH_DEG)
         output_pitch, self._son_pitch_yon = encoder_module.bosluk_enjeksiyonu(
             output_pitch, self._son_pitch_yon, config.PITCH_BACKLASH_DEG)
+
+        # ATES SONRASI TANI PENCERESI (29.17): gonderilen komut ile taretin
+        # FIILEN dondugu aci karsilastirilir. Komut buyuk ama donme yoksa
+        # Pi komutlari islemiyordur (Pi'deki motor_fire_module eski surum).
+        # Olu banttan gelen normal duruslar bu testte "komutsuz kare" olarak
+        # gorunur ve yanlis alarm uretmez.
+        if self._ates_tani is not None:
+            _tn = self._ates_tani
+            _tn['kare'] += 1
+            _tn['komut'] += abs(output_yaw)
+            if output_yaw == 0.0:
+                _tn['komutsuz'] += 1
+            if time.time() - _tn['baslangic'] >= config.FIRE_DIAG_WINDOW_SEC:
+                _fiili = abs((self.current_yaw_angle - _tn['aci0'] + 180) % 360 - 180)
+                _bloklu = (_tn['komut'] > 0.15 and _fiili < _tn['komut'] * 0.35)
+                print(f"ATES TANI ({config.FIRE_DIAG_WINDOW_SEC:.1f} sn): "
+                      f"komut {_tn['komut']:.2f} derece / taret {_fiili:.2f} derece | "
+                      f"{_tn['kare']} kare, {_tn['komutsuz']}'i komutsuz"
+                      + ("  <<< KOMUTLAR ISLENMEDI: Pi'deki motor_fire_module "
+                         "eski olabilir" if _bloklu else ""))
+                self._ates_tani = None
 
         if output_yaw != 0.0 or output_pitch != 0.0:
             self.send_proportional_move_command(output_yaw, output_pitch)

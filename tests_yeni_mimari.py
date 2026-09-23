@@ -1961,6 +1961,39 @@ kontrol("vurulamayan hedefin kara liste suresi dogrulama TTL'inden uzun",
         f"{config.BLACKLIST_GIVEUP_TTL_SEC} sn")
 kontrol("kilit_adimi balon gozlemini besliyor",
         "self.balon_gozlemi(balon_gorundu)" in io.open('engagement.py', encoding='utf-8').read())
+
+# --- 35. ATES SONRASI TANI ve BUTCE (29.17) ---
+# Sahada (aşama2son5.mp4) 3 hedefin ucu de 20.7 saniyede imha edildi.
+# Kalan iki soru: (a) atis sonrasi duraklamalar olu banttan mi Pi'nin
+# bloklanmasindan mi geliyor, (b) ilk hedefte 3 atislik butcenin 2'si
+# neden kullanilmadan birakildi.
+print()
+print("35. Ates sonrasi tani penceresi ve atis butcesi")
+kontrol("tani penceresi tanimli ve makul (0.4-2.0 sn)",
+        0.4 <= config.FIRE_DIAG_WINDOW_SEC <= 2.0, str(config.FIRE_DIAG_WINDOW_SEC))
+_k35 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("ates aninda tani penceresi aciliyor (aci ve komut sayaci)",
+        "self._ates_tani = {" in _k35 and "'aci0': self.current_yaw_angle" in _k35)
+kontrol("pencere komut toplamini ve fiili donusu karsilastiriyor",
+        "_fiili = abs((self.current_yaw_angle - _tn['aci0']" in _k35
+        and "_bloklu = (_tn['komut'] > 0.15" in _k35)
+kontrol("tani, komut gonderiminden ONCE isleniyor (ayni karenin komutu sayilsin)",
+        _k35.index("self._ates_tani = None\n\n        if output_yaw != 0.0")
+        < _k35.index("self.send_proportional_move_command(output_yaw, output_pitch)"))
+kontrol("olu bant kaynakli durus yanlis alarm uretmiyor (komutsuz kare sayiliyor)",
+        "_tn['komutsuz'] += 1" in _k35)
+# Butce: 22 -> 35 kare
+kontrol("ates tekrar butcesi 2 saniyenin uzerinde (@15fps)",
+        config.FIRE_RETRY_GIVEUP_FRAMES / 15.0 >= 2.0,
+        f"{config.FIRE_RETRY_GIVEUP_FRAMES} kare = {config.FIRE_RETRY_GIVEUP_FRAMES/15.0:.1f} sn")
+kontrol("ama sonsuz dongu korumasi duruyor (5 saniyenin altinda)",
+        config.FIRE_RETRY_GIVEUP_FRAMES / 15.0 < 5.0)
+# Vazgecme sonrasi hedef makul surede geri alinmali
+kontrol("vazgecilen hedef kara listesi tur suresine gore makul (3-10 sn)",
+        3.0 <= config.BLACKLIST_GIVEUP_TTL_SEC <= 10.0,
+        f"{config.BLACKLIST_GIVEUP_TTL_SEC} sn")
+kontrol("vazgecme TTL'i imha TTL'inden kisa (vurulamayan hedefe daha cabuk donulsun)",
+        config.BLACKLIST_GIVEUP_TTL_SEC < config.BLACKLIST_TTL_SEC)
 kontrol("balon grace sayaci tutuluyor ve kapiya veriliyor",
         "self._balon_kayip_kare += 1" in _k31
         and "balon_yakin=self._balon_yakin_zamanda()" in _k31)

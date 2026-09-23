@@ -4287,3 +4287,124 @@ Bes atisin ucunde 0.43-0.65 saniyelik durus kaldi (3.21-3.86,
 Fuze atisinda hic duraklama olmamasi 2. sikki destekliyor ama 0.65 ve
 0.59 saniyelik ikisi eski 0.60 sn'lik bloga fazlasiyla benziyor;
 yukleme teyit edilmeli.
+
+### 29.17 `aşama2son5.mp4` — UC HEDEFIN UCU DE IMHA (2026-09-23 gece)
+
+20.7 saniye, Asama 2, 3 hedef (Drone / Helikopter / Fuze). Kayit
+`enkoder_20260923_221025.csv`; video t=0 = 22:19:02 (ortalama fark
+**0.0029 derece** — su ana kadarki en iyi eslesme).
+Kullanici `BLACKLIST_GIVEUP_TTL_SEC` degerini kosumdan once 8.0 -> **5.0**
+yapmis; video bu degerle cekildi.
+
+**SONUC: imha 3 / 3, toplam 20.7 saniye, 7 atis.**
+
+#### 29.17.1 Tur cizelgesi
+
+| t (sn) | olay | sonuc |
+|---|---|---|
+| 1.5 | aday dogrulandi, KILIT — dusman-Drone, kayma 46/14 | |
+| 2.6 | **1. atis** (kayma 15/14, hata -4 px) | |
+| 4.0-5.4 | nisan 35-48 px'e acildi, ates kapisi 22 kare kapali | **hedef birakildi** (imha 0) |
+| 5.5 | YONELME -5.8, kara liste 5 sn | |
+| 6.0 | KILIT — dusman-Helikopter | |
+| 7.0 / 8.15 | **2 atis** | |
+| 9.5 | **IMHA DOGRULANDI — atis oncesi balon %100** | imha 1 |
+| 10.5 | KILIT — dusman-Fuze ([capa] bir kare) | |
+| 11.15 / 13.10 | **2 atis** | |
+| 14.5 | **IMHA DOGRULANDI — atis oncesi balon %100** | imha 2 |
+| 15.75 | KILIT — dusman-Drone (kara liste dustu, hedef geri alindi) | |
+| 16.15 / 18.15 | **2 atis** | |
+| 19.75 | TARAMA, imha 3 | **imha 3** |
+
+#### 29.17.2 OLUMLU — olculebilir kazanimlar
+
+**1. Taret titremesi bitti.** 0.3 saniyelik pencerelere dogru uydurup slew
+cikarildiginda kalan titreme:
+
+| angajman | RMS | piksel |
+|---|---|---|
+| Drone 1. deneme | 0.050 derece | 4 px |
+| Helikopter | **0.025 derece** | 2 px |
+| Fuze | 0.037 derece | 3 px |
+| Drone 2. deneme | 0.061 derece | 4 px |
+
+Karsilastirma: 29.13'teki kararsiz kosumda 0.75-0.79 derece, 29.12'deki
+"iyi" kosumda 0.27 derece idi. **10-30 kat iyilesme.** Komut yon degisimi
+de 89 komutta 3, 93'te 1, 84'te 8, 73'te 3 — yani %1-10. Kararsiz
+kosumda %18-19 idi. Bosluk rolesinin kaldirilmasi kalici olarak tuttu.
+
+**2. Yanlis imha koruması calisti ve GERCEK imhalari engellemedi.**
+Iki imha da "atis oncesi balon %100" notuyla onaylandi — yani kanit
+gucluydu. Ilk hedefte ise imha ILAN EDILMEDI; 29.16'daki yanlis imha
+senaryosu tekrarlanmadi.
+
+**3. Vazgec-ve-geri-don dongusu tam istenildigi gibi isledi.**
+Ilk hedef t=5.5'te birakildi, 5 saniyelik kara listeye alindi, sistem bu
+sirada diger iki hedefi imha etti ve t=15.75'te ayni hedefe donup 2
+atista imha etti. Kullanicinin sectigi **5.0 saniye dogru bir deger**:
+8.0 olsaydi hedef t=13.5'ten once alinamazdi ve Fuze angajmani
+bitmeden sira gelmezdi; daha kisa olsaydi diger hedeflere sira gelmeden
+ayni hedefe geri donulurdu.
+
+**4. Devir teslim belirgin duzeldi.** DOGRULAMA anindaki nisan hatalari
+32-75 px. Onceki kosumlarda 128-166 px idi. Kapali dongu yonelme
+("tekrar 1") iki devir tesliminde devreye girdi.
+
+**5. Atis sonrasi donma sistematik degil.** Yedi atisin ardindaki 0.8
+saniyede taret 0.34-1.53 derece dondu; yalnizca iki atista hareket
+kucuk kaldi (0.05 ve 0.19 derece) ve o karelerde nisan hatasi zaten
+2-15 piksel, yani olu bandin icindeydi. 29.15'teki "her atista 0.6
+saniye donma" tablosu kalkmis gorunuyor.
+
+#### 29.17.3 OLUMSUZ — kalan uc konu
+
+**B51 — Ilk hedefte atis butcesinin 2/3'u kullanilmadan birakildi.**
+Tek atis yapildi, atistan sonra nisan 35-48 piksele acildi ve ates kapisi
+22 kare (1.5 sn) boyunca kapali kaldi; `FIRE_RETRY_GIVEUP_FRAMES`
+dolunca hedef birakildi. Ayni hedef 10 saniye sonra 2 atista imha
+edildi — yani birakmak gereksizdi, biraz daha beklemek yetiyordu.
+Sinir 22 -> **35 kare (~2.3 sn)** yapildi; sonsuz dongu korumasi
+(sayacin asil amaci) 5 saniyenin altinda kaldigi icin duruyor.
+
+**B52 — Aciklanamayan tek duraklama.** t=18.82-19.58 arasinda taret
+0.75 saniye hic kimildamadi; o karelerde durum cubugundaki nisan hatasi
+-6, -16, -5, -20 piksel, yani olu bandin (5 px) disinda. Ne olu bantla
+ne de atis zamanlamasiyla (atis t=18.15, 0.67 saniye once) aciklaniyor.
+Iki ihtimal kaldi: Pi'nin komut dongusu bloklandi (eski
+`motor_fire_module`), ya da o karelerde hedef cifti bulunamadigi icin
+`process_tracking` hic cagrilmadi ve durum cubugundaki hata bayat.
+
+**Ayirt etmek icin ates sonrasi TANI PENCERESI eklendi.** Her atistan
+sonra `FIRE_DIAG_WINDOW_SEC` (0.8 sn) boyunca PC'nin GONDERDIGI toplam
+yaw komutu ile taretin FIILEN dondugu aci sayiliyor ve konsola tek satir
+yaziliyor:
+
+```
+ATES TANI (0.8 sn): komut 1.24 derece / taret 1.18 derece | 12 kare, 3'u komutsuz
+```
+
+Komut buyuk ama donme yoksa satirin sonuna `<<< KOMUTLAR ISLENMEDI`
+uyarisi dusuyor; o zaman Pi'deki `motor_fire_module.py` eski surumdedir.
+Olu banttan gelen normal duruslar "komutsuz kare" olarak gorundugu icin
+yanlis alarm uretmez.
+
+**B53 — Tur suresi 20.7 saniye.** Ucu de vuruldu ama iki gorunur zaman
+kaybi var: ilk hedefin bosa giden ilk denemesi (~4 sn) ve her atistan
+sonraki imha dogrulama penceresi (`FIRE_CONFIRM_DELAY_SEC` 0.6 +
+`FIRE_CONFIRM_SEC` 0.7 = 1.3 sn x 7 atis). Ikincisi tetigin mekanik
+gecikmesine gore ayarlanmisti; tetik artik bloklamadigi icin gecikme
+yeniden olculebilir. Once B51/B52 kapansin, sonra bu penceresi
+kisaltmayi deneriz.
+
+#### 29.17.4 Degisiklikler
+
+| dosya / yer | ne | onceki -> simdi | neden |
+|---|---|---|---|
+| `config.py` `FIRE_RETRY_GIVEUP_FRAMES` | | 22 -> 35 | butce kullanilmadan hedef birakiliyordu (B51) |
+| `config.py` `FIRE_DIAG_WINDOW_SEC` | yeni | 0.8 | atis sonrasi tani penceresi (B52) |
+| `bukrek_main.py` `_otonom_ates_denemesi` | atiste tani penceresi aciliyor (aci + komut sayaci) | | B52 |
+| `bukrek_main.py` `process_tracking` | pencere boyunca komut toplaniyor, dolunca konsola ozet | | B52 |
+| `tests_yeni_mimari.py` 35 | pencere sabitleri, kaynak sirasi, butce ve TTL tutarliligi | | |
+
+`BLACKLIST_GIVEUP_TTL_SEC = 5.0` kullanicinin sectigi degerle birakildi;
+saha kaydi bu degerin dogru oldugunu gosteriyor (29.17.2 madde 3).

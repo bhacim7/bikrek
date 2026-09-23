@@ -1223,6 +1223,16 @@ FIRE_DRIFT_WINDOW_SEC = 0.6
 # 0.05'er artirin. Isabetler hedefin onune gecmeye baslarsa geri alin.
 FIRE_LEAD_TIME_SEC = 0.0
 
+# --- ATES SONRASI TANI PENCERESI (2026-09-23 gece, 29.17) ---
+# Tetik dizisi Pi'de ayri is parcacigina alindi (29.15 B49) ama sahada
+# atislarin ardindan hala duraklamalar goruldu ve bunlarin DENETLEYICININ
+# OLU BANDINDAN mi (hata zaten kucuk, komut uretilmiyor) yoksa PI'NIN
+# KOMUT DONGUSUNUN BLOKLANMASINDAN mi geldigi ayirt edilemedi.
+# Pencere boyunca PC'nin gonderdigi toplam yaw komutu ile taretin fiilen
+# dondugu aci konsola yazilir. Komut buyuk ama donme yoksa Pi komutlari
+# islemiyordur — yani Pi'deki `motor_fire_module.py` eski surumdedir.
+FIRE_DIAG_WINDOW_SEC = 0.8
+
 # Balonun tespiti kare kare titriyor (aşama2Son1.mp4 F16 kilidinde karelerin
 # yaklasik yarisinda "BALON YOK"). Balon 0.2 saniyede kacamayacagina gore
 # son N kare icinde GERCEKTEN gorulmus olmasi ateş icin yeterli; nisan
@@ -1299,7 +1309,14 @@ FIRE_CONFIRM_DELAY_SEC = 0.6
 # asama3Deneme2'de olculdu: ilk atistan sonra maket araliklı goruldugu icin
 # sistem t=6.0'dan t=9.5'e kadar "Ates engellendi" yazip bekledi, 3.5 saniye.
 # 22 kare = 1.5 sn @15fps, yorumun asil niyeti.
-FIRE_RETRY_GIVEUP_FRAMES = 22     # ~1.5 sn @15fps (saha kare hizi)
+# 22 -> 35 (2026-09-23 gece, 29.17). Sahada olculdu (aşama2son5.mp4):
+# ilk hedefe TEK atis yapildi, atistan sonra nisan 35-48 piksele acildi ve
+# 22 kare (1.5 sn) boyunca ates kapisi kapali kaldi; sistem 3 atislik
+# butcenin 2'sini hic kullanmadan hedefi birakti. Hedef 10 saniye sonra
+# tekrar alinip 2 atista imha edildi — yani birakmak gereksizdi, sadece
+# biraz daha beklemek yetiyordu. 35 kare = ~2.3 sn @15fps; sonsuz
+# dongu korumasi (bu sayacin asil amaci) hala yerinde.
+FIRE_RETRY_GIVEUP_FRAMES = 35     # ~2.3 sn @15fps (saha kare hizi)
 
 # --- HEDEF TAKIP: hedef surekliligi ---
 # Takip modunda secilen hedef, bir sonraki karede bu piksel yaricapi icinde
@@ -1318,7 +1335,7 @@ BLACKLIST_TTL_SEC = 12.0          # imha edilenler için
 # Atis butcesi dolan (vurulamayan) hedef icin (2026-09-23 gece, 29.16).
 # Eskiden BLACKLIST_VERIFY_TTL_SEC (1.5 sn) kullaniliyordu; sistem siradaki
 # hedefe yonelip donmeye bile firsat bulamadan ayni hedefe geri donuyordu.
-BLACKLIST_GIVEUP_TTL_SEC = 8.0
+BLACKLIST_GIVEUP_TTL_SEC = 5.0
 BLACKLIST_FRIEND_TTL_SEC = 600.0  # dost maketler için pratikte kalıcı
 
 # --- BALONSUZ HEDEF: DAR ve KISA kara liste ---
