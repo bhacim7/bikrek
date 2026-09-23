@@ -4170,3 +4170,120 @@ kalacak. Enkoder kaydinda 0.5 sn+ duraklama gruplari kaybolmali
 
 **RASPBERRY TARAFINA YUKLENMELI:** `motor_fire_module.py`. Bu paketin ana
 duzeltmesi Pi'de; yuklenmezse hicbir sey degismez.
+
+### 29.16 `aşama2son4.mp4` — iki gercek imha, bir YANLIS imha (2026-09-23 gece)
+
+26.2 saniye, Asama 2, 3 hedef. Kayit `enkoder_20260923_213430.csv`;
+video t=0 = 21:42:06 (ortalama fark **0.006 derece** — su ana kadarki en
+iyi eslesme).
+
+#### 29.16.1 OLUMLU: Paket 7 calisti, iki hedef temiz imha edildi
+
+**Atis aninda donma buyuk olcude bitti.** Bir onceki kosumda (29.15) 15
+duraklama grubu, grup basina ortalama 0.56 saniye vardi. Bu kosumda:
+
+| | 29.15 (once) | 29.16 (simdi) |
+|---|---|---|
+| 0.22 sn+ tam durus | 15 grup | **7 aralik** |
+| bunlardan angajman icinde olan | 15 | **5** |
+| 0.45 sn+ olan | cogu | 4 (ikisi kosum basi/sonu) |
+
+Fuze atisinda **hic duraklama yok**. Kullanicinin "artik sikarken geride
+kalmiyor" gozlemi olculebilir.
+
+**Fuze angajmani ornek nitelikte.** Durum cubugundan:
+
+| an | durum |
+|---|---|
+| DOGRULAMA, 2 cift | hata 32 px |
+| KILIT, balon VAR, nisan bekliyor | kayma 41/14 |
+| KILIT, balon VAR, **nisan TAMAM** | kayma 18/14, hata 1 px |
+| **Atesleme basarili** | hata 5 px |
+| imha dogrulandi | imha 3 |
+
+Kilitten atisa ~0.75 saniye, tek atis, imha. F16 de uc atista imha edildi
+(imha 2). Ikisinde de balon atis oncesinde guvenilir goruluyordu.
+
+#### 29.16.2 OLUMSUZ: B50 — Ortadaki (en yakin) hedef YANLIS imha sayildi
+
+Videonun basinda ve sonunda gorulen "alakasiz davranis" tek bir kok
+nedene dayaniyor ve dataset'in kendisi degil, **mesafe** sucu.
+
+**1. Balonun goruntudeki boyu buyudukce tespit cokuyor.** Olculdu:
+
+| an | balon capi (kamera px) | durum cubugunda "balon VAR" orani |
+|---|---|---|
+| t=1.5-4 sn (uzak hedefler) | 33-37 px | ~%100 (Fuze/F16 angajmanlari) |
+| t=14-18 sn | 61-62 px | dusuyor |
+| t=17-26 sn (en yakin hedef) | 60+ px, maketle birlesiyor | **~%35** |
+
+Son bolumdeki 26 durum satirinin dagilimi: "balon VAR" 9, "balon N kare
+once" 7, "BALON YOK" 4, "hedef bu karede yok" 4, "hedef kaybedildi" 2.
+Yani balon fiziksel olarak orada ve BUYUK, ama model onu goremiyor.
+Model 30-40 piksellik balonlarla egitilmis; 60+ piksel egitim dagiliminin
+disinda.
+
+**2. Imha dogrulamasi bu kosulda HER ZAMAN "imha" der.** Kural
+"pencerede balon en fazla `FIRE_CONFIRM_MAX_SEEN` (4) karede gorulurse
+imha onaylanir" idi. Balon zaten yalnizca %35 goruluyorsa, ~10 karelik
+pencerede ~3.5 kare eder — yani **ates edilmese bile "imha" cikardi.**
+
+Sahada olan tam olarak bu: t=3.5'te bir atis, t=4.9'da "IMHA DOGRULANDI"
+(imha 1), sistem siradaki hedefe gecti. Balon patlamamisti.
+
+**3. 12 saniye sonra ayni hedef geri geldi.** `BLACKLIST_TTL_SEC = 12`.
+Imha edilen hedefin acisi 12 saniye kara listede kalir. t=16.9'da
+(imha aninin 12.0 saniye sonrasi) kara liste dustu, hedef hala oradaydi
+ve balonuyla birlikte yeniden secildi. Videonun son 9 saniyesi, cok
+yakina gelmis, balonu duzgun tespit edilemeyen bu hedefi kovalamakla
+gecti: "KILIT — dusman-Drone", hatalar +-100 px, "hedef bu karede yok",
+"Hedef kaybedildi", kayma 23-233 px.
+
+**Kullanicinin "ortadaki hedef F16 iken de ayni oldu" gozlemi bunu
+dogruluyor:** sorun sinifta degil KONUMDA. Ortadaki hedef en one cikan,
+yani balonu en buyuk goren hedef.
+
+**Neden ilk defa simdi?** Cunku Paket 6/7'ye kadar sistem bu kadar hizli
+ates edemiyordu; hedefler bu kadar yaklasmadan once angajman bitmiyordu
+ya da hic ates aclmiyordu. Yakin mesafe rejimine ilk defa giriliyor.
+
+#### 29.16.3 Duzeltmeler
+
+| dosya / yer | ne | onceki -> simdi | neden |
+|---|---|---|---|
+| `engagement.py` `balon_gozlemi()`, `balon_gorulme_orani()` | YENI | | balonun kare kare gorulme orani (taban) |
+| `engagement.py` `kilit_adimi` | her karede `balon_gozlemi` | | taban oran KILIT boyunca olculur |
+| `engagement.py` `ates_kaydet` | atis aninda taban oran donduruluyor | | |
+| `engagement.py` `ates_dogrulama_adimi` | "balon kayboldu" ancak taban oran esigin USTUNDEYSE imha sayilir; degilse `tekrar`/`pes` + gerekce | | yanlis imha (B50) |
+| `config.py` `FIRE_CONFIRM_MIN_BEFORE_RATE` | yeni | 0.50 | atis oncesi balon en az %50 gorulmeliydi |
+| `config.py` `FIRE_CONFIRM_BASELINE_FRAMES` | yeni | 20 | taban oran penceresi |
+| `config.py` `BLACKLIST_GIVEUP_TTL_SEC` | yeni | 8.0 (once 1.5 kullaniliyordu) | vurulamayan hedefe hemen geri donup dongu kurmasin |
+| `engagement.py` `imha_edilemedi` | yeni TTL'i kullaniyor | | ayni |
+| `bukrek_main.py` durum metinleri | "İMHA DOĞRULANDI ... atis oncesi balon %X"; "imha dogrulanamadi: balon atistan once de yalnizca %X goruluyordu" | | operator yanlis imhayi ekrandan gorsun |
+| `tests_yeni_mimari.py` 34 | gercek imha / yanlis imha / butce dolmasi / taban oran penceresi / TTL | | |
+
+Yeni davranis: balonu guvenilir goremedigimiz hedefte sistem **imha
+ilan etmez**; butce dolana kadar atar, sonra 8 saniyeligine birakip
+diger hedeflere gecer ve geri doner. Boylece hem yanlis "imha" sayisi
+sisirilmez hem de hedef unutulmaz.
+
+#### 29.16.4 Kalan is — DATASET (kod ile cozulemez)
+
+Balonun 60+ piksele ciktigi yakin mesafede tespit %35'e dusuyor. Egitim
+setine **yakin mesafe / buyuk balon** ornekleri eklenmeli; ozellikle
+balonun maketle ust uste bindigi ve uzerinde nokta isigi yansimasi olan
+kareler. Bu duzeltilmeden yakin mesafede imha dogrulamasi hicbir zaman
+guvenilir olmaz; yukaridaki kod degisikligi yalnizca YANLIS IMHA
+ilan edilmesini engelliyor, tespiti iyilestirmiyor.
+
+#### 29.16.5 Kalan is — atis aninda hala 3/5 duraklama
+
+Bes atisin ucunde 0.43-0.65 saniyelik durus kaldi (3.21-3.86,
+7.78-8.20, 11.23-11.82). Iki olasilik:
+1. `motor_fire_module.py` Pi'ye yuklenmedi ya da eski surum calisiyor.
+   Kontrol: Pi konsolunda ates sirasinda komut isleme durmamali.
+2. Yukleme yapildi ve kalan duraklamalar denetleyicinin kendi olu
+   bandindan geliyor (hedef yavasken normal).
+Fuze atisinda hic duraklama olmamasi 2. sikki destekliyor ama 0.65 ve
+0.59 saniyelik ikisi eski 0.60 sn'lik bloga fazlasiyla benziyor;
+yukleme teyit edilmeli.

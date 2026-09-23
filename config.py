@@ -1257,6 +1257,19 @@ FIRE_CONFIRM_SEC = 0.7        # pencere suresi: balon kaybolmasi icin beklenen
 FIRE_CONFIRM_MAX_SEEN = 4     # pencerede bu kadar karede gorulurse "hala orada"
 FIRE_MAX_ATTEMPTS = 3         # ayni hedefe ardisik en fazla kac ates
 
+# --- IMHA KANITI ICIN TABAN ORAN (2026-09-23 gece, 29.16 B50) ---
+# "Ates sonrasi balon gorunmuyor" ancak balon ATESTEN ONCE guvenilir
+# goruluyorduysa imha kanitidir. Sahada olculdu (aşama2son4.mp4):
+#   uzaktaki hedef (balon ~35 px)  -> balon karelerin ~%100'unde goruluyor
+#   en yakin hedef  (balon ~62 px) -> yalnizca ~%35'inde
+# Yakin hedefte "balon kayboldu" testi hicbir sey kanitlamiyor; sistem
+# patlamamis balonu imha sandi, siradaki hedefe gecti ve 12 saniye sonra
+# (BLACKLIST_TTL_SEC) ayni hedef balonuyla birlikte yeniden karsisina cikti.
+# Atistan onceki gorulme orani bu degerin altindaysa imha ONAYLANMAZ.
+# 0 = kapali (eski davranis).
+FIRE_CONFIRM_MIN_BEFORE_RATE = 0.50
+FIRE_CONFIRM_BASELINE_FRAMES = 20   # taban oranin olculdugu pencere (kare)
+
 # Ateste sonra sayima BASLAMADAN once beklenen sure.
 #
 # SAHADA OLCULDU (anavlizaşama3.mp4): ates 7.60 saniyede verildi, balon
@@ -1302,6 +1315,10 @@ TRACK_REACQUIRE_PIXELS = 150.0
 # anlamsız, taret döndükçe referans kayar).
 BLACKLIST_RADIUS_DEG = 4.0
 BLACKLIST_TTL_SEC = 12.0          # imha edilenler için
+# Atis butcesi dolan (vurulamayan) hedef icin (2026-09-23 gece, 29.16).
+# Eskiden BLACKLIST_VERIFY_TTL_SEC (1.5 sn) kullaniliyordu; sistem siradaki
+# hedefe yonelip donmeye bile firsat bulamadan ayni hedefe geri donuyordu.
+BLACKLIST_GIVEUP_TTL_SEC = 8.0
 BLACKLIST_FRIEND_TTL_SEC = 600.0  # dost maketler için pratikte kalıcı
 
 # --- BALONSUZ HEDEF: DAR ve KISA kara liste ---

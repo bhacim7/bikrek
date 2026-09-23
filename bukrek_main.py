@@ -1409,17 +1409,28 @@ class HavaSavunmaArayuz(QWidget):
                     f"Durum: ATEŞ — imha doğrulanıyor "
                     f"({self.angajman.ates_sayisi}. atış)")
                 return
+            if sonuc == 'tekrar' and self.angajman.dogrulama_notu:
+                # Balon atistan ONCE de guvenilir gorunmuyordu: "kayboldu"
+                # testi imha kaniti degil (29.16 B50). Operator sebebi
+                # ekrandan gorsun.
+                self._update_status_label(
+                    f"Durum: {self.angajman.dogrulama_notu} — yeniden ateş.")
             if sonuc == 'onaylandi':
+                _oran = self.angajman._ates_oncesi_balon_orani
                 self._update_status_label(
                     f"Durum: İMHA DOĞRULANDI — balon kayboldu "
-                    f"({self.angajman.ates_sayisi} atış)")
+                    f"({self.angajman.ates_sayisi} atış"
+                    + (f", atış öncesi balon %{_oran * 100:.0f}" if _oran is not None else "")
+                    + ")")
                 self.angajman.imha_edildi()
                 self.aktif_cift = None
                 return
             if sonuc == 'pes':
+                _not = self.angajman.dogrulama_notu
                 self._update_status_label(
-                    f"Durum: Balon duruyor ama atış bütçesi doldu "
-                    f"({config.FIRE_MAX_ATTEMPTS}) — sıradaki hedefe.")
+                    f"Durum: Atış bütçesi doldu ({config.FIRE_MAX_ATTEMPTS}) — "
+                    f"sıradaki hedefe. "
+                    + (_not if _not else "Balon hâlâ duruyor."))
                 self.angajman.imha_edilemedi()
                 self.aktif_cift = None
                 return

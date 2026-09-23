@@ -361,6 +361,12 @@ class AngajmanMakinesi:
         self.son_ates_zamani = 0.0
         self._ates_balon_gorulme = 0   # pencerede balon kaç karede görüldü
         self.ates_engel_ardisik = 0    # "tekrar" istendi ama ateş edilemedi
+        # ATESTEN ONCE balonun ne siklikta goruldugu (29.16 B50). "Balon
+        # kayboldu" ancak balon ONCESINDE guvenilir goruluyorduysa imha
+        # kanitidir; zaten yarisinda gorunmuyorsa hicbir sey kanitlamaz.
+        self._balon_gecmisi = []
+        self._ates_oncesi_balon_orani = None
+        self.dogrulama_notu = ''       # imha dogrulanamadiysa sebebi
 
         # Balon en son görüldüğünde ölçülen bağıl konumu (nişan sürekliliği).
         self.nisan_ofseti = None
@@ -388,6 +394,9 @@ class AngajmanMakinesi:
                 self._ates_balon_gorulme = 0
                 self.ates_engel_ardisik = 0
                 self.nisan_ofseti = None
+                self._balon_gecmisi = []
+                self._ates_oncesi_balon_orani = None
+                self.dogrulama_notu = ''
 
     def gecen(self):
         return time.time() - self.durum_zamani
@@ -766,6 +775,10 @@ class AngajmanMakinesi:
             self._gec(TARAMA)
             return False
 
+        # Balonun kare kare gorulup gorulmedigi KILIT boyunca kaydediliyor;
+        # imha dogrulamasinin taban orani bu (29.16 B50).
+        self.balon_gozlemi(balon_gorundu)
+
         tolerans = max(config.AIM_TOLERANCE_MIN_PIXELS,
                        nisan_yaricap_px * config.AIM_TOLERANCE_RATIO)
         if nisan_hatasi_px <= tolerans and balon_gorundu:
@@ -777,6 +790,28 @@ class AngajmanMakinesi:
             self._gec(ATES)
             return True
         return False
+
+    def balon_gozlemi(self, goruldu):
+        """
+        Balonun bu karede GERCEKTEN gorulup gorulmedigini kaydeder.
+
+        Imha dogrulamasinin taban orani (29.16 B50): "ates sonrasi balon
+        gorunmuyor" ancak balon ATESTEN ONCE guvenilir goruluyorduysa imha
+        kanitidir. Sahada olculdu (aşama2son4.mp4): uzaktaki hedefte balon
+        karelerin ~%100'unde, yakindaki (en one gecmis) hedefte yalnizca
+        ~%35'inde goruluyor — o hedefte "balon kayboldu" testi hicbir sey
+        kanitlamiyor ve sistem patlamamis balonu imha sandi.
+        """
+        self._balon_gecmisi.append(bool(goruldu))
+        _n = max(4, getattr(config, 'FIRE_CONFIRM_BASELINE_FRAMES', 20))
+        if len(self._balon_gecmisi) > _n:
+            del self._balon_gecmisi[:-_n]
+
+    def balon_gorulme_orani(self):
+        """Son pencerede balonun gorulme orani (0-1), olcum yoksa None."""
+        if len(self._balon_gecmisi) < 4:
+            return None
+        return sum(self._balon_gecmisi) / float(len(self._balon_gecmisi))
 
     def nisan_ofsetini_ogren(self, cift):
         """Balon görülüyorken bağıl konumunu sakla (nişan sürekliliği)."""
@@ -797,6 +832,9 @@ class AngajmanMakinesi:
         self.son_ates_zamani = time.time()
         self._ates_balon_gorulme = 0
         self.ates_engel_ardisik = 0
+        # Atis anindaki taban oran donduruluyor: dogrulama bununla
+        # karsilastirilacak (29.16 B50).
+        self._ates_oncesi_balon_orani = self.balon_gorulme_orani()
 
     def ates_dogrulama_adimi(self, balon_gorundu):
         """
@@ -826,6 +864,25 @@ class AngajmanMakinesi:
         if gecen < config.FIRE_CONFIRM_DELAY_SEC + config.FIRE_CONFIRM_SEC:
             return 'bekle'
         if self._ates_balon_gorulme <= config.FIRE_CONFIRM_MAX_SEEN:
+            # IMHA KANITI ICIN TABAN ORAN SARTI (2026-09-23 gece, 29.16 B50).
+            # "Balon artik gorunmuyor" ancak balon ATESTEN ONCE guvenilir
+            # goruluyorduysa imha kanitidir. Yakin mesafede balon buyuyup
+            # egitim dagiliminin disina ciktigi icin tespit orani %35'e
+            # dusuyor; o hedefte bu test her zaman "imha" der ve sistem
+            # patlamamis balonu vurulmus sanip siradaki hedefe gecer.
+            # Sahada tam olarak bu oldu: ilk hedef (en yakin, ortadaki)
+            # imha sayildi, 12 saniye sonra kara listesi dolunca ayni
+            # hedef balonuyla birlikte yeniden karsimiza cikti.
+            _taban = getattr(config, 'FIRE_CONFIRM_MIN_BEFORE_RATE', 0.0) or 0.0
+            _onceki = self._ates_oncesi_balon_orani
+            if _taban > 0 and _onceki is not None and _onceki < _taban:
+                self.dogrulama_notu = (
+                    f'imha dogrulanamadi: balon atistan once de yalnizca '
+                    f'%{_onceki * 100:.0f} goruluyordu')
+                if self.ates_sayisi >= config.FIRE_MAX_ATTEMPTS:
+                    return 'pes'
+                return 'tekrar'
+            self.dogrulama_notu = ''
             return 'onaylandi'
         if self.ates_sayisi >= config.FIRE_MAX_ATTEMPTS:
             return 'pes'
@@ -863,8 +920,18 @@ class AngajmanMakinesi:
         self._gec(TARAMA)
 
     def imha_edilemedi(self):
-        """Atış bütçesi doldu, balon hâlâ duruyor: hedefi geçici olarak bırak."""
-        self.kara_listeye_al(config.BLACKLIST_VERIFY_TTL_SEC, 'imha edilemedi')
+        """
+        Atış bütçesi doldu, balon hâlâ duruyor: hedefi geçici olarak bırak.
+
+        TTL 1.5 -> `BLACKLIST_GIVEUP_TTL_SEC` (29.16). 1.5 saniye, sistemin
+        siradaki hedefe yonelip donmesine bile yetmiyordu: ayni hedefe
+        hemen geri donup ayni sonucu aliyordu. Vurulamayan hedef, diger
+        hedeflere servis verilecek kadar bir sure birakilmali.
+        """
+        self.kara_listeye_al(
+            getattr(config, 'BLACKLIST_GIVEUP_TTL_SEC',
+                    config.BLACKLIST_VERIFY_TTL_SEC),
+            'imha edilemedi')
         self.aktif_iz_id = None
         self._gec(TARAMA)
 

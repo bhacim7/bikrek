@@ -1890,6 +1890,77 @@ kontrol("ates ondelemesi PID hatasina KARISMIYOR",
         and "FIRE_LEAD_TIME_SEC" not in _k33b.split("output_yaw = pid_yaw")[1])
 kontrol("ondeleme 0 iken ates bayragi nisan bayragiyla ayni",
         "self.ates_nisan_tamam = self.is_aimed_at_target" in _k33b)
+
+# --- 34. YANLIS IMHA (29.16 B50) ---
+# Sahada olculdu (aşama2son4.mp4): en yakin (ortadaki) hedefin balonu
+# karelerin yalnizca ~%35'inde tespit ediliyordu (balon 62+ px, egitim
+# dagiliminin disinda). "Ates sonrasi balon gorunmuyor" testi o hedefte
+# her zaman "imha" der; sistem patlamamis balonu vurulmus sandi, siradaki
+# hedefe gecti ve 12 saniye sonra (BLACKLIST_TTL_SEC) ayni hedef
+# balonuyla birlikte yeniden karsisina cikti — videonun sonundaki
+# "alakasiz davranis" buydu.
+print()
+print("34. Yanlis imha — balon zaten gorunmuyorsa 'kayboldu' imha kaniti degil")
+
+
+def _imha_denemesi(onceki_oran, sonra_balon_var=False, atis=1):
+    """Atistan ONCE `onceki_oran` oraninda gorulen balon, atistan sonra
+    `sonra_balon_var`. Doner: (sonuc, makine)."""
+    m = engagement.AngajmanMakinesi()
+    m.basla('task2')
+    n = config.FIRE_CONFIRM_BASELINE_FRAMES
+    for i in range(n):
+        m.balon_gozlemi(i < round(onceki_oran * n))
+    m._gec(engagement.ATES)
+    for _ in range(atis):
+        m.ates_kaydet()
+    t0 = m.son_ates_zamani
+    for i in range(8):
+        m.son_ates_zamani = t0 - (config.FIRE_CONFIRM_DELAY_SEC + 0.01 + i * 0.01)
+        m.ates_dogrulama_adimi(sonra_balon_var)
+    m.son_ates_zamani = t0 - _PENCERE - 0.01
+    return m.ates_dogrulama_adimi(sonra_balon_var), m
+
+
+_s, _m = _imha_denemesi(1.0)
+kontrol("balon atistan once HEP goruluyordu, sonra yok -> imha ONAYLANIR",
+        _s == 'onaylandi', _s)
+_s, _m = _imha_denemesi(0.35)
+kontrol("balon atistan once de %35 goruluyordu -> imha ONAYLANMAZ, tekrar",
+        _s == 'tekrar' and 'dogrulanamadi' in _m.dogrulama_notu, f"{_s} | {_m.dogrulama_notu}")
+_s, _m = _imha_denemesi(0.35, atis=config.FIRE_MAX_ATTEMPTS)
+kontrol("ayni durumda butce dolunca PES (sonsuz dongu yok)", _s == 'pes', _s)
+_s, _m = _imha_denemesi(0.8)
+kontrol("taban orani esigin ustunde (%80) -> imha ONAYLANIR", _s == 'onaylandi', _s)
+_s, _m = _imha_denemesi(1.0, sonra_balon_var=True)
+kontrol("balon hala goruluyorsa taban ne olursa olsun TEKRAR", _s == 'tekrar', _s)
+
+_m34 = engagement.AngajmanMakinesi()
+_m34.basla('task2')
+kontrol("olcum yokken taban oran None (kapi uygulanmaz)",
+        _m34.balon_gorulme_orani() is None)
+for _i in range(10):
+    _m34.balon_gozlemi(_i % 2 == 0)
+kontrol("taban oran dogru hesaplaniyor (%50)",
+        abs(_m34.balon_gorulme_orani() - 0.5) < 1e-9)
+for _i in range(config.FIRE_CONFIRM_BASELINE_FRAMES * 2):
+    _m34.balon_gozlemi(True)
+kontrol("taban penceresi kayiyor (eski gozlemler dusuyor)",
+        _m34.balon_gorulme_orani() == 1.0
+        and len(_m34._balon_gecmisi) <= config.FIRE_CONFIRM_BASELINE_FRAMES)
+_m34.dogrulama_notu = 'eski not'
+_m34._gec(engagement.KILIT)          # once baska bir duruma gec ki
+_m34._gec(engagement.TARAMA)         # TARAMA'ya donus gercek bir gecis olsun
+kontrol("yeni hedefe gecince taban oran sifirlaniyor",
+        _m34.balon_gorulme_orani() is None and _m34.dogrulama_notu == '')
+kontrol("taban oran esigi makul (0.3-0.8)",
+        0.3 <= config.FIRE_CONFIRM_MIN_BEFORE_RATE <= 0.8,
+        str(config.FIRE_CONFIRM_MIN_BEFORE_RATE))
+kontrol("vurulamayan hedefin kara liste suresi dogrulama TTL'inden uzun",
+        config.BLACKLIST_GIVEUP_TTL_SEC > config.BLACKLIST_VERIFY_TTL_SEC * 3,
+        f"{config.BLACKLIST_GIVEUP_TTL_SEC} sn")
+kontrol("kilit_adimi balon gozlemini besliyor",
+        "self.balon_gozlemi(balon_gorundu)" in io.open('engagement.py', encoding='utf-8').read())
 kontrol("balon grace sayaci tutuluyor ve kapiya veriliyor",
         "self._balon_kayip_kare += 1" in _k31
         and "balon_yakin=self._balon_yakin_zamanda()" in _k31)
