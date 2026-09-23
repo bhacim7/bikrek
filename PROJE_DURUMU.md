@@ -3981,3 +3981,74 @@ serbest kalmali.
 ustundeyse takip hala salinyor demektir (once `TARGET_LEAD_TIME_SEC` 0.05,
 sonra `KP_YAW` 0.55). "balon N kare once" yazisi sik gorunuyorsa balon
 tespiti dataset isi. `kosum_olc.py` ile titresim RMS < 0.25 derece.
+
+### 29.14 Paket 6 geri bildirimi: "takip iyi ama silah hic atesleme yapmiyor"
+
+Kullanici Paket 6'dan sonra: takip belirgin duzeldi (bosluk rolesi kapandi,
+salinim gitti), taret hedefin ortasina yakin ve onunla birlikte ilerliyor —
+ama ates neredeyse hic acilmiyor. Uc ayri sebep bulundu; ilki benim Paket
+6'da ekledigim kapinin OLCUM hatasi.
+
+#### 29.14.1 B46 — Kayma kapisi gercek kaymayi degil GURULTUYU olcuyordu
+
+`FIRE_MAX_ERROR_DRIFT_PIXELS` kapisi dogru fikirdi ama kestiricisi yanlisti:
+ardisik karelerin farkinin BUYUKLUGU (`hypot`, daima pozitif) EMA'lanıyordu.
+Rektifiye edilmis bir sinyalin ortalamasi sifir ortalamali gurultuda bile
+SIFIRA GITMEZ, gurultunun ortalama mutlak degerine yakinsar. Yani taret
+hedefle kusursuz gitse bile kapi buyuk bir "kayma" okuyor.
+
+Olculdu (15 fps, 3 px tespit gurultusu, GERCEK kayma YOK):
+
+| kestirici | okunan | atisa kadar kayma | sinir 10 px |
+|---|---|---|---|
+| eski (ardisik fark buyuklugunun EMA'si) | 74-79 px/sn | **18-20 px** | **kapali** |
+| yeni (eksen basina en kucuk kareler EGIMI) | 6-13 px/sn | **1.6-3.4 px** | acik |
+
+Gercek 60 px/sn kayma varken yeni kestirici 60 px/sn okuyor, yani ayirt
+etme yetenegi korunuyor (salinyan taret hala engelleniyor).
+
+**Duzeltme:** `engagement.nisan_kayma_hizi(gecmis)` — 0.6 saniyelik
+pencerede her eksene ayri ayri en kucuk kareler dogrusu uydurulup
+egimlerin bileskesi aliniyor. Sifir ortalamali gurultu egimi sifira
+goturur. Esik 10 -> 14 px (egim kestiricisinin p90 gurultusu ~11 px,
+salinyan taretinki 15+ px; 14 ikisini ayiriyor).
+
+#### 29.14.2 B47 — Nisan ve kilit kararlari farkli olcut kullaniyordu
+
+`is_aimed_at_target` EKSEN BASINA bakiyordu (`|yaw| <= tol and
+|pitch| <= tol`), `kilit_adimi` ise BILESKE hatayi (`hypot`) ayni tolerans
+degeriyle karsilastiriyordu. Ayni sayi icin bileske kosulu sqrt(2) kat daha
+sıkıdır: iki eksen de 9 px iken "nisan TAMAM" yazar ama bileske 12.7 px
+oldugu icin KILIT -> ATES gecisi olmaz. Ekranda "nisan TAMAM" gorunup
+atesin gelmemesinin bir sebebi buydu. `kilit_adimi` artik eksen basina en
+buyuk hatayla besleniyor.
+
+Ayrica `kilit_adimi`'nin balon sarti da ates kapisiyla ayni grace'i
+kullaniyor (B45): balon son 3 karede gorulduyse kilit sayaci sifirlanmiyor.
+
+#### 29.14.3 B48 — Nisan toleransi silah hassasiyetinin altindaydi
+
+`AIM_TOLERANCE_MIN_PIXELS = 10` px = 0.141 derece = 15 metrede 3.7 cm.
+Kullanicinin olctugu silah sapmasi 15 metrede 1-2 cm, balon yaricapi
+7.5 cm. Yani tolerans, silahin kendi hassasiyetinin iki kati kadar dar
+tutulmustu ve nisan penceresi gereksiz yere kapaliydi. 12 px = 4.4 cm;
+silahin 2 cm'lik sapmasiyla toplasa bile balonun icinde kaliyor.
+Daha buyuk yapilmamali: 14 px + 2 cm balonun kenarina dayaniyor.
+
+#### 29.14.4 Degisiklikler
+
+| dosya / yer | ne | onceki -> simdi | neden |
+|---|---|---|---|
+| `engagement.py` `nisan_kayma_hizi()` | YENI saf fonksiyon: eksen basina en kucuk kareler egimi | | gurultuyu degil gercek kaymayi olcsun (B46) |
+| `config.py` `FIRE_DRIFT_WINDOW_SEC` | yeni | 0.6 | egim penceresi |
+| `config.py` `FIRE_MAX_ERROR_DRIFT_PIXELS` | | 10 -> 14 | yeni kestiricinin gercek gurultu seviyesine gore (B46) |
+| `config.py` `AIM_TOLERANCE_MIN_PIXELS` | | 10 -> 12 | silah 15 metrede 1-2 cm; 10 px gereksiz sikiydi (B48) |
+| `bukrek_main.py` `process_tracking` | EMA yerine `_hata_gecmisi` penceresi + `nisan_kayma_hizi` | | B46 |
+| `bukrek_main.py` `kilit_adimi` cagrisi | bileske yerine eksen basina en buyuk hata; balon grace'i | | B47 |
+| `tests_yeni_mimari.py` 32 | eski/yeni kestirici karsilastirmasi, gurultu ve gercek kayma senaryolari, tolerans kontrolu | | |
+
+**Sahada bakilacaklar:** durum cubugundaki "kayma X/14 px". Iyi takipte X
+0-4 arasinda olmali. Surekli 14'un ustundeyse takip hala salinyor demektir
+(o zaman `TARGET_LEAD_TIME_SEC` 0.05, sonra `KP_YAW` 0.55). Ates yine
+acilmiyorsa durum cubugundaki gerekce hangi kapinin kestigini soyluyor:
+"nisan tolerans disinda" / "nisan kayiyor" / "balon" / "taret hareketli".

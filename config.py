@@ -1133,7 +1133,14 @@ AIM_TOLERANCE_RATIO = 0.4
 # 14 -> 10 (2026-09-16 gece, 29.8 B22): ayni gerekce. 10 piksel = 0.141
 # derece; olu bant eksen basina 7 piksel oldugu icin taretin dogal durus
 # hatasi bu bandin ICINDE kaliyor, yani ulasilabilir bir hedef.
-AIM_TOLERANCE_MIN_PIXELS = 10.0
+# 10 -> 12 (2026-09-23 gece, 29.14 B47). Kullanici silah kalibrasyonunu
+# olctu: 15 metrede nisangah merkezine sapma 1-2 cm. Balon yaricapi 7.5 cm.
+# 12 piksel = 0.169 derece = 15 metrede 4.4 cm; silahin kendi 2 cm'lik
+# sapmasiyla toplasa bile balonun icinde kaliyor. 10 px (3.7 cm) gereksiz
+# yere sikiydi ve nisan penceresini kapatiyordu: sahada taret balonun
+# uzerinde ilerlerken bile ates aclmiyordu. Daha buyuk yapmayin —
+# 14 px + 2 cm silah sapmasi balonun kenarina dayaniyor.
+AIM_TOLERANCE_MIN_PIXELS = 12.0
 
 # --- ATES KAPISI: TARET NE KADAR YAVASKEN ATES SERBEST ---
 # Namlu, ates komutundan sonra servo cekisi (FIRE_SERVO_LEG_SEC = 0.20 sn)
@@ -1184,7 +1191,23 @@ FIRE_MAX_TARGET_RATE_DEG_S = 8.0
 # Kapi: |hata_hizi| x FIRE_SHOT_LATENCY_SEC, nisan toleransini asmamali.
 # 0 = kapali.
 FIRE_SHOT_LATENCY_SEC = 0.25
-FIRE_MAX_ERROR_DRIFT_PIXELS = 10.0   # tolerans mertebesinde
+# 10 -> 14 (2026-09-23 gece, 29.14 B46). Kapinin OLCUMU duzeltildikten
+# sonra esik de gercek gurultu seviyesine gore secildi: egim kestiricisinin
+# p90 gurultusu 0.6 sn'lik pencerede ~11 px, salinyan taretinki 15+ px.
+# 14 px ikisini ayiriyor. Balon yaricapi 15 metrede ~15 px.
+FIRE_MAX_ERROR_DRIFT_PIXELS = 14.0
+# Kaymayi olcmek icin kullanilan pencere (saniye). Nisan hatasina EKSEN
+# BASINA en kucuk kareler dogrusu uydurulup EGIMI alinir.
+# BU KESTIRICI BILEREK BOYLE: ilk surum ardisik karelerin farkinin
+# BUYUKLUGUNU (hypot, her zaman pozitif) EMA'lamisti ve sifir ortalamali
+# gurultu bile pozitif bir ortalamaya yakinsadigi icin kapi neredeyse her
+# zaman kapali kaliyordu — sahada "takip iyi ama silah hic atesleme yapmiyor"
+# olarak goruldu. Olculdu (3 px tespit gurultusu, gercek kayma YOK):
+#     eski EMA kestirici : 74-79 px/sn -> atisa kadar 18-20 px (sinir 10!)
+#     egim kestirici     :  6-13 px/sn -> atisa kadar 1.6-3.4 px
+# Gercek 60 px/sn kayma varken egim kestirici 60 px/sn okuyor, yani
+# ayirt etme yetenegini kaybetmiyor.
+FIRE_DRIFT_WINDOW_SEC = 0.6
 
 # Balonun tespiti kare kare titriyor (aşama2Son1.mp4 F16 kilidinde karelerin
 # yaklasik yarisinda "BALON YOK"). Balon 0.2 saniyede kacamayacagina gore

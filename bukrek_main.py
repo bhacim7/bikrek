@@ -262,9 +262,7 @@ class HavaSavunmaArayuz(QWidget):
         self._min_kalan_pitch = 0.0
         # Nisan hatasinin degisim hizi (px/sn) ve balon grace sayaci (29.13).
         self.hata_degisim_hizi = None
-        self._onceki_hata_yaw_px = 0.0
-        self._onceki_hata_pitch_px = 0.0
-        self._hata_hiz_zamani = None
+        self._hata_gecmisi = deque(maxlen=60)
         self._balon_kayip_kare = 999
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
@@ -1726,7 +1724,7 @@ class HavaSavunmaArayuz(QWidget):
         self._min_kalan_yaw = 0.0
         self._min_kalan_pitch = 0.0
         self.hata_degisim_hizi = None
-        self._hata_hiz_zamani = None
+        self._hata_gecmisi.clear()
         self._balon_kayip_kare = 999
         self.integral_yaw = 0.0
         self.last_error_yaw = 0.0
@@ -3197,16 +3195,22 @@ class HavaSavunmaArayuz(QWidget):
         # Isabeti belirleyen taretin ya da hedefin MUTLAK hizi degil, mermi
         # ucus suresi boyunca nisan noktasinin hedefe gore ne kadar
         # kayacagi. Taret hedefle birlikte duzgun giderse bu sifira yakindir.
-        # EMA ile yumusatiliyor: tek karelik tespit gurultusu kapiyi
-        # gereksiz yere kapatmasin.
-        _dt_h = current_frame_time - (self._hata_hiz_zamani or current_frame_time)
-        if self._hata_hiz_zamani is not None and 0.0 < _dt_h < 0.5:
-            _ham = math.hypot(_hata_yaw_px - self._onceki_hata_yaw_px,
-                              _hata_pitch_px - self._onceki_hata_pitch_px) / _dt_h
-            self.hata_degisim_hizi = (0.4 * _ham + 0.6 * (self.hata_degisim_hizi or 0.0))
-        self._onceki_hata_yaw_px = _hata_yaw_px
-        self._onceki_hata_pitch_px = _hata_pitch_px
-        self._hata_hiz_zamani = current_frame_time
+        #
+        # KESTIRICI DUZELTILDI (2026-09-23 gece, 29.14 B46). Ilk surum
+        # ardisik karelerin farkinin BUYUKLUGUNU (hypot, daima pozitif)
+        # EMA'liyordu; sifir ortalamali tespit gurultusu bile pozitif bir
+        # ortalamaya yakinsadigi icin kapi neredeyse hep kapali kaliyordu
+        # (3 px gurultuyle gercek kayma YOKKEN 74-79 px/sn okuyordu, sinir
+        # 40 px/sn idi). Sahada "takip iyi ama silah hic atesleme yapmiyor"
+        # olarak goruldu. Artik EKSEN BASINA, pencere icindeki ISARETLI
+        # hataya en kucuk kareler dogrusu uydurulup EGIMI aliniyor: sifir
+        # ortalamali gurultu egimi sifira goturur, gercek kayma kalir.
+        self._hata_gecmisi.append((current_frame_time, _hata_yaw_px, _hata_pitch_px))
+        _pencere = getattr(config, 'FIRE_DRIFT_WINDOW_SEC', 0.6)
+        while (len(self._hata_gecmisi) > 2
+               and current_frame_time - self._hata_gecmisi[0][0] > _pencere):
+            self._hata_gecmisi.popleft()
+        self.hata_degisim_hizi = engagement.nisan_kayma_hizi(self._hata_gecmisi)
 
         # Balon GERCEKTEN en son kac kare once goruldu (ates grace'i, B45).
         if self.balon_gercek_goruldu:
@@ -3217,9 +3221,15 @@ class HavaSavunmaArayuz(QWidget):
         # Kilit durumundayken nişan tutuldu mu diye durum makinesini besle.
         # Ateş, tolerans AIM_HOLD_FRAMES kare korunduktan sonra serbest kalır.
         if self.angajman.durum == KILIT:
-            _hata_px = (_hata_yaw_px ** 2 + _hata_pitch_px ** 2) ** 0.5
+            # EKSEN BASINA en buyuk hata (29.14 B47). Eskiden BILESKE
+            # (hypot) veriliyordu ama `is_aimed_at_target` eksen basina
+            # bakiyor; ayni tolerans degeriyle bileske sqrt(2) kat daha
+            # sıkı bir kosul demek. Iki karar ayni olcutu kullanmali,
+            # yoksa "nisan TAMAM yaziyor ama ATES'e gecmiyor" oluyor.
+            _hata_px = max(abs(_hata_yaw_px), abs(_hata_pitch_px))
             self.angajman.kilit_adimi(_hata_px, _yaricap or 8.0,
-                                      self.balon_gercek_goruldu)
+                                      self.balon_gercek_goruldu or
+                                      self._balon_yakin_zamanda())
         if self.angajman.durum == ATES:
             self._otonom_ates_denemesi()
 

@@ -1270,7 +1270,14 @@ kontrol("is_aimed_at_target telafi edilmis hatadan (derece) kuruluyor",
 kontrol("ham piksel hatasi artik nisan karari vermiyor",
         "self.is_aimed_at_target = (abs(error_yaw_pixel)" not in _kaynak2)
 kontrol("kilit_adimi de telafi edilmis hatayla besleniyor",
-        "_hata_px = (_hata_yaw_px ** 2 + _hata_pitch_px ** 2) ** 0.5" in _kaynak2)
+        "_hata_px = max(abs(_hata_yaw_px), abs(_hata_pitch_px))" in _kaynak2)
+# 29.14 B47: kilit_adimi ve is_aimed_at_target AYNI olcutu kullanmali.
+# Eskiden biri bileske (hypot), digeri eksen basina bakiyordu; ayni
+# tolerans degeriyle bileske sqrt(2) kat daha siki bir kosuldur ve
+# "nisan TAMAM yaziyor ama ATES'e gecmiyor" durumunu uretiyordu.
+kontrol("nisan ve kilit kararlari ayni olcutu (eksen basina en buyuk) kullaniyor",
+        "_hata_px = max(abs(_hata_yaw_px), abs(_hata_pitch_px))" in _kaynak2
+        and "self.is_aimed_at_target = (abs(_hata_yaw_px) <= _tolerans" in _kaynak2)
 
 # --- 24. OLU BOLGE OLMAMALI: her hata er gec komut uretmeli (29.8 B21) ---
 print()
@@ -1751,8 +1758,64 @@ kontrol("grace penceresi kisa (1-6 kare)", 1 <= config.FIRE_BALLOON_GRACE_FRAMES
         str(config.FIRE_BALLOON_GRACE_FRAMES))
 _k31 = io.open('bukrek_main.py', encoding='utf-8').read()
 kontrol("hata degisim hizi olculuyor ve ates kapisina veriliyor",
-        "self.hata_degisim_hizi = (0.4 * _ham" in _k31
+        "self.hata_degisim_hizi = engagement.nisan_kayma_hizi(self._hata_gecmisi)" in _k31
         and "hata_hizi=self.hata_degisim_hizi" in _k31)
+
+# --- 32. KAYMA KESTIRICISI (29.14 B46) ---
+# Kullanici bildirdi: "takip biraz daha iyi ama sikma esigi cok yuksek,
+# neredeyse hic atesleme yapmiyor". Sebep: kapi gercek kaymayi degil
+# TESPIT GURULTUSUNU olcuyordu.
+print()
+print("32. Kayma kestiricisi — gurultuyu degil gercek kaymayi olcmeli")
+_rng = _np.random.default_rng(7)
+_fps, _dt = 15.0, 1 / 15.0
+_n = int(round(config.FIRE_DRIFT_WINDOW_SEC * _fps))
+
+
+def _pencere(kayma_px_s, gurultu_px, tohum_rng):
+    return [(k * _dt,
+             kayma_px_s * k * _dt + tohum_rng.normal(0, gurultu_px),
+             tohum_rng.normal(0, gurultu_px)) for k in range(_n)]
+
+
+def _eski_kestirici(g):
+    """Ilk surum: ardisik farkin BUYUKLUGUNU EMA'la (daima pozitif)."""
+    v = 0.0
+    for k in range(1, len(g)):
+        ham = _math.hypot(g[k][1] - g[k - 1][1], g[k][2] - g[k - 1][2]) / (g[k][0] - g[k - 1][0])
+        v = 0.4 * ham + 0.6 * v
+    return v
+
+
+_yeni_sifir = [engagement.nisan_kayma_hizi(_pencere(0.0, 3.0, _rng)) for _ in range(400)]
+_eski_sifir = [_eski_kestirici(_pencere(0.0, 3.0, _rng)) for _ in range(400)]
+_y_ort = sum(_yeni_sifir) / len(_yeni_sifir)
+_e_ort = sum(_eski_sifir) / len(_eski_sifir)
+kontrol("gercek kayma YOKken eski kestirici gurultuyu kayma sanıyordu",
+        _e_ort * config.FIRE_SHOT_LATENCY_SEC > config.FIRE_MAX_ERROR_DRIFT_PIXELS,
+        f"eski {_e_ort:.0f} px/sn -> atisa kadar {_e_ort*config.FIRE_SHOT_LATENCY_SEC:.0f} px "
+        f"(sinir {config.FIRE_MAX_ERROR_DRIFT_PIXELS:.0f})")
+kontrol("gercek kayma YOKken yeni kestirici ATESI SERBEST birakiyor",
+        _y_ort * config.FIRE_SHOT_LATENCY_SEC < config.FIRE_MAX_ERROR_DRIFT_PIXELS / 2,
+        f"yeni {_y_ort:.0f} px/sn -> atisa kadar {_y_ort*config.FIRE_SHOT_LATENCY_SEC:.1f} px")
+_p90 = sorted(_yeni_sifir)[int(0.9 * len(_yeni_sifir))]
+kontrol("iyi takipte kapi karelerin %90'inda aciliyor",
+        _p90 * config.FIRE_SHOT_LATENCY_SEC < config.FIRE_MAX_ERROR_DRIFT_PIXELS,
+        f"p90 {_p90*config.FIRE_SHOT_LATENCY_SEC:.1f} px < {config.FIRE_MAX_ERROR_DRIFT_PIXELS:.0f}")
+_kayan = [engagement.nisan_kayma_hizi(_pencere(60.0, 3.0, _rng)) for _ in range(200)]
+_k_ort = sum(_kayan) / len(_kayan)
+kontrol("gercekten kayan nisanda (60 px/sn) kapi hala KAPANIYOR",
+        _k_ort * config.FIRE_SHOT_LATENCY_SEC > config.FIRE_MAX_ERROR_DRIFT_PIXELS,
+        f"{_k_ort:.0f} px/sn -> {_k_ort*config.FIRE_SHOT_LATENCY_SEC:.0f} px")
+kontrol("ornek yetmezse None (kapi uygulanmaz)",
+        engagement.nisan_kayma_hizi([(0.0, 0.0, 0.0), (0.1, 1.0, 0.0)]) is None)
+kontrol("sabit hatada kayma sifir",
+        abs(engagement.nisan_kayma_hizi([(k * _dt, 7.0, -3.0) for k in range(8)])) < 1e-9)
+kontrol("duz kaymada egim tam dogru",
+        abs(engagement.nisan_kayma_hizi([(k * _dt, 20.0 * k * _dt, 0.0) for k in range(8)]) - 20.0) < 1e-6)
+kontrol("nisan toleransi silah hassasiyetiyle tutarli (12 px = 4.4 cm @ 15 m)",
+        11.0 <= config.AIM_TOLERANCE_MIN_PIXELS <= 14.0,
+        f"{config.AIM_TOLERANCE_MIN_PIXELS} px")
 kontrol("balon grace sayaci tutuluyor ve kapiya veriliyor",
         "self._balon_kayip_kare += 1" in _k31
         and "balon_yakin=self._balon_yakin_zamanda()" in _k31)

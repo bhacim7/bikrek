@@ -12,6 +12,7 @@ geliyor. Bu yüzden takip birimi artık tek nesne değil, bir ÇİFT:
 maket (kim) + balon (nereye nişan alınacak).
 """
 
+import math
 import time
 
 import config
@@ -953,6 +954,38 @@ def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
     if _atesiz_bolgede(yaw, no_fire_start, no_fire_end):
         return False, 'atesiz bolge'
     return True, 'serbest'
+
+
+def nisan_kayma_hizi(gecmis, en_az=4):
+    """
+    Nisan hatasinin KAYMA hizi (px/sn): (zaman, hata_yaw_px, hata_pitch_px)
+    dizisine EKSEN BASINA en kucuk kareler dogrusu uydurup egimlerin
+    bileskesini dondurur. Ornek sayisi yetmezse None (kapi uygulanmaz).
+
+    NEDEN EGIM, NEDEN ARDISIK FARK DEGIL (2026-09-23, 29.14 B46):
+    ilk surum ardisik karelerin farkinin BUYUKLUGUNU (hypot, daima pozitif)
+    EMA'liyordu. Sifir ortalamali tespit gurultusu bile pozitif bir
+    ortalamaya yakinsadigi icin kapi neredeyse hep kapali kaldi — sahada
+    "takip iyi ama silah hic atesleme yapmiyor". Olculdu (3 px gurultu,
+    GERCEK kayma yok): eski kestirici 74-79 px/sn, egim kestiricisi
+    6-13 px/sn. Gercek 60 px/sn kayma varken egim 60 px/sn okuyor.
+    """
+    n = len(gecmis)
+    if n < en_az:
+        return None
+    t0 = gecmis[0][0]
+    ts = [k[0] - t0 for k in gecmis]
+    t_ort = sum(ts) / n
+    payda = sum((t - t_ort) ** 2 for t in ts)
+    if payda <= 1e-9:
+        return None
+    egimler = []
+    for eksen in (1, 2):
+        v = [k[eksen] for k in gecmis]
+        v_ort = sum(v) / n
+        egimler.append(sum((t - t_ort) * (x - v_ort)
+                           for t, x in zip(ts, v)) / payda)
+    return math.hypot(egimler[0], egimler[1])
 
 
 def _taraf_cogunlugu(gecmis, gerekli):
