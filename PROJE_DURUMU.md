@@ -4770,3 +4770,112 @@ basildi, `config.py`'de `CONF_THRESHOLD = 0.5` olustu; ardindan
 - 39. bolum testleri yaziciyi GERCEK `config.py`'nin gecici bir kopyasi
   uzerinde calistirir ve sonunda "gercek config.py hic yazilmadi"
   kontrolu yapar.
+
+
+### 29.22 `aşama2son9.mp4` — 3/3 imha, 18.45 saniye (REFERANS KOSUM, 2026-09-24)
+
+18.45 saniye, Asama 2 (Hızlı İmha), 3 hedef (Fuze / Helikopter / Drone),
+**6 atis, 3 imha**. Kayit `enkoder_20260924_164407.csv`; video t=0 =
+16:44:34 (ortalama fark 0.016 derece). Bu kosum `calisan-3imha-18sn`
+etiketi ve `asama2-stabil` dali ile dondurulmustur.
+
+#### 29.22.1 Tur cizelgesi
+
+| t (sn) | hedef | atis | sonuc | sure |
+|---|---|---|---|---|
+| 1.5-7.5 | **Fuze (1. angajman)** | 3 | butce doldu, imha YOK | **5.8 sn** |
+| 8.0-10.2 | Helikopter | **1** | **imha 1** | 2.1 sn |
+| 10.5-13.0 | Drone | **1** | **imha 2** | 2.3 sn |
+| 13.5-16.9 | Fuze (2. angajman) | **1** | **imha 3** | 3.3 sn |
+
+Uc hedefin ucu de vuruldu. Son uc angajmanin ucu de **tek atisla** bitti.
+Kosumun 5.8 saniyesi, yani neredeyse ucte biri, ilk Fuze denemesinde gecti.
+
+#### 29.22.2 Denetleyici artik sorun degil — olculen
+
+| angajman | taret titremesi (slew cikarilmis) | komut yon degisimi |
+|---|---|---|
+| Fuze 1 | 0.037 derece (**3 px**) | 4/137 |
+| Helikopter | 0.050 derece (**4 px**) | 2/44 |
+| Drone | 0.082 derece (**6 px**) | 6/65 |
+| Fuze 2 (oturmus kisim) | 0.051 derece (**4 px**) | 5/93 |
+
+Karsilastirma: 29.13'teki kararsiz kosumda 0.75 derece (53 px) ve %18-19
+yon degisimi vardi. **Yaklasik 15 kat iyilesme, kalici.**
+
+Angajman icinde yalnizca bes kisa duraklama var (0.22-0.48 sn); atisla
+eslesen sistematik donma YOK (29.15'teki 15 grup x 0.56 sn tablosu
+tamamen kalkti).
+
+**Zamanlama tutarli:** dort angajmanin DORDUNDE de DOGRULAMA'dan ilk
+atisa **1.25 saniye** gecti. Bu, sistemin artik tekrarlanabilir
+davrandigini gosteriyor.
+
+#### 29.22.3 Tek basarisizligin sebebi: SARKAC — olculdu
+
+Kullanicinin tahmini dogru. Fuze'nin ilk angajmaninda hedefin DUNYA
+acisi (taret acisi + nisan hatasi) soyle gitti:
+
+```
+-6.56  ->  -5.74  ->  -8.09  ->  -7.22
+  |          |          |          |
+ t=2.0      t=3.5      t=5.75     t=6.75      (yon degisim anlari)
+```
+
+Yani **2.35 derece tepeden tepeye, ~2.5-3 saniye periyotlu bir sarkac**.
+2.35 derece = 166 piksel; balon 15 metrede ~30 piksel. Hedef, kendi
+capinin bes katindan fazla bir yay ciziyor.
+
+Uc atisin UCU DE sarkacin ORTASINDA, yani hizin en yuksek oldugu anda
+yapildi:
+
+| atis | hedef acisal hizi | 0.25 sn'de kayar | 0.50 sn'de | 0.75 sn'de |
+|---|---|---|---|---|
+| t=2.50 | +0.62 derece/sn | 11 px | 22 px | 33 px |
+| t=4.75 | -0.90 derece/sn | 16 px | 32 px | 48 px |
+| t=6.25 | +0.87 derece/sn | 15 px | 31 px | 46 px |
+
+Balon yaricapi ~15 piksel. Merminin ucus suresi 0.5 saniye bile olsa
+hedef 22-32 piksel, yani bir bucuk-iki balon yaricapi kayiyor — **matematiksel
+olarak iska.** Sarkacin UC noktalarinda (t=2.0, 3.5, 5.75, 6.75) ise hiz
+sifir; orada atilan bir atis kaymadan variyor.
+
+Ikinci Fuze angajmaninda hedef duzgun yaklasiyordu (taret -8.30'dan
+-10.89'a tek yonde gitti) ve **tek atista imha oldu.** Helikopter ve
+Drone da ayni sekilde.
+
+#### 29.22.4 Oneriler (uygulanmadi — kullanici karari)
+
+**A. Sarkacin uc noktasinda ates (en yuksek deger).** `target_world_*_rate`
+zaten olculuyor. Nisan tamamken hedefin acisal hizi kucukse HEMEN, degilse
+kisa bir sure (or. 0.6 sn) uc noktasi beklenir; beklerken uc gelmezse yine
+ates edilir. Yeni bir olcum gerekmiyor, var olan buyukluk kullaniliyor.
+Bu kosumda uc noktalar 1.5-2.25 saniye araliklarla geliyordu, yani bekleme
+bedeli kabul edilebilir.
+
+**B. Mermi ucus suresini OLCMEK ve `FIRE_LEAD_TIME_SEC`'e yazmak.**
+Sabit hazir ve 0'da bekliyor. Olcum yontemi: sabit duran bir balona 15
+metreden ates edip ekran kaydindan "ates komutu" ile "balonun patladigi
+kare" arasini saymak. Bu deger girildiginde sarkac ortasindaki atislar da
+tutmaya baslar; A ve B birbirini tamamlar.
+
+**C. Kayma siniri (`FIRE_MAX_ERROR_DRIFT_PIXELS = 14`) ucus suresiyle
+tutarli hale getirilmeli.** Simdi 0.25 saniyelik gecikmeye gore
+hesaplaniyor; gercek ucus suresi 0.5 saniye cikarsa ayni sinir iki kat
+daha genis bir kaymaya izin veriyor demektir.
+
+**D. Atis butcesi sarkacli hedefte bosa gidiyor.** Fuze'ye uc atis yapildi,
+ucu de ortada. A uygulanirsa bu kendiliginden duzelir; ayrica "hedef
+sarkac yapiyor" durumu durum cubuguna yazilabilir (operator gorsun).
+
+**E. Kalan kucuk kalem:** nisan hatasinin RMS'i hala ~15-20 piksel
+seviyesinde ve bunun buyuk kismi balon kutusunun kare kare titremesi
+(29.19 B58). Kodla degil DATASET ile cozulur: balonun 25-40 piksel
+oldugu karelerde kutu kararliligi.
+
+#### 29.22.5 Referans noktasi dondurma
+
+- Etiket: **`calisan-3imha-18sn`** -> commit `494ae36`
+- Dal: **`asama2-stabil`** -> ayni commit
+Ikisi de `origin`'e gonderildi. Yeni denemeler bu noktayi bozamaz; geri
+donmek icin `git checkout calisan-3imha-18sn` yeterli.
