@@ -304,10 +304,10 @@ SPOTTER_FPS = 30
 # sahada ölçüldükten sonra açılacak.
 KAMERA_KONTROLLERI = {
     "spotter": {
-        "autofocus": 0,          # Logitech'in otomatik odağı avlanmasın
+        "autofocus": 0.0,          # Logitech'in otomatik odağı avlanmasın
         "focus": None,           # sahada elle ayarlanıp buraya yazılabilir
-        "auto_wb": 0,            # renk eşikleri sabit renk varsayıyor
-        "wb_temperature": 4600,  # tipik iç mekân floresan
+        "auto_wb": 1.0,            # renk eşikleri sabit renk varsayıyor
+        "wb_temperature": 5500.0,  # tipik iç mekân floresan
         "auto_exposure": None,   # ölçümden sonra 0.25 yapılacak
         "exposure": None,        # ölçümden sonra -6 / -7
         "gain": None,
