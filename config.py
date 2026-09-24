@@ -35,7 +35,7 @@ YOLO_MODEL_PATH = os.path.join(_BURASI, "v26L1056.engine")
 # eslestirme (yalniz maket veya yalniz balon angaje edilemez),
 # LOCK_CONFIRM_FRAMES zamansal onayi ve VERIFY_MIN_CONFIDENCE. Dataset egik/
 # bulanik orneklerle guclendikten sonra 0.4'e geri donulebilir.
-CONF_THRESHOLD = 0.3
+CONF_THRESHOLD = 0.4
 NMS_THRESHOLD = 0.4
 
 # data.yaml ile BİREBİR aynı sıra olmalı — sınıf indeksleri buradan çözülüyor.
@@ -753,7 +753,7 @@ FEEDFORWARD_MAX_STEP_DEGREE = 0.10
 # dogrudan hataya tasiyor (0.49 derece/sn x 0.15 = 5 px). Bosluk rolesi
 # kapatildiktan sonra asil kararsizlik kaynagi kalmadi ama ondelemeyi de
 # temkinli tutmak marj birakiyor. Taret geride kaliyorsa 0.15'e geri.
-TARGET_LEAD_TIME_SEC = 0.10
+TARGET_LEAD_TIME_SEC = 0.1
 
 # --- NISAN NOKTASI YUMUSATMA (2026-09-23 gece, 29.19 B58) ---
 # Sahada olculdu (aşama2son7.mp4, kilit oturduktan sonraki 98 ornek):
@@ -876,7 +876,7 @@ MIN_OUTPUT_PIXELS = 2.5
 # bittikten sonra 0.7^k'lik artik komutlar gonderilmiyor. Asimi sinirlayan
 # MAX_OUTPUT_DEGREE = 2.0 de yerinde kaliyor (o degisiklik ise ise yaradi:
 # edinme asimi 5.8 -> 0.3 derece).
-PID_OUTPUT_SMOOTHING = 0.30
+PID_OUTPUT_SMOOTHING = 0.3
 
 # Yukaridaki katsayi KARE BASINA tanimli, yani sonumun gercek zamandaki
 # hizi kare hizina bagli. 15 fps'te ayarlanmisti; kamera 30 fps verirse ayni
@@ -1176,7 +1176,7 @@ AIM_TOLERANCE_RATIO = 0.4
 # yere sikiydi ve nisan penceresini kapatiyordu: sahada taret balonun
 # uzerinde ilerlerken bile ates aclmiyordu. Daha buyuk yapmayin —
 # 14 px + 2 cm silah sapmasi balonun kenarina dayaniyor.
-AIM_TOLERANCE_MIN_PIXELS = 12.0
+AIM_TOLERANCE_MIN_PIXELS = 12
 
 # --- ATES KAPISI: TARET NE KADAR YAVASKEN ATES SERBEST ---
 # Namlu, ates komutundan sonra servo cekisi (FIRE_SERVO_LEG_SEC = 0.20 sn)
@@ -1199,7 +1199,7 @@ AIM_TOLERANCE_MIN_PIXELS = 12.0
 # hizi degil, nisan HATASININ ne kadar hizli degistigi — o da
 # FIRE_MAX_ERROR_RATE_PX_S ile olculuyor. Bu deger artik yalnizca emniyet
 # siniri: devir teslim slew'i (30-130 derece/sn) sirasinda ates aclmasin.
-FIRE_MAX_TURRET_RATE_DEG_S = 12.0
+FIRE_MAX_TURRET_RATE_DEG_S = 12
 
 # --- ATES KAPISI 2: HEDEF ne kadar yavasken ates serbest ---
 # (2026-09-16 gece, 29.9 B27). HedefSıkmaDeneme.mp4'te uc atis, uc iska;
@@ -1217,7 +1217,7 @@ FIRE_MAX_TURRET_RATE_DEG_S = 12.0
 # kesmek, hedefle birlikte hareket eden bir taretle anlamsiz. Sahada bu kapi
 # "hedef hareketli: 2.8 derece/sn" diye 15 metrede yaklasan hedefe atesi
 # kesiyordu. Artik yalnizca elle sallanan/firlatilan asiri durumlar icin.
-FIRE_MAX_TARGET_RATE_DEG_S = 8.0
+FIRE_MAX_TARGET_RATE_DEG_S = 8
 
 # --- ASIL ATES KAPISI: NISAN HATASININ DEGISIM HIZI (2026-09-23, B44) ---
 # Mermi ucus + mekanik gecikmesi ~0.25 sn. Isabeti belirleyen, bu sure
@@ -1231,7 +1231,7 @@ FIRE_SHOT_LATENCY_SEC = 0.25
 # sonra esik de gercek gurultu seviyesine gore secildi: egim kestiricisinin
 # p90 gurultusu 0.6 sn'lik pencerede ~11 px, salinyan taretinki 15+ px.
 # 14 px ikisini ayiriyor. Balon yaricapi 15 metrede ~15 px.
-FIRE_MAX_ERROR_DRIFT_PIXELS = 14.0
+FIRE_MAX_ERROR_DRIFT_PIXELS = 14
 # Kaymayi olcmek icin kullanilan pencere (saniye). Nisan hatasina EKSEN
 # BASINA en kucuk kareler dogrusu uydurulup EGIMI alinir.
 # BU KESTIRICI BILEREK BOYLE: ilk surum ardisik karelerin farkinin
@@ -1313,7 +1313,7 @@ FIRE_MAX_ATTEMPTS = 3         # ayni hedefe ardisik en fazla kac ates
 # (BLACKLIST_TTL_SEC) ayni hedef balonuyla birlikte yeniden karsisina cikti.
 # Atistan onceki gorulme orani bu degerin altindaysa imha ONAYLANMAZ.
 # 0 = kapali (eski davranis).
-FIRE_CONFIRM_MIN_BEFORE_RATE = 0.50
+FIRE_CONFIRM_MIN_BEFORE_RATE = 0.5
 FIRE_CONFIRM_BASELINE_FRAMES = 20   # taban oranin olculdugu pencere (kare)
 
 # Ateste sonra sayima BASLAMADAN once beklenen sure.
@@ -1367,7 +1367,7 @@ TRACK_REACQUIRE_PIXELS = 150.0
 # Gövde çerçevesinde MUTLAK açı olarak tutulur (piksel uzayında tutmak
 # anlamsız, taret döndükçe referans kayar).
 BLACKLIST_RADIUS_DEG = 4.0
-BLACKLIST_TTL_SEC = 12.0          # imha edilenler için
+BLACKLIST_TTL_SEC = 12          # imha edilenler için
 # IMHA/VAZGECME KAYDININ YARICAPI (2026-09-23 gece, 29.18 B54).
 # Varsayilan 4.0 derece 15 metrede 1.05 metre yanal bolge kapatir; kara
 # liste artik angajmanin HER asamasinda uygulandigi icin bu genislik
@@ -1380,7 +1380,7 @@ BLACKLIST_KILL_RADIUS_DEG = 2.5
 # Atis butcesi dolan (vurulamayan) hedef icin (2026-09-23 gece, 29.16).
 # Eskiden BLACKLIST_VERIFY_TTL_SEC (1.5 sn) kullaniliyordu; sistem siradaki
 # hedefe yonelip donmeye bile firsat bulamadan ayni hedefe geri donuyordu.
-BLACKLIST_GIVEUP_TTL_SEC = 5.0
+BLACKLIST_GIVEUP_TTL_SEC = 5
 BLACKLIST_FRIEND_TTL_SEC = 600.0  # dost maketler için pratikte kalıcı
 
 # --- BALONSUZ HEDEF: DAR ve KISA kara liste ---
