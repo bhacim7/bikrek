@@ -4619,3 +4619,82 @@ tolerans icinde kalan kare orani %38'den belirgin artmali.
 kutusunun kendi titremesinden geliyor. Egitim setinde balonun kucuk
 (25-40 px) oldugu karelerde kutu kararliligi artirilmali; bu olculebilir
 bir dataset isi ve koddan cozulemez.
+
+### 29.20 Arayuze AYARLAR sekmesi (2026-09-24)
+
+Kullanici istegi: kamera ayarlari her iki kamera icin AYRI ve kaydiriciyla
+(Logitech arayuzundeki gibi), ana penceredeki "Ateş Kontrolü ve Kısıtlı
+Bölge" kutusunun yerine tek bir **Ayarlar** dugmesi, acilan pencerede
+sekmeler, yeni bir "harekete yasak alan", ve config'deki onemli takip /
+tanima / ates parametrelerinin canli ayarlanabilmesi (her birinin ne ise
+yaradigi parantez icinde yazili).
+
+**Temel kural: hicbir takip / tespit / ates / kamera davranisi
+degistirilmedi.** Eklenenlerin tamami varsayilan degerlerinde etkisizdir;
+ayar penceresi hic acilmazsa sistem bugunku gibi calisir.
+
+#### 29.20.1 Yapilanlar
+
+| dosya | ne |
+|---|---|
+| `ayarlar_penceresi.py` | YENI. Modelsiz (non-modal) QDialog, 6 sekme, kaydirici + sayi kutusu satirlari, her satirin altinda aciklama. |
+| `config.py` | `KAMERA_UVC_ARALIKLARI`, `AYARLANABILIR_PARAMETRELER`, `ayar_uygula/ayar_oku`, `HAREKET_*` ve `hareket_sinirla()`. |
+| `camera_module.py` | Kamera dongusu artik `{"action": "UVC", "degerler": {...}}` sozluk komutunu taniyor: kamerayi KAPATMADAN denetimleri yeniden uygular. |
+| `bukrek_main.py` | "Ayarlar" dugmesi; ates kutusu pencereye tasindi; mutlak ve delta komut yollarina hareket siniri kirpmasi. |
+| `tests_yeni_mimari.py` | 38. bolum: katalog butunlugu, hareket siniri, komut yolu, izolasyon kontrolleri. |
+
+#### 29.20.2 Sekmeler
+
+1. **Avcı Kamera** / 2. **Gözcü Kamera** — `KAMERA_UVC_ARALIKLARI`'ndaki 12
+   denetim (beyaz dengesi, pozlama, kazanc, parlaklik, kontrast, doygunluk,
+   keskinlik, gama, odak). Her satirda kaydirici + sayi kutusu + **"dokunma"**
+   kutusu. "dokunma" isaretliyse o denetim `None` olarak kaydedilir, yani
+   kameraya HIC gonderilmez (mevcut `_uvc_uygula` semantigi aynen korundu).
+   Degisiklik aninda kamera surecine gider; **cozunurluk, FOURCC ve kare
+   hizina dokunulmaz**, akis kesilmez.
+3. **Ateş Kontrolü** — atessiz bolge. Ana penceredeki `no_fire_start_input`,
+   `no_fire_end_input` ve iki dugme YENIDEN YARATILMADI, buraya TASINDI;
+   bagli `apply_no_fire_zone` / `clear_no_fire_zone` yollari degismedi.
+4. **Kısıtlı Bölge** — Asama 3'un `movement_restricted_yaw_start/end`
+   degerleri. Bunlarin daha once hic arayuzu yoktu (kodda 0 sabitti).
+5. **Harekete Yasak Alan** — YENI. Taretin CIKAMAYACAGI yaw/pitch araligi.
+   Kisitli bolgeden farki: o bir dilimi yasaklar, bu calisilabilecek tum
+   araligi sinirlar (mekanik emniyet / kablo koruma).
+   **Varsayilan KAPALI**; kapaliyken `hareket_sinirla` degeri aynen dondurur
+   ve komut yolu hic degismez. Acikken:
+   - mutlak komut (`send_angle_command`) araliga kirpilir,
+   - delta komutta once VARILACAK aci kirpilir, sonra deltaya geri cevrilir —
+     boylece taret sinira kadar gider ama asmaz.
+6. **Takip / Tanıma / Ateş** — `AYARLANABILIR_PARAMETRELER`'deki 29 sabit,
+   dort baslik altinda (hedef tespit / denetleyici / nisan-ates / angajman
+   akisi). Arayuz `config` uzerinde dogrudan yazar; kod her karede
+   `config.X` okudugu icin degisiklik ANINDA gecerli olur. Dosyaya
+   YAZILMAZ: program kapaninca dosyadaki degerlere donulur.
+   Her sekmede "Açılıştaki Değerlere Dön" dugmesi var.
+
+#### 29.20.3 Bozulmama guvenceleri (38. bolum testleri)
+
+- Katalogdaki **her parametre adi config'de var** ve **guncel degeri kendi
+  araliginda**. Bir sabit yeniden adlandirilir ya da araligin disina
+  cikarilirsa test kirmizi yanar (arayuz sessizce bozulmaz).
+- Kamera denetim katalogu `camera_module._UVC_OZELLIKLERI` ile birebir
+  ortusuyor; `KAMERA_KONTROLLERI` icinde katalog disi anahtar yok.
+- Hareket siniri **varsayilan kapali** ve kapaliyken deger aynen geciyor.
+- Komut yolunda kirpmanin komutun GONDERILMESINDEN once oldugu, delta
+  yolunda ise yalnizca sinir acikken devreye girdigi kaynaktan dogrulaniyor.
+- `ayarlar_penceresi.py` icinde `process_tracking`, `ates_serbest_mi`,
+  `kilit_adimi`, `send_proportional_move_command`, `fire_weapon`
+  gecmiyor — yani pencere angajman mantigina dokunamaz.
+- `ayarlari_ac` try/except icinde: import ya da olusturma hata verirse
+  yalnizca durum cubuguna yazilir, sistem calismaya devam eder.
+
+Ayrica gercek ana pencere basliksiz (offscreen) olarak kurulup Ayarlar
+penceresi acildi: alti sekme olustu, atessiz bolge alanlarinin pencereye
+tasindigi ve mod degisiminde ates kutusunun ayri bir pencere olarak
+acilmadigi dogrulandi.
+
+#### 29.20.4 Bilinen sinir
+
+Ayarlar dosyaya yazilmiyor. Sahada iyi bir kombinasyon bulununca degerler
+elle `config.py`'ye islenmeli. Kalici kayit istenirse ayri bir istek
+olarak eklenebilir (JSON profil); simdilik kapsam disinda tutuldu.

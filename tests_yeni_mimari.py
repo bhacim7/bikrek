@@ -2133,6 +2133,101 @@ for _v in _ham:
 kontrol("benzetim: 10 px gurultu suzgecten sonra belirgin azaliyor",
         _np.std(_ciktı) < 10.0 * 0.7,
         f"{_np.std(_ham):.1f} px -> {_np.std(_ciktı):.1f} px")
+
+# --- 38. ARAYUZ AYARLAR SEKMESI (29.20) ---
+# Ayarlar penceresi takip/tespit/ates mantigina HICBIR SEY EKLEMEZ; yalnizca
+# mevcut `config` sabitlerini canli degistirir ve kamera surecine UVC komutu
+# gonderir. Asagidaki kontroller katalogun koda uyumlu kaldigini guvenceye
+# alir: bir sabit yeniden adlandirilir ya da araligin disina cikarilirsa
+# arayuz sessizce bozulur, test bunu yakalar.
+print()
+print("38. Arayuz Ayarlar sekmesi — katalog butunlugu ve hareket siniri")
+_eksik, _aralik_disi = [], []
+for _satir in config.AYARLANABILIR_PARAMETRELER:
+    _ad, _etiket, _mn, _mx, _adim, _ond, _acik = _satir
+    if _etiket is None:
+        continue
+    _deger = config.ayar_oku(_ad)
+    if _deger is None:
+        _eksik.append(_ad)
+    elif not (_mn <= _deger <= _mx):
+        _aralik_disi.append(f"{_ad}={_deger} [{_mn},{_mx}]")
+kontrol("katalogdaki her parametre config'de VAR", not _eksik, ", ".join(_eksik))
+kontrol("her parametrenin GUNCEL degeri kendi araliginda",
+        not _aralik_disi, ", ".join(_aralik_disi))
+kontrol("her parametrenin aciklamasi var (arayuzde parantez icinde gosterilir)",
+        all(p[6] for p in config.AYARLANABILIR_PARAMETRELER if p[1] is not None))
+kontrol("baslik satirlari etiketi None, metni dolu",
+        all(p[6] for p in config.AYARLANABILIR_PARAMETRELER if p[1] is None))
+kontrol("kamera denetimi katalogu UVC ozellik adlariyla ortusuyor",
+        {p[0] for p in config.KAMERA_UVC_ARALIKLARI}
+        == {a for a, _ in __import__('camera_module')._UVC_OZELLIKLERI})
+for _k in ('hunter', 'spotter'):
+    _bilinmeyen = (set(config.KAMERA_KONTROLLERI.get(_k, {}))
+                   - {p[0] for p in config.KAMERA_UVC_ARALIKLARI})
+    kontrol(f"{_k} kontrol sozlugunde katalog disi anahtar yok",
+            not _bilinmeyen, str(_bilinmeyen))
+
+# ayar_uygula / ayar_oku
+_eski_kp = config.KP_YAW
+kontrol("ayar_uygula bilinen sabiti degistiriyor",
+        config.ayar_uygula('KP_YAW', 0.85) and config.KP_YAW == 0.85)
+config.ayar_uygula('KP_YAW', _eski_kp)
+kontrol("ayar_uygula bilinmeyen adi sessizce reddediyor",
+        config.ayar_uygula('BOYLE_BIR_SABIT_YOK', 1) is False)
+kontrol("ayar_oku yoksa varsayilani doner",
+        config.ayar_oku('BOYLE_BIR_SABIT_YOK', 42) == 42)
+
+# Harekete yasak alan: VARSAYILAN KAPALI olmali (mevcut davranis degismesin)
+kontrol("hareket siniri VARSAYILAN KAPALI (mevcut davranis korunur)",
+        config.HAREKET_SINIRI_AKTIF is False)
+kontrol("kapaliyken deger AYNEN gecer (kirpma yok)",
+        config.hareket_sinirla(250.0, 77.0) == (250.0, 77.0, False))
+config.HAREKET_SINIRI_AKTIF = True
+_eski_sinir = (config.HAREKET_YAW_MIN, config.HAREKET_YAW_MAX,
+               config.HAREKET_PITCH_MIN, config.HAREKET_PITCH_MAX)
+config.HAREKET_YAW_MIN, config.HAREKET_YAW_MAX = -20.0, 20.0
+config.HAREKET_PITCH_MIN, config.HAREKET_PITCH_MAX = -10.0, 10.0
+kontrol("acikken aralik disi hedef KIRPILIYOR",
+        config.hareket_sinirla(75.0, 40.0) == (20.0, 10.0, True))
+kontrol("acikken aralik ICINDEKI hedefe dokunulmuyor",
+        config.hareket_sinirla(5.0, -3.0) == (5.0, -3.0, False))
+kontrol("ters girilen sinirlar (min>max) da dogru kirpiliyor",
+        (config.__dict__.update({'HAREKET_YAW_MIN': 20.0, 'HAREKET_YAW_MAX': -20.0}) or True)
+        and config.hareket_sinirla(75.0, 0.0)[0] == 20.0)
+(config.HAREKET_YAW_MIN, config.HAREKET_YAW_MAX,
+ config.HAREKET_PITCH_MIN, config.HAREKET_PITCH_MAX) = _eski_sinir
+config.HAREKET_SINIRI_AKTIF = False
+
+# Kaynak kontrolleri: komut yolunda kirpma var, varsayilanda etkisiz
+_k38 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("mutlak komut hareket sinirindan geciyor",
+        "yaw, pitch = self._hareket_sinirla(yaw, pitch)" in _k38
+        and _k38.index("self._hareket_sinirla(yaw, pitch)")
+            < _k38.index('command = {"action": "set_angles"'))
+kontrol("delta komut yalnizca sinir ACIKKEN dokunuluyor",
+        "if config.HAREKET_SINIRI_AKTIF:" in _k38
+        and _k38.index("if config.HAREKET_SINIRI_AKTIF:")
+            < _k38.index('command = {"action": "set_proportional_angles_delta"'))
+kontrol("Ayarlar butonu var ve pencereyi aciyor",
+        "self.ayarlar_button" in _k38 and "def ayarlari_ac" in _k38)
+kontrol("ayarlar penceresi HATA VERSE BILE sistem devam ediyor",
+        "except Exception as e:" in _k38.split("def ayarlari_ac")[1][:900])
+kontrol("atessiz bolge alanlari yeniden YARATILMADI (eski yollar bozulmadi)",
+        "self.no_fire_start_input = QLineEdit(self)" in _k38
+        and "def apply_no_fire_zone" in _k38)
+_k38c = io.open('camera_module.py', encoding='utf-8').read()
+kontrol("kamera sureci canli UVC komutunu tanıyor",
+        'cmd.get("action") == "UVC"' in _k38c)
+kontrol("UVC komutu cozunurluk/format/fps'e DOKUNMUYOR",
+        "CAP_PROP_FRAME_WIDTH" not in _k38c.split('cmd.get("action") == "UVC"')[1][:800])
+kontrol("metin komutlari (START/STOP/QUIT) once degerlendiriliyor",
+        _k38c.index('if cmd == "START"') < _k38c.index('cmd.get("action") == "UVC"'))
+_k38a = io.open('ayarlar_penceresi.py', encoding='utf-8').read()
+kontrol("ayarlar penceresi takip/ates mantigina dokunmuyor",
+        all(x not in _k38a for x in
+            ('process_tracking', 'ates_serbest_mi', 'kilit_adimi',
+             'send_proportional_move_command', 'fire_weapon')))
 kontrol("balon grace sayaci tutuluyor ve kapiya veriliyor",
         "self._balon_kayip_kare += 1" in _k31
         and "balon_yakin=self._balon_yakin_zamanda()" in _k31)

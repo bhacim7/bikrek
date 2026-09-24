@@ -272,6 +272,8 @@ class HavaSavunmaArayuz(QWidget):
         # Nisan noktasi suzgeci (29.19 B58): hedefin yumusatilmis dunya acisi
         self._suzgec_world_yaw = None
         self._suzgec_world_pitch = None
+        # Harekete yasak alan uyarisinin son yazildigi an (29.20)
+        self._son_sinir_uyarisi = 0.0
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
@@ -546,8 +548,30 @@ class HavaSavunmaArayuz(QWidget):
         fire_control_layout.addLayout(no_fire_buttons_layout)
 
         self.fire_control_group_box.setLayout(fire_control_layout)
-        right_layout.addWidget(self.fire_control_group_box)
-        self.fire_control_group_box.setVisible(True)
+        # AYARLAR PENCERESINE TASINDI (2026-09-24, 29.20). Kutu ve icindeki
+        # alanlar AYNEN duruyor (mevcut `apply_no_fire_zone` /
+        # `clear_no_fire_zone` yollari degismedi); yalnizca ana pencerede
+        # yer kaplamiyor, ayri bir sekmede gosteriliyor.
+        self.fire_control_group_box.setVisible(False)
+
+        # --- AYARLAR butonu (eski ates kontrolu kutusunun yerine) ---
+        self.ayarlar_button = QPushButton("Ayarlar", self)
+        self.apply_button_style(self.ayarlar_button, font_size=17, padding=13,
+                                bg_color="#5856d6", hover_color="#4a48c0",
+                                pressed_color="#403eb0")
+        self.ayarlar_button.setToolTip(
+            "Kamera denetimleri, ateşsiz bölge, kısıtlı bölge, harekete "
+            "yasak alan ve takip/ateş parametreleri")
+        self.ayarlar_button.clicked.connect(self.ayarlari_ac)
+        right_layout.addWidget(self.ayarlar_button)
+        self._ayarlar_penceresi = None
+        # Acilistaki degerlerin yedegi: "varsayilana don" bunu kullanir.
+        self._kamera_kontrol_yedegi = {
+            k: dict(v) for k, v in config.KAMERA_KONTROLLERI.items()}
+        self._parametre_yedegi = {
+            p[0]: config.ayar_oku(p[0])
+            for p in config.AYARLANABILIR_PARAMETRELER
+            if p[1] is not None and config.ayar_oku(p[0]) is not None}
 
         # --- MANUEL YÖN KONTROLÜ Grup Kutusu ---
         self.direct_manual_control_group_box = QGroupBox("Doğrudan Manuel Kontrol")
@@ -1655,6 +1679,18 @@ class HavaSavunmaArayuz(QWidget):
         if current_time - self.last_angle_command_send_time < self.angle_command_minimum_interval:
             return False
 
+        # HAREKETE YASAK ALAN (29.20): delta komutta hedef = mevcut + delta.
+        # Once varilacak aci kirpilir, sonra deltaya geri cevrilir; boylece
+        # taret siniri asmaz ama sinira kadar gitmeye devam eder.
+        # Ozellik kapaliyken (varsayilan) hicbir sey degismez.
+        if config.HAREKET_SINIRI_AKTIF:
+            _hy, _hp = self._hareket_sinirla(self.current_yaw_angle + delta_yaw,
+                                             self.current_pitch_angle + delta_pitch)
+            delta_yaw = _hy - self.current_yaw_angle
+            delta_pitch = _hp - self.current_pitch_angle
+            if delta_yaw == 0.0 and delta_pitch == 0.0:
+                return False
+
         command = {"action": "set_proportional_angles_delta", "delta_yaw": delta_yaw, "delta_pitch": delta_pitch}
         self.last_angle_command_send_time = current_time
         return self.send_command_to_rpi(command)
@@ -1745,7 +1781,7 @@ class HavaSavunmaArayuz(QWidget):
         self.movement_restricted_yaw_end = 0
         self.active_engagement_target_color = None
         self.active_engagement_target_shape = None
-        self.fire_control_group_box.setVisible(True)
+        self._ates_kutusu_gorunur()
         self.direct_manual_control_group_box.setVisible(False)
         self.is_target_active = False
         self.is_aimed_at_target = False
@@ -1817,7 +1853,7 @@ class HavaSavunmaArayuz(QWidget):
         self.missing_frames = 0
         self.movement_restricted_yaw_start = 0
         self.movement_restricted_yaw_end = 0
-        self.fire_control_group_box.setVisible(True)
+        self._ates_kutusu_gorunur()
         self.direct_manual_control_group_box.setVisible(True)
         try:
             self._start_manual_movement_timer()
@@ -1856,7 +1892,7 @@ class HavaSavunmaArayuz(QWidget):
         self.missing_frames = 0
         self.movement_restricted_yaw_start = 0
         self.movement_restricted_yaw_end = 0
-        self.fire_control_group_box.setVisible(True)
+        self._ates_kutusu_gorunur()
         self.direct_manual_control_group_box.setVisible(False)
         self.is_target_active = True
         self.is_aimed_at_target = False
@@ -1877,7 +1913,7 @@ class HavaSavunmaArayuz(QWidget):
         self.current_tracked_target_class = None
         self.current_tracked_target_bbox = None
         self.missing_frames = 0
-        self.fire_control_group_box.setVisible(True)
+        self._ates_kutusu_gorunur()
         self.direct_manual_control_group_box.setVisible(False)
         self.is_target_active = True
         self.is_aimed_at_target = False
@@ -1888,7 +1924,7 @@ class HavaSavunmaArayuz(QWidget):
         self.cancel_task()
         self.active_task = 'task3_setup'
         self.task3_settings_group_box.setVisible(True)
-        self.fire_control_group_box.setVisible(True)
+        self._ates_kutusu_gorunur()
         self.direct_manual_control_group_box.setVisible(False)
         self._update_status_label("Durum: Aşama 3 - Angajman ayarları bekleniyor.")
         self.target_info_label.setText("Hedef Bilgisi: Yok (Ayar Bekleniyor).")
@@ -1908,7 +1944,7 @@ class HavaSavunmaArayuz(QWidget):
 
         self.crosshair_movable = False
         self.crosshair_fixed_center = True
-        self.fire_control_group_box.setVisible(True)
+        self._ates_kutusu_gorunur()
         self.direct_manual_control_group_box.setVisible(False)
         self.is_ready_to_engage_from_qr = False
 
@@ -1963,7 +1999,7 @@ class HavaSavunmaArayuz(QWidget):
         self.missing_frames = 0
         self.movement_restricted_yaw_start = 0
         self.movement_restricted_yaw_end = 0
-        self.fire_control_group_box.setVisible(True)
+        self._ates_kutusu_gorunur()
         self.direct_manual_control_group_box.setVisible(False)
         self.is_target_active = True
         self.is_aimed_at_target = False
@@ -1977,7 +2013,7 @@ class HavaSavunmaArayuz(QWidget):
         self.target_info_label.setText("Hedef Bilgisi: Yok (Manuel).")
         self.crosshair_movable = True
         self.crosshair_fixed_center = False
-        self.fire_control_group_box.setVisible(True)
+        self._ates_kutusu_gorunur()
         self.direct_manual_control_group_box.setVisible(True)
         try:
             self._start_manual_movement_timer()
@@ -2190,6 +2226,10 @@ class HavaSavunmaArayuz(QWidget):
         _fark_pitch = pitch - self.current_pitch_angle
         if abs(_fark_pitch) > 0.05:
             self._son_pitch_yon = 1 if _fark_pitch > 0 else -1
+
+        # HAREKETE YASAK ALAN (29.20): mutlak komut izinli araliga kirpilir.
+        # Ozellik kapaliyken (varsayilan) deger aynen gecer.
+        yaw, pitch = self._hareket_sinirla(yaw, pitch)
 
         command = {"action": "set_angles", "yaw": yaw, "pitch": pitch}
         self.last_angle_command_send_time = current_time
@@ -3066,6 +3106,56 @@ class HavaSavunmaArayuz(QWidget):
             print(f"KRİTİK HATA: update_frame ana döngüsünde beklenmedik hata: {main_loop_error}")
             traceback.print_exc()
             self._update_status_label(f"KRİTİK HATA: UI Güncelleme Hatası: {str(main_loop_error)[:50]}...")
+
+    def _ates_kutusu_gorunur(self):
+        """
+        Eski mod fonksiyonlarindan gelen gorunurluk cagrilarini karsilar.
+
+        "Ateş Kontrolü ve Kısıtlı Bölge" kutusu 29.20'de Ayarlar penceresine
+        tasindi; icindeki alanlar ve dugmeler (ve onlara bagli
+        `apply_no_fire_zone` / `clear_no_fire_zone`) AYNEN duruyor, yalnizca
+        yerleri degisti. Kutunun kendisi ana pencerede gosterilmemeli —
+        ebeveyni olmadigi icin `setVisible(True)` onu ayri bir pencere
+        olarak ekrana atardi. Mod fonksiyonlarini tek tek degistirmek yerine
+        cagri buraya yonlendirildi.
+        """
+        self.fire_control_group_box.setVisible(False)
+
+    def ayarlari_ac(self):
+        """
+        Ayarlar penceresini acar (2026-09-24, 29.20).
+
+        Pencere MODELSIZ: ayar yapilirken goruntu akmaya ve takip calismaya
+        devam eder. Import ya da olusturma basarisiz olursa sistem hicbir
+        sekilde etkilenmez, yalnizca durum cubuguna yazilir — ayar penceresi
+        angajmanin calismasi icin gerekli degil.
+        """
+        try:
+            if self._ayarlar_penceresi is None:
+                from ayarlar_penceresi import AyarlarPenceresi
+                self._ayarlar_penceresi = AyarlarPenceresi(self, self)
+            self._ayarlar_penceresi.degerleri_yukle()
+            self._ayarlar_penceresi.show()
+            self._ayarlar_penceresi.raise_()
+            self._ayarlar_penceresi.activateWindow()
+        except Exception as e:
+            traceback.print_exc()
+            self._update_status_label(f"Hata: Ayarlar penceresi açılamadı: {e}")
+
+    def _hareket_sinirla(self, yaw, pitch):
+        """
+        Harekete yasak alan: hedefi izinli araligin icine kirpar (29.20).
+
+        `config.HAREKET_SINIRI_AKTIF` False iken (VARSAYILAN) deger aynen
+        doner, yani bu ozellik kapaliyken komut yolu hic degismez.
+        """
+        y, p, kirpildi = config.hareket_sinirla(yaw, pitch)
+        if kirpildi and time.time() - self._son_sinir_uyarisi > 2.0:
+            self._son_sinir_uyarisi = time.time()
+            self._update_status_label(
+                f"Uyarı: Harekete yasak alan sınırı — komut {yaw:+.1f}°/"
+                f"{pitch:+.1f}° yerine {y:+.1f}°/{p:+.1f}° gönderildi.")
+        return y, p
 
     def is_in_no_fire_zone(self, current_yaw_angle):
         zone_start = self.no_fire_yaw_start

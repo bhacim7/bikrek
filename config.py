@@ -1574,3 +1574,173 @@ def hunter_etkin_kare():
     hedef_oran = IMG_WIDTH / float(IMG_HEIGHT)
     yuk = int(round(HUNTER_WIDTH / hedef_oran))
     return HUNTER_WIDTH, min(yuk, HUNTER_HEIGHT)
+
+
+# =====================================================================
+# ARAYUZ AYARLAR SEKMESI (2026-09-24, PROJE_DURUMU 29.20)
+# =====================================================================
+# Bu blok YALNIZCA arayuzun "Ayarlar" penceresini besler. Hicbir takip /
+# tespit / ates mantigi buna bagli degil; buradaki listeler sadece
+# "hangi sabit ekranda gosterilsin, hangi aralikta, ne anlama geliyor"
+# sorusunu yanitlar. Listeler bos birakilsa sistem aynen calismaya devam eder.
+
+# --- Hareket sinir bolgesi ---
+# Kullanicinin verdigi araligin DISINA CIKILMAZ. "Kisitli bolge"
+# (movement_restricted) belirli bir diliMI yasaklar; bu ise taretin
+# calisabilecegi araligi tamamen sinirlar (mekanik emniyet / kablo koruma).
+# Varsayilan KAPALI: sinir yok, sistem bugunku gibi davranir.
+HAREKET_SINIRI_AKTIF = False
+HAREKET_YAW_MIN = -90.0
+HAREKET_YAW_MAX = 90.0
+HAREKET_PITCH_MIN = -30.0
+HAREKET_PITCH_MAX = 30.0
+
+# --- Kamera denetimleri: kaydirici araliklari ---
+# (ad, etiket, en_az, en_cok, adim, aciklama)
+# `KAMERA_KONTROLLERI` icindeki None "dokunma" demek; arayuzde her satirin
+# bir "dokunma" kutusu var, isaretliyse None yazilir.
+KAMERA_UVC_ARALIKLARI = [
+    ("auto_wb", "Otomatik Beyaz Dengesi", 0, 1, 1,
+     "1 = otomatik, 0 = manuel. Manuelde renk esikleri sabit kalir."),
+    ("wb_temperature", "Beyaz Dengesi Sicakligi", 2000, 8000, 100,
+     "Kelvin. Yalnizca otomatik denge kapaliyken gecerli."),
+    ("auto_exposure", "Otomatik Pozlama", 0.25, 0.75, 0.25,
+     "DirectShow: 0.25 = MANUEL, 0.75 = otomatik."),
+    ("exposure", "Pozlama", -11, 0, 1,
+     "log2(saniye): -5 = 31 ms, -6 = 16 ms, -7 = 8 ms. Kisaltmak hareket "
+     "bulanikligini azaltir, goruntuyu karartir."),
+    ("gain", "Kazanc", 0, 255, 1,
+     "Pozlama kisaldikca parlakligi geri getirir; yukseltmek gurultuyu artirir."),
+    ("brightness", "Parlaklik", 0, 255, 1, "Goruntunun genel parlakligi."),
+    ("contrast", "Kontrast", 0, 255, 1, "Acik-koyu ayrimi."),
+    ("saturation", "Doygunluk", 0, 255, 1,
+     "Renk doygunlugu. Gozcunun kirmizi/mavi esikleri buna duyarlidir."),
+    ("sharpness", "Keskinlik", 0, 255, 1,
+     "Asiri keskinlik kucuk nesnelerde sahte kenar uretebilir."),
+    ("gamma", "Gama", 1, 500, 1, "Orta tonlarin egrisi."),
+    ("autofocus", "Otomatik Odak", 0, 1, 1,
+     "Sabit lenste 0 birakin; otomatik odak avlanma yapar."),
+    ("focus", "Odak", 0, 255, 1, "Yalnizca otomatik odak kapaliyken gecerli."),
+]
+
+# --- Canli ayarlanabilir sistem parametreleri ---
+# (sabit_adi, etiket, en_az, en_cok, adim, ondalik, aciklama)
+# Etiketi None olan satir BASLIKtir. Arayuz bunlari `config` uzerinde
+# DOGRUDAN degistirir; kod her karede `config.X` okudugu icin degisiklik
+# aninda gecerli olur.
+AYARLANABILIR_PARAMETRELER = [
+    ("baslik_tespit", None, 0, 0, 0, 0, "HEDEF TESPIT"),
+    ("CONF_THRESHOLD", "YOLO guven esigi", 0.05, 0.9, 0.05, 2,
+     "Bunun altindaki tespitler atilir. Dusurmek uzak/kucuk hedefi yakalar "
+     "ama yanlis pozitifi artirir."),
+    ("VERIFY_MIN_CONFIDENCE", "Dogrulama guven esigi", 0.1, 0.9, 0.05, 2,
+     "DOGRULAMA asamasinda dost/dusman karari icin gereken guven."),
+    ("VERIFY_WINDOW_FRAMES", "Dogrulama penceresi (kare)", 3, 15, 1, 0,
+     "Kac karelik pencerede cogunluga bakilir. Buyutmek karari saglamlastirir, "
+     "angajmani geciktirir."),
+    ("MAX_MISSING_FRAMES", "Hedef kayip toleransi (kare)", 2, 20, 1, 0,
+     "Hedef gorulmedigi halde tahminle kac kare takip edilir."),
+
+    ("baslik_takip", None, 0, 0, 0, 0, "HEDEF TAKIP (DENETLEYICI)"),
+    ("KP_YAW", "Yaw oransal kazanc", 0.1, 1.5, 0.05, 2,
+     "Buyutmek hizli oturma saglar ama asim ve salinim riski getirir."),
+    ("KP_PITCH", "Pitch oransal kazanc", 0.1, 1.5, 0.05, 2,
+     "Yaw ile ayni mantik, dikey eksen."),
+    ("PID_DEADBAND_PIXELS", "Olu bant (px)", 0, 15, 0.5, 1,
+     "Bu hatanin altinda taret komut almaz. Buyutmek titremeyi keser, "
+     "hareketli hedefte kalici hata birakir."),
+    ("MIN_OUTPUT_PIXELS", "En kucuk komut (px)", 0.5, 8, 0.5, 1,
+     "Bundan kucuk komutlar birikip esigi asinca gonderilir."),
+    ("PID_OUTPUT_SMOOTHING", "Cikis suzgeci", 0.05, 1.0, 0.05, 2,
+     "Kucultmek rezonansi sonumler, tepkiyi yavaslatir."),
+    ("FEEDFORWARD_GAIN", "Hiz ileri-besleme kazanci", 0.0, 1.5, 0.05, 2,
+     "1.0 = hedefin hizina tam eslesme. Taret geride kaliyorsa artirin."),
+    ("TARGET_LEAD_TIME_SEC", "Hedef ondeleme (sn)", 0.0, 0.3, 0.01, 2,
+     "Olu zaman boyunca hedefin gidecegi yol. Taret one geciyorsa azaltin."),
+    ("AIM_POINT_SMOOTHING", "Nisan noktasi suzgeci", 0.1, 1.0, 0.05, 2,
+     "Kucultmek tespit gurultusunu daha cok siler, biraz gecikme ekler."),
+    ("ENCODER_LAG_SEC", "Enkoder rapor gecikmesi (sn)", 0.0, 0.15, 0.01, 2,
+     "Taret hedefi ASIYORSA azaltin, geride kaliyorsa artirin."),
+
+    ("baslik_ates", None, 0, 0, 0, 0, "NISAN VE ATES KOSULLARI"),
+    ("AIM_TOLERANCE_MIN_PIXELS", "Nisan toleransi (px)", 4, 30, 1, 0,
+     "Bu hatanin icinde nisan tamam sayilir. 12 px = 15 metrede 4.4 cm."),
+    ("AIM_TOLERANCE_RATIO", "Nisan toleransi (balon yaricapi orani)",
+     0.1, 1.0, 0.05, 2,
+     "Toleransin balon buyudukce genisleyen kismi; ikisinin BUYUGU kullanilir."),
+    ("AIM_HOLD_FRAMES", "Nisan tutma (kare)", 1, 10, 1, 0,
+     "Ates icin toleransin kac ardisik karede korunmasi gerekir."),
+    ("FIRE_MAX_ERROR_DRIFT_PIXELS", "Izin verilen nisan kaymasi (px)",
+     4, 40, 1, 0,
+     "Mermi varana kadar nisanin kayacagi tahmini miktar. Durum cubugundaki "
+     "kayma X/Y px bu sinirla karsilastirilir."),
+    ("FIRE_SHOT_LATENCY_SEC", "Atis gecikmesi (sn)", 0.05, 0.6, 0.05, 2,
+     "Komuttan merminin cikisina kadar gecen sure; kayma bununla carpilir."),
+    ("FIRE_LEAD_TIME_SEC", "Ates ondelemesi (sn)", 0.0, 0.4, 0.01, 2,
+     "Merminin ucus suresi. Atislar hedefin GERISINE dusuyorsa artirin. "
+     "Yalnizca ates karrini kaydirir, takibi etkilemez."),
+    ("FIRE_MAX_TURRET_RATE_DEG_S", "Taret hiz siniri (derece/sn)", 1, 40, 1, 0,
+     "Bundan hizli donerken ates yok. Devir teslim sirasinda emniyet."),
+    ("FIRE_MAX_TARGET_RATE_DEG_S", "Hedef hiz siniri (derece/sn)", 1, 30, 1, 0,
+     "Elle savrulan asiri hizli hedefte atesi keser."),
+    ("FIRE_MAX_ATTEMPTS", "Hedef basina atis butcesi", 1, 8, 1, 0,
+     "Bu kadar atista imha dogrulanamazsa siradaki hedefe gecilir."),
+    ("FIRE_BALLOON_GRACE_FRAMES", "Balon grace (kare)", 0, 8, 1, 0,
+     "Balon son N karede gorulduyse ates icin yeterli sayilir."),
+    ("FIRE_CONFIRM_MIN_BEFORE_RATE", "Imha kaniti taban orani",
+     0.0, 1.0, 0.05, 2,
+     "Balon atistan ONCE bu oranda gorulmediyse kayboldu testi imha sayilmaz."),
+
+    ("baslik_angajman", None, 0, 0, 0, 0, "ANGAJMAN AKISI"),
+    ("LOCK_NO_BALLOON_GIVEUP_SEC", "Balonsuz kilit birakma (sn)",
+     0.3, 5.0, 0.1, 1,
+     "Kilitte balon bu kadar sure hic gorulmezse hedef birakilir."),
+    ("ENGAGE_LOCK_TIMEOUT", "Kilit zaman asimi (sn)", 1.0, 12.0, 0.5, 1,
+     "Balon goruluyor ama nisan oturmuyorsa bu surede vazgecilir."),
+    ("BLACKLIST_TTL_SEC", "Imha kara listesi (sn)", 2, 30, 1, 0,
+     "Imha edilen hedefin acisi bu sure boyunca yeniden secilmez."),
+    ("BLACKLIST_GIVEUP_TTL_SEC", "Vazgecme kara listesi (sn)", 1, 20, 1, 0,
+     "Vurulamayan hedefe bu sure sonra geri donulur."),
+    ("BLACKLIST_KILL_RADIUS_DEG", "Kara liste yaricapi (derece)",
+     0.5, 8.0, 0.5, 1,
+     "Cok genis olursa komsu hedefi de angajman disi birakir."),
+]
+
+
+def ayar_uygula(ad, deger):
+    """
+    Arayuzden gelen bir sabit degisikligini `config` uzerinde uygular.
+
+    Kod her karede `config.X` okudugu icin degisiklik aninda gecerli olur.
+    Bilinmeyen ad sessizce yok sayilir (arayuz eski bir surumden gelirse
+    sistem calismaya devam etsin).
+    """
+    import sys as _s
+    modul = _s.modules[__name__]
+    if not isinstance(ad, str) or not hasattr(modul, ad):
+        return False
+    setattr(modul, ad, deger)
+    return True
+
+
+def ayar_oku(ad, varsayilan=None):
+    """Arayuzun bir sabiti okumasi icin (yoksa varsayilan)."""
+    import sys as _s
+    return getattr(_s.modules[__name__], ad, varsayilan)
+
+
+def hareket_sinirla(yaw, pitch):
+    """
+    Hareket sinir bolgesi: verilen hedefi izinli araligin ICINE kirpar.
+
+    `HAREKET_SINIRI_AKTIF` False iken (varsayilan) deger AYNEN doner —
+    yani bu ozellik kapaliyken sistemin davranisi hic degismez.
+    Doner: (yaw, pitch, kirpildi_mi)
+    """
+    if not HAREKET_SINIRI_AKTIF:
+        return yaw, pitch, False
+    y = min(max(yaw, min(HAREKET_YAW_MIN, HAREKET_YAW_MAX)),
+            max(HAREKET_YAW_MIN, HAREKET_YAW_MAX))
+    p = min(max(pitch, min(HAREKET_PITCH_MIN, HAREKET_PITCH_MAX)),
+            max(HAREKET_PITCH_MIN, HAREKET_PITCH_MAX))
+    return y, p, (y != yaw or p != pitch)

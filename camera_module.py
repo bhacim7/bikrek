@@ -321,6 +321,19 @@ def camera_worker(command_queue, frame_queue, kamera_adi="hunter"):
                 if capture and capture.isOpened():
                     capture.release()
                 break
+            elif isinstance(cmd, dict) and cmd.get("action") == "UVC":
+                # CANLI UVC AYARI (2026-09-24, arayuzdeki Ayarlar sekmesi).
+                # Kamera ACIK kalirken beyaz dengesi/pozlama/kazanc gibi
+                # denetimleri yeniden uygular. Cozunurluk, FOURCC ve kare
+                # hizina DOKUNMAZ; akis kesilmez, kare kaybi olmaz.
+                # Sozluk komutu oldugu icin yukaridaki metin karsilastirmalari
+                # etkilenmez (eski davranis aynen korunur).
+                yeni = cmd.get("degerler") or {}
+                config.KAMERA_KONTROLLERI.setdefault(kamera_adi, {}).update(yeni)
+                if capture and capture.isOpened():
+                    _uvc_uygula(capture, kamera_adi)
+                else:
+                    print(f"{kamera_adi}: UVC ayari kaydedildi, kamera acilinca uygulanacak.")
         except queue.Empty:
             pass
 
