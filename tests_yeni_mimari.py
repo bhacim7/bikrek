@@ -2295,6 +2295,108 @@ kontrol("deger metni dogru bicimleniyor",
 _sh.rmtree(_gecici, ignore_errors=True)
 kontrol("gercek config.py bu testlerde HIC yazilmadi",
         io.open('config.py', encoding='utf-8').read() == _once)
+
+# --- 40. ATESTE YON KARARLILIGI (29.23) ---
+# Sahada olculdu (aşama2son9.mp4, kilit icinde atistan onceki pencere):
+#   Fuze 1  ISKA   ort 0.78 derece/sn, YON DEGISIMI 4
+#   Helikopter     ISABET ort 1.75 derece/sn, yon degisimi 0
+#   Drone          ISABET ort 1.11 derece/sn, yon degisimi 0
+#   Fuze 2         ISABET ort 1.18 derece/sn, yon degisimi 0
+# Belirleyici olan HIZ DEGIL YON DEGISTIRME: Helikopter, iskalayan hedefin
+# IKI KATI hizda giderken tek atista vuruldu.
+print()
+print("40. Ateste yon kararliligi — hizli hedef sorun degil, DONUS ani sorun")
+_m40 = engagement.AngajmanMakinesi()
+_m40.basla('task2')
+_m40.dogrulanan_sinif = 'dusman-Fuze'
+_m40._gec(engagement.ATES)
+_c40 = _cift_at('dusman-Fuze')
+_o40 = dict(cift=_c40, makine=_m40, balon_gorundu=True, nisan_tamam=True,
+            yaw=0.0, no_fire_start=0.0, no_fire_end=0.0)
+_i, _g = engagement.ates_serbest_mi(**_o40, hedef_hizi=1.75, hata_hizi=5.0,
+                                    yon_kararli=True)
+kontrol("HIZLI ama duzgun giden hedefte ates SERBEST (Helikopter durumu)", _i, _g)
+_i, _g = engagement.ates_serbest_mi(**_o40, hedef_hizi=0.78, hata_hizi=5.0,
+                                    yon_kararli=False)
+kontrol("YAVAS ama yon degistiren hedefte ates ENGELLI (Fuze 1 durumu)",
+        not _i and 'yon degistiriyor' in _g, _g)
+_i, _g = engagement.ates_serbest_mi(**_o40, hedef_hizi=1.2, hata_hizi=5.0)
+kontrol("bayrak verilmezse eski davranis (varsayilan serbest)", _i, _g)
+kontrol("yon kapisi kayma kapisindan SONRA (kayma daha temel)",
+        io.open('engagement.py', encoding='utf-8').read().index("nisan kayiyor")
+        < io.open('engagement.py', encoding='utf-8').read().index("yon degistiriyor"))
+kontrol("config: yon kapisi acik, esikler makul",
+        config.FIRE_REQUIRE_STABLE_DIRECTION is True
+        and 2 <= config.FIRE_DIRECTION_STABLE_FRAMES <= 12
+        and 0.1 <= config.FIRE_DIRECTION_MIN_RATE_DEG_S <= 1.5
+        and 0.3 <= config.FIRE_DIRECTION_WAIT_MAX_SEC <= 3.0)
+kontrol("yavas hedef esigi olculen gurultu tabani civarinda (EMA std 0.49)",
+        0.3 <= config.FIRE_DIRECTION_MIN_RATE_DEG_S <= 0.8,
+        f"{config.FIRE_DIRECTION_MIN_RATE_DEG_S} derece/sn")
+kontrol("kararlilik penceresi olculen donus suresinden kisa (yarim periyot ~1.2 sn)",
+        config.FIRE_DIRECTION_STABLE_FRAMES / 15.0 < 1.0,
+        f"{config.FIRE_DIRECTION_STABLE_FRAMES/15.0:.2f} sn")
+_k40 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("yon sayaci hiz gurultu tabaninin ALTINDA dondurulyor (sifirlanmiyor)",
+        "if abs(self.target_world_yaw_rate) >= _alt:" in _k40)
+kontrol("bekleme suresi sinirli (sonsuz bekleme yok)",
+        "FIRE_DIRECTION_WAIT_MAX_SEC" in _k40 and "return True          # bekleme siniri" in _k40)
+kontrol("ozellik kapatilabilir",
+        "if not getattr(config, 'FIRE_REQUIRE_STABLE_DIRECTION', False):" in _k40)
+kontrol("hedef degisiminde yon durumu sifirlaniyor",
+        "self._yon_ardisik = 0" in _k40.split("def reset_pid_state")[1][:700])
+
+# --- 41. KAMERA KAYIT ARACI (etiketleme verisi) ---
+print()
+print("41. Kamera kayit araci — boru hattiyla AYNI ayarlar")
+import kamera_kayit as _kk
+import camera_module as _cm
+import numpy as _np2
+_k41 = io.open('kamera_kayit.py', encoding='utf-8').read()
+kontrol("UVC ayarlarini boru hattinin KENDI fonksiyonuyla uyguluyor (kopya yok)",
+        "camera_module._uvc_uygula(capture, kamera_adi)" in _k41)
+kontrol("model kirpmasini boru hattinin KENDI fonksiyonuyla yapiyor",
+        "camera_module._model_oranina_kirp(kare, kamera_adi)" in _k41)
+kontrol("cozunurluk/format/fps config'ten okunuyor (sabit deger yok)",
+        'config.KAMERA_AYARLARI[kamera_adi]' in _k41
+        and 'ayar["width"]' in _k41 and 'ayar.get("fps")' in _k41)
+kontrol("FOURCC cozunurlukten ONCE, UVC en SONDA (boru hattiyla ayni sira)",
+        _k41.index('CAP_PROP_FOURCC') < _k41.index('CAP_PROP_FRAME_WIDTH')
+        < _k41.index('camera_module._uvc_uygula(capture,'))
+kontrol("BOSLUK tusu kaydi durdurup devam ettiriyor",
+        "if tus == ord(' '):" in _k41 and "kayitta = not kayitta" in _k41)
+kontrol("duraklamada kare YAZILMIYOR", "if kayitta:" in _k41
+        and _k41.index("if kayitta:") < _k41.index("yazici.write(kare)"))
+kontrol("durum yazisi yalnizca ONIZLEME kopyasina ciziliyor (kayit temiz)",
+        "gosterim = kare.copy()" in _k41
+        and "_bilgi_ciz(gosterim," in _k41)
+# Kirpma boru hattiyla birebir ayni mi
+_ham41 = _np2.full((config.HUNTER_HEIGHT, config.HUNTER_WIDTH, 3), 40, _np2.uint8)
+_kirp41 = _cm._model_oranina_kirp(_ham41, 'hunter')
+kontrol("kirpilmis boyut config.hunter_etkin_kare() ile AYNI",
+        (_kirp41.shape[1], _kirp41.shape[0]) == config.hunter_etkin_kare(),
+        f"{_kirp41.shape[1]}x{_kirp41.shape[0]} vs {config.hunter_etkin_kare()}")
+_cift41 = _kk._cift_boyuta_kirp(_kirp41)
+kontrol("MJPG icin cift boyuta kirpma BIZ yapiyoruz (kodek sessizce yapmasin)",
+        _cift41.shape[0] % 2 == 0 and _cift41.shape[1] % 2 == 0
+        and _kirp41.shape[0] - _cift41.shape[0] <= 1,
+        f"{_kirp41.shape[1]}x{_kirp41.shape[0]} -> {_cift41.shape[1]}x{_cift41.shape[0]}")
+kontrol("zaten cift olan kare DEGISMIYOR",
+        _kk._cift_boyuta_kirp(_np2.zeros((100, 200, 3), _np2.uint8)).shape[:2] == (100, 200))
+# Yazma + geri okuma dogrulamasi
+_gec41 = _tf.mkdtemp(prefix='kayittest_')
+_yol41 = _os.path.join(_gec41, 'deneme.avi')
+_yz = _kk._yazici_ac(_yol41, 15.0, (_cift41.shape[1], _cift41.shape[0]))
+kontrol("yazici aciliyor", _yz is not None)
+for _i41 in range(12):
+    _yz.write(_cift41)
+_yz.release()
+_ok41, _ay41 = _kk._dosyayi_dogrula(_yol41, (_cift41.shape[1], _cift41.shape[0]), 12)
+kontrol("kayit bitince dosya GERI OKUNUP dogrulaniyor", _ok41, _ay41)
+_ok42, _ay42 = _kk._dosyayi_dogrula(_yol41, (_cift41.shape[1], _cift41.shape[0] + 1), 12)
+kontrol("boyut uyusmazligi YAKALANIYOR (kodek sessizce degistirirse)",
+        not _ok42 and 'BOYUT UYUSMUYOR' in _ay42, _ay42)
+_sh.rmtree(_gec41, ignore_errors=True)
 kontrol("balon grace sayaci tutuluyor ve kapiya veriliyor",
         "self._balon_kayip_kare += 1" in _k31
         and "balon_yakin=self._balon_yakin_zamanda()" in _k31)

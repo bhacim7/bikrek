@@ -274,6 +274,10 @@ class HavaSavunmaArayuz(QWidget):
         self._suzgec_world_pitch = None
         # Harekete yasak alan uyarisinin son yazildigi an (29.20)
         self._son_sinir_uyarisi = 0.0
+        # Hedef yon kararliligi (29.23): isaret, ardisik kare, bekleme basi
+        self._yon_son = 0
+        self._yon_ardisik = 0
+        self._yon_bekleme_basi = None
         self._enkoder_kayit = None      # CSV dosya nesnesi (config.ENCODER_LOG); False = vazgeçildi
         self._enkoder_kayit_n = 0
         # Feedforward degisim hizi siniri icin onceki degerler
@@ -871,6 +875,45 @@ class HavaSavunmaArayuz(QWidget):
         if abs(ham) >= config.VELOCITY_FAST_THRESHOLD:
             return config.VELOCITY_FAST_SMOOTHING
         return config.VELOCITY_SMOOTHING
+
+    def _hedef_yonu_kararli(self):
+        """
+        Hedefin hiz ISARETI son karelerde ayni mi? (29.23)
+
+        NEDEN HIZ DEGIL YON: sahada olculdu (aşama2son9.mp4, kilit icinde
+        atistan onceki pencere) — isabet eden uc angajmanda hedefin hiz
+        isareti HIC degismemisti (1.11, 1.18, 1.75 derece/sn), iskalayan
+        angajmanda ise 4.5 saniyede 4 kez degisti (ort 0.78 derece/sn).
+        Yani hizli hedef sorun degil, DONUS ANI sorun: o anda hem ileri
+        besleme hem hedef ondelemesi ters isaretli calisir.
+
+        Uc kacis yolu var, hicbiri sistemi kilitlemesin diye:
+          - ozellik kapatilabilir (`FIRE_REQUIRE_STABLE_DIRECTION`),
+          - hiz gurultu tabaninin altindaysa yon sarti aranmaz (yavas
+            hedefte isaret zaten rastgele doner ve katki kucuktur),
+          - bekleme `FIRE_DIRECTION_WAIT_MAX_SEC` ile sinirli.
+        """
+        if not getattr(config, 'FIRE_REQUIRE_STABLE_DIRECTION', False):
+            return True
+        hiz = self.target_world_yaw_rate
+        if hiz is None:
+            return True
+        _alt = getattr(config, 'FIRE_DIRECTION_MIN_RATE_DEG_S', 0.0)
+        if abs(hiz) < _alt:
+            # Yavas hedef: yon sarti aranmaz, kayma kapisi zaten koruyor.
+            self._yon_bekleme_basi = None
+            return True
+        _gerek = max(1, getattr(config, 'FIRE_DIRECTION_STABLE_FRAMES', 1))
+        if self._yon_ardisik < _gerek:
+            simdi = time.time()
+            if self._yon_bekleme_basi is None:
+                self._yon_bekleme_basi = simdi
+            elif simdi - self._yon_bekleme_basi > getattr(
+                    config, 'FIRE_DIRECTION_WAIT_MAX_SEC', 0.8):
+                return True          # bekleme siniri: kilitlenmeyi onler
+            return False
+        self._yon_bekleme_basi = None
+        return True
 
     def _balon_yakin_zamanda(self):
         """
@@ -1477,7 +1520,8 @@ class HavaSavunmaArayuz(QWidget):
             taret_hizi=self._taret_hizi(),
             hedef_hizi=self._hedef_hizi(),
             hata_hizi=self.hata_degisim_hizi,
-            balon_yakin=self._balon_yakin_zamanda())
+            balon_yakin=self._balon_yakin_zamanda(),
+            yon_kararli=self._hedef_yonu_kararli())
         if not izin:
             if self.angajman.ates_sayisi > 0:
                 # Zaten ateş edilmiş ve pencere 'tekrar' demişti, ama ateş
@@ -1804,6 +1848,9 @@ class HavaSavunmaArayuz(QWidget):
         self._balon_kayip_kare = 999
         self._suzgec_world_yaw = None
         self._suzgec_world_pitch = None
+        self._yon_son = 0
+        self._yon_ardisik = 0
+        self._yon_bekleme_basi = None
         self.integral_yaw = 0.0
         self.last_error_yaw = 0.0
         self.integral_pitch = 0.0
@@ -3474,6 +3521,20 @@ class HavaSavunmaArayuz(QWidget):
                 r = self.MAX_TARGET_RATE_DEG_S
                 self.target_world_yaw_rate = max(-r, min(r, self.target_world_yaw_rate))
                 self.target_world_pitch_rate = max(-r, min(r, self.target_world_pitch_rate))
+
+                # YON KARARLILIGI SAYACI (29.23): hedefin yaw hiz isareti
+                # kac karedir ayni. Gurultu tabaninin altindaki hizlarda
+                # isaret rastgele donecegi icin sayac DONDURULUR, sifirlanmaz;
+                # boylece yavas bir andan sonra hiz geri geldiginde kapi
+                # gereksiz yere kapanmaz.
+                _alt = getattr(config, 'FIRE_DIRECTION_MIN_RATE_DEG_S', 0.0)
+                if abs(self.target_world_yaw_rate) >= _alt:
+                    _yon = 1 if self.target_world_yaw_rate > 0 else -1
+                    if _yon == self._yon_son:
+                        self._yon_ardisik += 1
+                    else:
+                        self._yon_son = _yon
+                        self._yon_ardisik = 1
         self._last_world_yaw = world_yaw
         self._last_world_pitch = world_pitch
         self._last_world_time = current_frame_time

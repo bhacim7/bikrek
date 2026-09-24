@@ -1009,7 +1009,8 @@ class AngajmanMakinesi:
 
 def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
                     yaw, no_fire_start, no_fire_end, taret_hizi=None,
-                    hedef_hizi=None, hata_hizi=None, balon_yakin=False):
+                    hedef_hizi=None, hata_hizi=None, balon_yakin=False,
+                    yon_kararli=True):
     """
     Ateş kilidi — hepsi birden sağlanmalı.
 
@@ -1077,6 +1078,14 @@ def ates_serbest_mi(cift, makine, balon_gorundu, nisan_tamam,
         _kayma = abs(hata_hizi) * _gec
         if _kayma > _kayma_siniri:
             return False, f'nisan kayiyor: atisa kadar {_kayma:.0f} px'
+    # HEDEF YON DEGISTIRIRKEN ATES ETME (29.23).
+    # Olculdu: isabet eden uc angajmanda hedefin hiz isareti hic
+    # degismemisti (0 yon degisimi, 1.11-1.75 derece/sn); iskalayan
+    # angajmanda ise 4.5 saniyede 4 kez yon degistirdi (ort 0.78 derece/sn).
+    # Yani belirleyici olan hiz degil, donus ani. `yon_kararli` cagirandan
+    # gelir; varsayilan True oldugu icin bayrak verilmezse eski davranis.
+    if not yon_kararli:
+        return False, 'hedef yon degistiriyor'
     # TARET HAREKET HALINDEYKEN ATES ETME. `taret_hizi` enkoderden olculen
     # mutlak yaw hizi (derece/sn); None ise enkoder yok/saglıksiz demektir ve
     # kapi uygulanmaz. Gerekce config.FIRE_MAX_TURRET_RATE_DEG_S yaninda.

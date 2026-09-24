@@ -4879,3 +4879,98 @@ oldugu karelerde kutu kararliligi.
 - Dal: **`asama2-stabil`** -> ayni commit
 Ikisi de `origin`'e gonderildi. Yeni denemeler bu noktayi bozamaz; geri
 donmek icin `git checkout calisan-3imha-18sn` yeterli.
+
+
+### 29.23 Ateste yon kararliligi + kamera kayit araci (2026-09-24)
+
+#### 29.23.1 B59 — Belirleyici olan HIZ degil, YON DEGISTIRME
+
+29.22'de "sarkacin uc noktasinda, hiz sifirken ates edelim" onerilmisti.
+Kilit icindeki (atistan ONCEKI) pencereler ayri ayri olculunce bu oneri
+CURUDU:
+
+| angajman | sonuc | ort hiz | tepe hiz | **yon degisimi** |
+|---|---|---|---|---|
+| Fuze 1 | 3 atis, ISKA | 0.78 derece/sn | 2.16 | **4** |
+| Helikopter | 1 atis, ISABET | **1.75 derece/sn** | 2.22 | **0** |
+| Drone | 1 atis, ISABET | 1.11 derece/sn | 1.22 | **0** |
+| Fuze 2 | 1 atis, ISABET | 1.18 derece/sn | 1.64 | **0** |
+
+Helikopter, iskalayan hedefin **iki kati hizda** giderken tek atista
+vuruldu. Yani hizli hedef sorun degil.
+
+**Mekanizma.** Hem `FEEDFORWARD_GAIN` hem `TARGET_LEAD_TIME_SEC`
+"mevcut hiz devam edecek" varsayimina dayanir. Hedef donus yaptigi anda
+bu varsayimin ISARETI yanlis olur:
+- ondeleme nisani ters tarafa kaydirir,
+- ileri besleme tareti ters yone surer,
+- mermi ucarken hedef beklenenin tersine gider.
+Duzgun giden hedefte tahmin dogru oldugu icin 1.75 derece/sn bile
+sorun degil.
+
+**Kapi:** hedefin olculen yaw hiz ISARETI son `FIRE_DIRECTION_STABLE_FRAMES`
+(5 kare = 0.33 sn) karede ayni olmali. Uc kacis yolu var ki sistem
+kilitlenmesin:
+1. `FIRE_REQUIRE_STABLE_DIRECTION = False` ile tamamen kapatilabilir.
+2. Hiz `FIRE_DIRECTION_MIN_RATE_DEG_S` (0.5) altindaysa yon sarti
+   aranmaz — olculen hiz gurultusu (EMA sonrasi std 0.49 derece/sn)
+   yuzunden yavas hedefte isaret zaten rastgele doner, ayrica orada
+   ondeleme/ileri besleme katkisi kucuktur ve kayma kapisi korur.
+3. Bekleme `FIRE_DIRECTION_WAIT_MAX_SEC` (0.8 sn) ile sinirli.
+
+Sayac, hiz gurultu tabaninin altina dustugunde SIFIRLANMAZ, DONDURULUR;
+boylece yavas bir andan sonra hiz geri geldiginde kapi gereksiz yere
+kapanmaz.
+
+**Beklenen sure etkisi.** Fuze 1'de 4.5 saniyede 4 yon degisimi vardi,
+yani zamanin ~dortte biri donus ani. Kararli ani beklemek ortalama yarim
+saniyeden az surer; buna karsilik uc bos atis (her biri 1.3 sn dogrulama
++ yeniden nisan) yerine tek isabetli atis gelir. Tahmin: 18.45 sn ->
+15-16 sn. En kotu durumda (uc hedef de surekli salinirsa) hedef basina
+en fazla 0.8 sn eklenir ama bos atislar da kalkar.
+
+**Olculmesi gereken:** Helikopter 1.75 derece/sn giderken vuruldu. Mermi
+gecikmesi gercekten 0.25 sn olsaydi hedef 31 piksel kayardi (balon
+yaricapi 15 px). Isabet etmis olmasi, gercek gecikmenin **0.12 saniyeden
+kisa** oldugunu ima ediyor. Dogruysa `FIRE_SHOT_LATENCY_SEC` iki kat
+fazla ve kayma kapisi gereginden siki calisiyor. Olcum: sabit balona 15
+metreden ates, ekran kaydinda "Atesleme basarili" ile balonun patladigi
+kare arasi.
+
+#### 29.23.2 `kamera_kayit.py` — etiketleme verisi toplama araci
+
+YENI DOSYA. Kamerayi sistemin CALISMA ANINDA kullandigi ayarlarin
+aynisiyla acar ve kaydeder. Gerekce: farkli pozlama/kirpma ile toplanmis
+veri, modele sahada hic karsilasmayacagi bir dagilim ogretir.
+
+**Ayarlarin ayni oldugu nasil garanti ediliyor:** cozunurluk, FOURCC,
+kare hizi ve UVC denetimleri `config`'ten okunur; UVC uygulamasi ve model
+en/boy kirpmasi icin `camera_module`'un KENDI fonksiyonlari cagrilir
+(`_uvc_uygula`, `_model_oranina_kirp`). Ikinci bir kopya yok — boru hatti
+degisirse arac da otomatik ayni degisir. Acilis sirasi da bire bir ayni:
+FOURCC -> cozunurluk -> kare hizi -> UVC.
+
+**Tuslar:** BOSLUK kaydi durdurur/devam ettirir (istenen ozellik),
+K tek kare PNG kaydeder, Q/ESC cikar.
+
+**Onemli bir tuzak yakalandi:** MJPG/JPEG tek sayili boyut kabul etmiyor
+ve OpenCV bunu SESSIZCE yapiyor — olculdu: 1920x1105 istendiginde dosya
+1920x1104 olarak yazildi, hicbir uyari cikmadi. Etiketleme verisinde bu
+kabul edilemez (kutu koordinatlari modelin gordugu kareyle ortusmeli).
+Cozum: cift boyuta kirpmayi BIZ yapiyoruz (`_cift_boyuta_kirp`), ne
+oldugunu ekrana yaziyoruz, ve kayit bitince dosyayi GERI OKUYUP boyut ve
+kare sayisini dogruluyoruz (`_dosyayi_dogrula`).
+
+Durum yazisi yalnizca onizleme KOPYASINA ciziliyor; kaydedilen kare temiz
+kaliyor. Duraklamada kare yazilmiyor. `--png` ile her kare ayrica kayipsiz
+PNG olarak da yazilabilir.
+
+#### 29.23.3 Degisiklikler
+
+| dosya | ne |
+|---|---|
+| `config.py` | `FIRE_REQUIRE_STABLE_DIRECTION`, `FIRE_DIRECTION_STABLE_FRAMES`, `FIRE_DIRECTION_MIN_RATE_DEG_S`, `FIRE_DIRECTION_WAIT_MAX_SEC` |
+| `engagement.py` | `ates_serbest_mi(..., yon_kararli=True)`; kayma kapisindan sonra yon kapisi |
+| `bukrek_main.py` | yaw hiz isareti sayaci; `_hedef_yonu_kararli()`; ates cagrisina bayrak |
+| `kamera_kayit.py` | YENI: kayit araci |
+| `tests_yeni_mimari.py` | 40. bolum (yon kapisi), 41. bolum (kayit araci ayar esligi ve boyut dogrulamasi) |

@@ -1219,6 +1219,29 @@ FIRE_MAX_TURRET_RATE_DEG_S = 12
 # kesiyordu. Artik yalnizca elle sallanan/firlatilan asiri durumlar icin.
 FIRE_MAX_TARGET_RATE_DEG_S = 8
 
+# --- ATESTE YON KARARLILIGI (2026-09-24, PROJE_DURUMU 29.23) ---
+# Sahada olculdu (aşama2son9.mp4, kilit icinde atistan ONCEKI pencere):
+#   Fuze 1  ISKA   ort 0.78 derece/sn, YON DEGISIMI 4
+#   Helikopter     ISABET ort 1.75 derece/sn, yon degisimi 0
+#   Drone          ISABET ort 1.11 derece/sn, yon degisimi 0
+#   Fuze 2         ISABET ort 1.18 derece/sn, yon degisimi 0
+# Yani ayirt edici olan HIZ DEGIL, YON DEGISTIRME. Helikopter, iskalayan
+# hedefin IKI KATI hizda giderken tek atista vuruldu.
+# Sebep: hem ileri besleme hem hedef ondelemesi "mevcut hiz devam edecek"
+# varsayimina dayanir. Hedef donus yaptigi anda bu varsayimin ISARETI
+# yanlis olur; ondeleme nisani ters tarafa kaydirir, ileri besleme tareti
+# ters yone surer ve mermi ucarken hedef beklenenin tersine gider.
+# Kapi: hedefin olculen hiz ISARETI son N karede ayni olmali.
+FIRE_REQUIRE_STABLE_DIRECTION = True
+FIRE_DIRECTION_STABLE_FRAMES = 5       # 15 fps'te ~0.33 sn
+# Bu hizin ALTINDA yon sarti aranmaz: olculen hiz gurultusu (EMA sonrasi
+# std 0.49 derece/sn) yuzunden yavas hedefte isaret rastgele doner, ayrica
+# yavas hedefte ondeleme/ileri besleme katkisi zaten kucuktur.
+FIRE_DIRECTION_MIN_RATE_DEG_S = 0.5
+# Kapinin en fazla bekletecegi sure. Surekli salinan bir hedefte sonsuza
+# kadar beklenmesin; sure dolunca mevcut kapilarla ates serbest kalir.
+FIRE_DIRECTION_WAIT_MAX_SEC = 0.8
+
 # --- ASIL ATES KAPISI: NISAN HATASININ DEGISIM HIZI (2026-09-23, B44) ---
 # Mermi ucus + mekanik gecikmesi ~0.25 sn. Isabeti belirleyen, bu sure
 # icinde nisan noktasinin hedefe gore NE KADAR KAYACAGI. Taret hedefi
