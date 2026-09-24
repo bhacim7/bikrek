@@ -918,8 +918,26 @@ MAX_MISSING_FRAMES = 8
 # mavi tespit üretmişti. S>140 ile duvarın katkısı %0.16'ya düşüyor.
 # Ortam siyah perdeyle kaplı ve aydınlatmalı olduğu için V alt sınırı düşük
 # tutulabilir; parlama olursa yükseltin.
-SPOTTER_RED_RANGES = [((0, 120, 70), (10, 255, 255)),
-                      ((170, 120, 70), (179, 255, 255))]
+#
+# V ALT SINIRI 70 -> 50 (2026-09-24, gozcu_tani/ham.png uzerinde olculdu).
+# SAHADA SOLDAKI FUZE+BALON CIFTI HIC TESPIT EDILMIYORDU. Sebep boyut
+# degil PARLAKLIK: uc hedefin doygunlugu ayni (S medyani 189-218) ama sol
+# hedefin kirmizi pikselleri karanlik (V medyani 16, cekirdegin en dusuk
+# V'si 27). V>=70 ile sol balondan yalnizca 11 piksel hayatta kaliyor,
+# morfolojik OPEN bunu 9'a dusuruyor ve alan kapisinda eleniyordu.
+#   V>=70 -> sol balon 11 px, sol fuze 15 px   (IKISI DE ELENIR)
+#   V>=50 -> sol balon 24 px, sol fuze 58 px   (IKISI DE GECER)
+# Morfoloji sirasi (OPEN->CLOSE / CLOSE->OPEN / yalniz CLOSE) ve tek
+# basina alan esigini dusurmek DENENDI, hicbiri kurtarmiyor; belirleyici
+# tek degisken V.
+#
+# NEDEN DOYGUNLUK (120) AYNI KALIYOR: tek gercek yanlis pozitif adayi
+# tezgahtaki ahsap yuzey (314,494) ve onu ayiran sey parlaklik degil
+# doygunluk -- tezgah S medyani 101, hedefler 189-218. S>=120 korundugu
+# icin V dusurulmesine ragmen o blob aday olmuyor. Karanlik-kirmizi kahve
+# /ten/ahsap tonlari genelde dusuk doygunluktadir; koruma orada.
+SPOTTER_RED_RANGES = [((0, 120, 50), (10, 255, 255)),
+                      ((170, 120, 50), (179, 255, 255))]
 # SAHADA OLCULEREK AYARLANDI (gozcu_tani.py, siyah perde ortami).
 # Eski deger ((100,140,60),(130,255,255)) idi ve DOST HIC TANINMIYORDU:
 # mavi maketin olculen doygunlugu S medyan 32, %90'lik dilim 60 -- yani
@@ -954,7 +972,11 @@ SPOTTER_BLUE_RANGES = [((90, 80, 45), (135, 255, 255))]
 # zaten baglayici degil -- avci dogruluyor -- ve artik dogrulama balonu sart
 # kosuyor (VERIFY_MIN_BALLOON_FRAMES), yani bosuna gidisin bedeli kucuk.
 # Bu yuzden gevsek taraf tercih ediliyor.
-SPOTTER_MIN_BLOB_AREA = 30
+# 30 -> 20 (2026-09-24). V esigi dusurulunce sol balon 24 piksele cikiyor;
+# 30 esigi onu HALA elerdi. Ikisi BIRLIKTE gerekli, tek basina hicbiri
+# yetmiyor. 20 bir yaylanin ortasi: 15 ve 20 ayni sonucu veriyor, cop
+# uretmiyor.
+SPOTTER_MIN_BLOB_AREA = 20
 
 # Bir blobun en/boy oranı bu aralığın dışındaysa balon sayılmaz. Balon
 # yuvarlaktır; uzun ince bir kırmızı leke maket parçası veya yansımadır.
@@ -997,6 +1019,26 @@ SPOTTER_DISPLAY_MAX_BLOBS = 12    # renk basina; IPC yuku sinirli kalsin
 # Pencere: balonun üstünde, balon çapının bu katları kadar.
 SPOTTER_MODEL_WINDOW_ABOVE = (0.2, 3.5)   # (alt, üst) x balon çapı
 SPOTTER_MODEL_WINDOW_WIDTH = 2.5          # yarı genişlik x balon çapı
+
+# Pencerenin olceklendigi capin TABANI (piksel).
+# 2026-09-24'te olculen bir kirilma: pencere balonun capiyla olcekleniyor,
+# ama sonuk bir balonun blobu eroze olup kuculuyor (sol balon 5x5, cap 5).
+# Pencerenin tavani balonun 3.5 x 5 = 17.5 piksel ustunde kaliyor, oysa
+# fuze 21 piksel yukarida -- yani MAKET PENCERENIN DISINDA kaliyordu ve
+# cift "tek basina duran balon" sayilip KARARSIZ isaretleniyordu.
+# Taban 8 ile sol cift DUSMAN'a donuyor; DOST hala 0.97 mavi oraniyla
+# DOST kaliyor (yani ayrim bozulmuyor) ve sagdaki gercek balonun kaniti
+# 92'den 132 kirmiziya cikiyor. Yari genislik 2.5 x 8 = 20 piksel;
+# hedefler arasi mesafe 70-90 piksel oldugu icin komsu maket sizmiyor.
+SPOTTER_MODEL_WINDOW_MIN_CAP = 8.0
+
+# Penceredeki (kirmizi+mavi) toplam bunun altindaysa "ustte bir sey yok"
+# denip KARARSIZ donulur. ESKIDEN bu esik SPOTTER_MIN_BLOB_AREA idi ve
+# ayri bir kavram olmasina ragmen ona BAGLIYDI: blob alan esigini her
+# degistirisimizde dost/dusman siniflandirmasinin hassasiyeti de sessizce
+# kayiyordu. Ayrildi; deger 20'de birakildi ki bu commit oncesi davranis
+# birebir korunsun.
+SPOTTER_MODEL_WINDOW_MIN_PIXELS = 20
 
 # Penceredeki mavi oranı bunun üstündeyse DOST, altındaysa DÜŞMAN sayılır.
 # Ara bölge "kararsız" olarak işaretlenir ve avcının doğrulamasına bırakılır.

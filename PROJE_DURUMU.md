@@ -4974,3 +4974,140 @@ PNG olarak da yazilabilir.
 | `bukrek_main.py` | yaw hiz isareti sayaci; `_hedef_yonu_kararli()`; ates cagrisina bayrak |
 | `kamera_kayit.py` | YENI: kayit araci |
 | `tests_yeni_mimari.py` | 40. bolum (yon kapisi), 41. bolum (kayit araci ayar esligi ve boyut dogrulamasi) |
+
+### 29.24 Gozcu: karanlik hedefin kacirilmasi (2026-09-24)
+
+#### 29.24.1 B60 — Sol fuze+balon cifti HIC tespit edilmiyordu
+
+Belirti: `gozcu_tani.py` ciktisinda soldaki fuze+balon ikilisi yok.
+
+**Olcum (gozcu_tani/ham.png, 1280x720).** Uc hedefin kirmizi pikselleri
+tek tek olculdu:
+
+| bolge | S medyani | V medyani | cekirdek V min | V>=70 gecen px | V>=50 gecen px |
+|---|---|---|---|---|---|
+| SOL balon | 209 | 16 | 27 | **11** | **24** |
+| SOL fuze | 213 | 22 | 30 | **15** | **58** |
+| ORTA | 200 | 30 | 37 | 84 | 138 |
+| SAG maket | 218 | 33 | 43 | 97 | 137 |
+| SAG balon | 189 | 21 | 28 | 18 | 32 |
+| DOST kirmizi | 190 | 36 | 52 | 35 | 48 |
+| ahsap tezgah (314,494) | **101** | 58 | 58 | 0 | 33 |
+
+Sorun BOYUT degil PARLAKLIK. Uc hedefin doygunlugu ayni (189-218); sol
+hedefin kirmizisi yalnizca daha karanlik. `SPOTTER_RED_RANGES`'in V alt
+siniri 70 oldugu icin sol balondan 11 piksel hayatta kaliyor, morfolojik
+OPEN bunu 9'a dusuruyor, `SPOTTER_MIN_BLOB_AREA=30` kapisi eliyor.
+
+**Elenen alternatifler (hepsi olculdu, hicbiri kurtarmiyor):**
+- morfoloji sirasi: OPEN->CLOSE / CLOSE->OPEN / yalniz CLOSE -> ayni sonuc
+- tek basina alan esigi: V>=70 iken A>=15'te bile sol cift gelmiyor
+- tek basina doygunluk: sol hedef zaten S=209, doygunluk sorun degil
+
+Belirleyici tek degisken V. **V 70 -> 50, alan 30 -> 20** (ikisi BIRLIKTE
+gerekli). Secim bir yaylanin ortasi: V 45-50 ve A 15-20 ayni sonucu
+veriyor.
+
+**Neden doygunluk esigi (120) AYNI BIRAKILDI.** Taramada cikan tek gercek
+yanlis pozitif tezgahtaki ahsap yuzey; onu ayiran sey parlaklik degil
+doygunluk (101'e karsi 189-218). S>=100'e inince o blob aday oluyordu,
+S>=120'de olmuyor. Karanlik-kirmizi kahve/ten/ahsap tonlari genelde dusuk
+doygunlukta oldugu icin koruma orada duruyor — bu yuzden V gevsetilebilir.
+
+**Sonuc:** 3 aday -> 6 aday, sifir yanlis pozitif.
+
+| | ONCE | SONRA |
+|---|---|---|
+| SOL balon | yok | **dusman** |
+| ORTA | dusman | dusman |
+| SAG balon | yok | **dusman** |
+| SAG maket | kararsiz (tek capa) | kararsiz |
+| DOST | dost (0.97) | dost (0.97) |
+
+Sagdaki hedefin capasi da duzeldi: once yalnizca MAKET aday oluyordu
+(uzun govde `balon_kapisi`ni en/boy 2.00 ile kil payi geciyor), gercek
+balon 16 piksel oldugu icin eleniyordu. Artik gercek balon da aday.
+
+#### 29.24.2 B61 — Maket penceresi sonuk balonda maketi KACIRIYOR
+
+Sol cift bulunduktan sonra hala `kararsiz` cikiyordu. Sebep ayri bir
+kirilma: `maket_penceresi` balonun KENDI capiyla olcekleniyor. Sonuk
+balonun blobu eroze olup 5x5'e dustugu icin pencerenin tavani balonun
+3.5 x 5 = 17.5 piksel ustunde kaliyor — oysa fuze 21 piksel yukarida.
+Yani maket pencerenin DISINDA kaliyor, cift "tek basina duran balon"
+sayilip KARARSIZ isaretleniyordu.
+
+`SPOTTER_MODEL_WINDOW_MIN_CAP = 8.0` (taban cap) eklendi. Taban taramasi:
+
+| taban | SOL balon | DOST | SAG balon |
+|---|---|---|---|
+| 0 (eski) | kararsiz (K7) | dost 0.97 | dusman (K92) |
+| 7 | dusman (K32) | dost 0.97 | dusman (K92) |
+| **8** | **dusman (K28)** | **dost 0.97** | **dusman (K132)** |
+| 12 | dusman (K28) | dost 0.97 | dusman (K132) |
+
+Yari genislik 2.5 x 8 = 20 piksel; hedefler arasi mesafe 70-90 piksel
+oldugu icin komsu maket pencereye sizmiyor.
+
+Ayrica `dost_dusman`'in "ustte bir sey var mi" esigi
+`SPOTTER_MIN_BLOB_AREA`'ya BAGLIYDI. Ayri kavramlar: biri blobun aday
+olmasi, digeri siniflandirma kaniti. Blob esigini her degistirisimizde
+siniflandirma hassasiyeti de sessizce kayiyordu. Ayrildi
+(`SPOTTER_MODEL_WINDOW_MIN_PIXELS = 20`), deger bu commit oncesi
+davranisi birebir koruyacak sekilde secildi.
+
+#### 29.24.3 B62 — Gozcu kamerasinin UVC ayarlari HIC UYGULANMIYORDU
+
+Arastirma sirasinda bulundu. `config.KAMERA_KONTROLLERI['spotter']`
+doluydu, arayuzdeki Ayarlar sekmesi gozcu kamerasi icin kaydirici
+gosteriyor ve `spotter_cmd_q`'ya `{"action": "UVC", ...}` koyuyordu —
+ama gozcu surecinde:
+- `_kamera_ac()` hicbir zaman `_uvc_uygula` cagirmiyordu,
+- `spotter_worker` yalnizca `cmd == "START"/"STOP"/"QUIT"` karsilastirmasi
+  yapiyordu, bir SOZLUK hicbiriyle eslesmedigi icin komut SESSIZCE
+  dusuyordu.
+
+Yani gozcu bastan beri surucunun otomatik pozlamasiyla calisiyordu ve
+operator pozlamayi degistirdigini sanirken hicbir sey olmuyordu.
+
+Bu, B60'in KOK NEDENI: esik dusurmek belirtiyi tedavi eder, pozlamayi
+elimize almak nedeni. Otomatik pozlamayla ayrica kareden kareye parlaklik
+kayar (kadraja parlak bir sey girince tum sahne kararir) — yani esik
+duzeltmesi tek basina KIRILGAN kalirdi.
+
+Ikisi de duzeltildi; UVC avciyla AYNI fonksiyondan uygulaniyor
+(`camera_module._uvc_uygula`), ikinci bir kopya yok.
+
+#### 29.24.4 Kasitli olarak YAPILMAYANLAR
+
+- **`SPOTTER_BALLOON_ASPECT` daraltilmadi.** Sagdaki maket en/boy 1.64-2.00
+  ile balon kapisini geciyor. Ust siniri 1.4'e cekmek onu elerdi (olculen
+  balonlar 0.62-1.17). YAPILMADI cunku risk asimetrik: hedefi KACIRMAK
+  gorev basarisizligi, fazladan bir iz ise yalnizca nisanin 23 piksel
+  yukari kaymasi — avcinin YOLO'su zaten duzeltiyor ve kara liste yaricapi
+  (2.5 derece) ikisini ayni hedef sayiyor. Ustelik gozcu esiklerini
+  sikilastirmak tam da bu raporun bastaki hatasinin sebebi.
+- **Gozcu sabitleri Ayarlar sekmesine eklenmedi.** Gozcu AYRI SURECTE
+  calisiyor; ana surecte `config.SPOTTER_*` degistirmek ona ulasmaz.
+  Eklenselerdi sessizce etkisiz kalirlardi (B62'nin aynisi).
+
+#### 29.24.5 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `config.py` | `SPOTTER_RED_RANGES` V 70->50 | sol hedef karanlik; 11 px -> 24 px |
+| `config.py` | `SPOTTER_MIN_BLOB_AREA` 30->20 | 24 px hala 30 esigini gecemez; ikisi birlikte gerekli |
+| `config.py` | YENI `SPOTTER_MODEL_WINDOW_MIN_CAP = 8.0` | sonuk balonda pencere maketin altinda kaliyordu |
+| `config.py` | YENI `SPOTTER_MODEL_WINDOW_MIN_PIXELS = 20` | siniflandirma esigini blob alan esiginden ayirmak |
+| `spotter_module.py` | `maket_penceresi`: cap tabana oturtuluyor | ayni |
+| `spotter_module.py` | `dost_dusman`: yeni esik sabiti | ayni |
+| `spotter_module.py` | `_kamera_ac`: `camera_module._uvc_uygula(cap, "spotter")` | gozcu pozlamasi hic uygulanmiyordu |
+| `spotter_module.py` | `spotter_worker`: `{"action": "UVC"}` komutu | arayuz gonderiyordu, gozcu sessizce dusuruyordu |
+| `spotter_module.py` | `import camera_module` | UVC'yi avciyla ayni koddan uygulamak |
+| `tests_yeni_mimari.py` | 42. bolum | gercek kare uzerinde tespit + regresyon nobeti |
+| `test_verileri/gozcu_karanlik_hedef.png` | YENI fikstur | `gozcu_tani/` .gitignore'da; fikstur orada birakilsa temiz klonda kaybolurdu |
+
+Test: 470 kontrol, hepsi geciyor (onceki 453).
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.** Bu paketteki her sey bilgisayarda
+calisan gozcu boru hattinda.

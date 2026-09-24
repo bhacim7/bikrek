@@ -31,6 +31,9 @@ import cv2
 import numpy as np
 
 import config
+# UVC denetimlerini avciyla AYNI koddan uygulamak icin. camera_module
+# yalnizca cv2/numpy/time/queue/config ithal ediyor; dairesel ithal yok.
+import camera_module
 
 # UI önizlemesi bu genişliğe küçültülür ve bu hızda gönderilir.
 # Genişlik config'ten geliyor ki arayüzdeki panel boyutuyla AYNI kalsın:
@@ -165,7 +168,12 @@ def maket_penceresi(aday, kare_gen, kare_yuk):
     Pencere balonun KENDİ piksel çapıyla ölçeklenir — bu yüzden hedefin
     mesafesinden bağımsızdır. 8 metrede de 20 metrede de aynı bölgeye bakar.
     """
-    cap = aday['cap']
+    # Cap bir TABANA oturtuluyor. Sonuk bir balonun blobu eroze olup
+    # kuculdugunde pencere de kuculur ve maketin ALTINDA kalir; olculdu:
+    # sol balon cap 5 -> pencere tavani 17.5 px, fuze 21 px yukarida,
+    # yani maket pencerenin disinda. Taban olmadan bu cift "tek basina
+    # duran balon" sayilip KARARSIZ isaretleniyordu.
+    cap = max(aday['cap'], config.SPOTTER_MODEL_WINDOW_MIN_CAP)
     alt_kat, ust_kat = config.SPOTTER_MODEL_WINDOW_ABOVE
     yari_gen = cap * config.SPOTTER_MODEL_WINDOW_WIDTH
 
@@ -197,7 +205,7 @@ def dost_dusman(aday, kirmizi_maske, mavi_maske):
     kirmizi = int(np.count_nonzero(kirmizi_maske[y0:y1, x0:x1]))
     mavi = int(np.count_nonzero(mavi_maske[y0:y1, x0:x1]))
     toplam = kirmizi + mavi
-    if toplam < config.SPOTTER_MIN_BLOB_AREA:
+    if toplam < config.SPOTTER_MODEL_WINDOW_MIN_PIXELS:
         # Üstte hiçbir şey yok: tek başına duran bir balon. Hedef çifti
         # değil; avcı doğrulasın.
         return KARARSIZ, 0.0, kirmizi, mavi
@@ -373,6 +381,17 @@ def _kamera_ac():
                     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.SPOTTER_WIDTH)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.SPOTTER_HEIGHT)
+                # UVC denetimleri (pozlama/kazanc/beyaz dengesi).
+                # 2026-09-24'e kadar BURASI YOKTU: config'te
+                # KAMERA_KONTROLLERI['spotter'] vardi, arayuzdeki Ayarlar
+                # sekmesi gozcu kamerasi icin kaydirici gosteriyordu ve
+                # komutu kuyruga koyuyordu -- ama gozcu surecinde hicbir
+                # sey uygulamiyordu. Gozcu tamamen surucunun otomatik
+                # pozlamasiyla calisiyordu. Sol hedefin karanlik cikmasinin
+                # KOK NEDENI bu; esik dusurmek belirtiyi tedavi eder,
+                # pozlamayi elimize almak nedeni.
+                # Avciyla AYNI fonksiyon cagriliyor (ikinci bir kopya yok).
+                camera_module._uvc_uygula(cap, "spotter")
                 g = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 y = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 print(f"Gozcu kamera {index} acildi: {g}x{y}")
@@ -421,6 +440,20 @@ def spotter_worker(command_queue, result_queue):
                     cap.release()
                 print("Gozcu worker kapaniyor.")
                 break
+            elif isinstance(cmd, dict) and cmd.get("action") == "UVC":
+                # CANLI UVC AYARI. Arayuzdeki Ayarlar sekmesi bu komutu
+                # 2026-09-24'ten beri gonderiyordu ama burada karsiligi
+                # yoktu: `cmd == "START"` karsilastirmalari bir sozlukte
+                # eslesmedigi icin komut SESSIZCE dusuyordu. Operator
+                # gozcunun pozlamasini degistirdigini sanip hicbir sey
+                # olmuyordu. Avci tarafindaki islemin (camera_module)
+                # birebir esi.
+                yeni = cmd.get("degerler") or {}
+                config.KAMERA_KONTROLLERI.setdefault("spotter", {}).update(yeni)
+                if cap is not None and cap.isOpened():
+                    camera_module._uvc_uygula(cap, "spotter")
+                else:
+                    print("Gozcu: UVC ayari kaydedildi, kamera acilinca uygulanacak.")
         except queue.Empty:
             pass
 

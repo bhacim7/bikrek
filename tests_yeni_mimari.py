@@ -2405,6 +2405,111 @@ kontrol("durum cubugu kayma miktarini gosteriyor (operator sebebi gorsun)",
 
 print()
 print("=" * 70)
+print("42. GOZCU: KARANLIK HEDEFIN TESPITI (gozcu_tani/ham.png uzerinde)")
+print("=" * 70)
+# Sahada olculen kirilma: soldaki fuze+balon cifti HIC tespit edilmiyordu.
+# Bu bolum gercek kareyi gercek boru hattindan gecirir. Sentetik kare
+# kullanilmiyor cunku hata tam da gercek sahnenin PARLAKLIK dagiliminda.
+
+_os42 = __import__('os')
+# Fikstur depoda TUTULUYOR. `gozcu_tani/` .gitignore'da (gecici cikti
+# klasoru); testin dayandigi kare orada birakilsaydi temiz bir klonda
+# sessizce kaybolur ve regresyon nobeti diye bir sey kalmazdi.
+_kok42 = _os42.path.dirname(_os42.path.abspath(__file__))
+_kare42_yol = _os42.path.join(_kok42, 'test_verileri', 'gozcu_karanlik_hedef.png')
+if not _os42.path.exists(_kare42_yol):
+    _kare42_yol = _os42.path.join(_kok42, 'gozcu_tani', 'ham.png')
+# cv2.imread Windows'ta ASCII disi yolu OKUYAMIYOR (kullanici klasoru
+# "baris" iceriyor) ve sessizce None donuyor. fromfile+imdecode bunu asar.
+_kare42 = cv2.imdecode(np.fromfile(_kare42_yol, dtype=np.uint8), cv2.IMREAD_COLOR)     if _os42.path.exists(_kare42_yol) else None
+kontrol("referans kare okunabiliyor", _kare42 is not None, _kare42_yol)
+
+if _kare42 is not None:
+    # Sahadaki gercek konumlar (piksel). SOL ve SAG-balon, bu duzeltmeden
+    # once HIC bulunamayan ikisi.
+    _hedef42 = {'SOL-balon': (528, 391), 'ORTA': (606, 390),
+                'SAG-balon': (697, 397), 'DOST': (619, 350)}
+
+    def _adaylari_bul42():
+        _izler, _kir, _mav = sp.kareyi_coz(_kare42, sp.IzYoneticisi(), 0.0)
+        _out = []
+        for _a in sp.balon_adaylari(_kir):
+            _s, _mo, _k, _m = sp.dost_dusman(_a, _kir, _mav)
+            _out.append((_a, _s, _mo))
+        return _out
+
+    def _esle42(adaylar, ad):
+        _hx, _hy = _hedef42[ad]
+        for _a, _s, _mo in adaylar:
+            if abs(_a['cx'] - _hx) < 14 and abs(_a['cy'] - _hy) < 16:
+                return _a, _s, _mo
+        return None, None, None
+
+    _ad42 = _adaylari_bul42()
+
+    for _ad in ('SOL-balon', 'ORTA', 'SAG-balon'):
+        _a, _s, _mo = _esle42(_ad42, _ad)
+        kontrol(f"{_ad} balonu ADAY olarak bulunuyor", _a is not None)
+        kontrol(f"{_ad} DUSMAN siniflaniyor", _s == sp.DUSMAN, str(_s))
+
+    _a, _s, _mo = _esle42(_ad42, 'DOST')
+    kontrol("DOST hala DOST kaliyor (esikler gevsetilirken ayrim bozulmadi)",
+            _s == sp.DOST, f"{_s} mavi_oran {_mo}")
+
+    # Yanlis pozitif yok: her aday bilinen bir hedefin yakininda olmali.
+    # Tezgahtaki ahsap yuzey (314,494) bu esiklerde aday OLMAMALI.
+    _bilinen42 = dict(_hedef42)
+    _bilinen42.update({'SOL-fuze': (532, 371), 'SAG-maket': (693, 374)})
+    _cop42 = [(_a['cx'], _a['cy'], _a['alan']) for _a, _s, _mo in _ad42
+              if not any(abs(_a['cx'] - _x) < 14 and abs(_a['cy'] - _y) < 16
+                         for _x, _y in _bilinen42.values())]
+    kontrol("hicbir yanlis pozitif aday yok (ahsap tezgah dahil)",
+            not _cop42, str(_cop42))
+
+    # Esigi ESKI degerine cevirince sol cift GERCEKTEN kayboluyor mu?
+    # Bu testin anlamli olmasi icin sart: aksi halde 'zaten calisiyordu'.
+    _yedek42 = config.SPOTTER_RED_RANGES, config.SPOTTER_MIN_BLOB_AREA
+    config.SPOTTER_RED_RANGES = [((0, 120, 70), (10, 255, 255)),
+                                 ((170, 120, 70), (179, 255, 255))]
+    config.SPOTTER_MIN_BLOB_AREA = 30
+    _eski42 = _adaylari_bul42()
+    config.SPOTTER_RED_RANGES, config.SPOTTER_MIN_BLOB_AREA = _yedek42
+    kontrol("ESKI esiklerle sol balon GERCEKTEN kayboluyor (regresyon nobeti)",
+            _esle42(_eski42, 'SOL-balon')[0] is None)
+    kontrol("ESKI esiklerle sag balon da kayboluyor",
+            _esle42(_eski42, 'SAG-balon')[0] is None)
+
+# Pencere taban capi: sonuk balonun kuculen blobu pencereyi maketin
+# ALTINDA birakmasin.
+_ad_kucuk42 = {'cx': 100.0, 'cy': 200.0, 'w': 5, 'h': 5, 'alan': 22, 'cap': 5.0}
+_x0, _y0, _x1, _y1 = sp.maket_penceresi(_ad_kucuk42, 1280, 720)
+kontrol("kucuk blobun penceresi TABAN capa gore aciliyor",
+        200 - _y0 >= config.SPOTTER_MODEL_WINDOW_MIN_CAP
+        * config.SPOTTER_MODEL_WINDOW_ABOVE[1] - 1,
+        f"tavan {200 - _y0} px yukarida")
+_ad_buyuk42 = dict(_ad_kucuk42, cap=20.0)
+_bx0, _by0, _bx1, _by1 = sp.maket_penceresi(_ad_buyuk42, 1280, 720)
+kontrol("buyuk blobta taban ETKISIZ (kendi capi kullaniliyor)",
+        200 - _by0 == int(round(20.0 * config.SPOTTER_MODEL_WINDOW_ABOVE[1])),
+        f"{200 - _by0}")
+
+# Siniflandirma esigi blob alan esiginden AYRI olmali.
+_k42 = io.open('spotter_module.py', encoding='utf-8').read()
+kontrol("dost_dusman esigi SPOTTER_MIN_BLOB_AREA'ya bagli DEGIL",
+        'config.SPOTTER_MODEL_WINDOW_MIN_PIXELS' in _k42
+        and 'toplam < config.SPOTTER_MIN_BLOB_AREA' not in _k42)
+
+# Gozcu UVC denetimlerini gercekten uyguluyor mu?
+kontrol("gozcu kamera acilisinda UVC uygulaniyor",
+        'camera_module._uvc_uygula(cap, "spotter")' in _k42)
+kontrol("gozcu CANLI UVC komutunu isliyor (sessizce dusurmuyor)",
+        'cmd.get("action") == "UVC"' in _k42
+        and 'config.KAMERA_KONTROLLERI.setdefault("spotter", {}).update(yeni)' in _k42)
+kontrol("UVC avciyla AYNI fonksiyondan uygulaniyor (ikinci kopya yok)",
+        'def _uvc_uygula' not in _k42)
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)
