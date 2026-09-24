@@ -1,0 +1,2410 @@
+"""Yeni mimarinin birim testleri: eşleştirme, dost/düşman, durum makinesi."""
+import sys, time
+sys.path.insert(0, r"C:\Users\barış hacim\PycharmProjects\PythonProject\HSSmultipocess")
+
+import io
+import numpy as np
+import cv2
+import config
+import engagement
+import spotter_module as sp
+
+hata = 0
+
+
+def kontrol(ad, kosul, ek=""):
+    global hata
+    if not kosul:
+        hata += 1
+    print(f"  [{'OK ' if kosul else 'HATA'}] {ad}{(' — ' + ek) if ek else ''}")
+
+
+def det(sinif, x, y, w, h, skor=0.9):
+    return {'class_name': sinif, 'bbox': (x, y, w, h), 'score': skor}
+
+
+print("=" * 70)
+print("1. HEDEF CIFTI ESLESTIRME (geometrik, mesafeden bagimsiz)")
+print("=" * 70)
+
+# 15 metre: maket 96 px, balon 30 px, balon maketin ~1.2 maket-genisligi altinda
+uzak = [det('dusman-Drone', 600, 300, 96, 60), det('balon', 633, 415, 30, 30)]
+c = engagement.cift_eslestir(uzak)
+kontrol("uzak hedef eslesti", len(c) == 1 and c[0].balon is not None)
+kontrol("sinif dusman", engagement.dusman_mi(c[0].sinif), c[0].sinif)
+
+# 5 metre: her sey 3 kat buyuk. AYNI kural calismali (normalize edildigi icin)
+yakin = [det('dusman-Drone', 400, 200, 288, 180), det('balon', 499, 545, 90, 90)]
+c = engagement.cift_eslestir(yakin)
+kontrol("yakin hedef eslesti (ayni kural)", len(c) == 1 and c[0].balon is not None)
+
+# Balon maketin USTUNDE ise eslesmemeli
+ters = [det('dusman-Drone', 600, 400, 96, 60), det('balon', 633, 300, 30, 30)]
+c = engagement.cift_eslestir(ters)
+kontrol("balon ustteyse eslesmez", c[0].balon is None)
+
+# Balon yatayda cok uzaksa eslesmemeli
+kaymis = [det('dusman-Drone', 600, 300, 96, 60), det('balon', 900, 415, 30, 30)]
+c = engagement.cift_eslestir(kaymis)
+kontrol("yatayda uzak balon eslesmez", c[0].balon is None)
+
+# Iki hedef: her maket kendi balonuyla eslesmeli
+ikili = [det('dusman-F16', 200, 300, 90, 55), det('balon', 230, 410, 28, 28),
+         det('dost-Helikopter', 800, 300, 90, 55), det('balon', 830, 410, 28, 28)]
+c = engagement.cift_eslestir(ikili)
+kontrol("iki cift kuruldu", len(c) == 2)
+dogru = all(x.balon is not None for x in c)
+kontrol("her maket kendi balonunu aldi", dogru)
+siniflar = sorted(x.sinif for x in c)
+kontrol("dost ve dusman ayri", siniflar == ['dost-Helikopter', 'dusman-F16'], str(siniflar))
+
+# Tek basina duran balon hedef cifti olusturmaz (hayalet eleyici)
+c = engagement.cift_eslestir([det('balon', 600, 400, 30, 30)])
+kontrol("yalniz balon cift olusturmaz", len(c) == 0)
+
+print()
+print("=" * 70)
+print("2. NISAN NOKTASI ve YEDEK YOL")
+print("=" * 70)
+c = engagement.cift_eslestir(uzak)[0]
+cx, cy, r, gercek = c.nisan_noktasi()
+# Nisan noktasi AIM_POINT_HEIGHT_RATIO ile belirleniyor; su anda 0.5 =
+# balonun TAM MERKEZI. Oran buyutulurse kutunun ust tarafina kayar (paralaks
+# telafisi; gerekce config.py icinde).
+_ust, _yuk = uzak[1]['bbox'][1], uzak[1]['bbox'][3]
+_beklenen_y = _ust + (1.0 - config.AIM_POINT_HEIGHT_RATIO) * _yuk
+kontrol("balon varken balona nisan (yatayda merkez)",
+        gercek and abs(cx - 648) < 2, f"cx={cx:.0f}")
+kontrol("nisan noktasi ayarlanan orana uyuyor",
+        abs(cy - _beklenen_y) < 1.0,
+        f"y={cy:.1f}, beklenen {_beklenen_y:.1f} (oran {config.AIM_POINT_HEIGHT_RATIO})")
+kontrol("nisan noktasi kutunun ICINDE kaliyor",
+        _ust <= cy <= _ust + _yuk, f"{_ust} <= {cy:.1f} <= {_ust+_yuk}")
+# Oran 0.5 iken nisan TAM MERKEZ olmali; buyudukce yukari kaymali.
+_merkez_y = _ust + _yuk / 2.0
+if abs(config.AIM_POINT_HEIGHT_RATIO - 0.5) < 1e-9:
+    kontrol("oran 0.5 -> nisan noktasi TAM MERKEZ",
+            abs(cy - _merkez_y) < 1e-6, f"y={cy:.1f}, merkez {_merkez_y:.1f}")
+else:
+    _kayma_cm = (config.AIM_POINT_HEIGHT_RATIO - 0.5) * 2 * 7.0
+    kontrol("oran > 0.5 -> nisan noktasi merkezin USTUNDE",
+            cy < _merkez_y, f"{_kayma_cm:.1f} cm yukari (paralaks 5.5 cm)")
+c2 = engagement.HedefCifti(uzak[0], None, 0.0)
+cx2, cy2, r2, gercek2 = c2.nisan_noktasi()
+kontrol("balon yokken maketten turetiliyor", (not gercek2) and cy2 > uzak[0]['bbox'][1],
+        f"({cx2:.0f},{cy2:.0f})")
+
+print()
+print("=" * 70)
+print("3. GOZCU DOST/DUSMAN — mesafeden bagimsizlik")
+print("=" * 70)
+
+
+def sahne(gen, yuk, hedefler):
+    """hedefler: [(cx, cy, balon_cap, maket_gen, maket_yuk, maket_rengi)]"""
+    img = np.zeros((yuk, gen, 3), np.uint8)
+    for cx, cy, cap, mg, my, renk in hedefler:
+        cv2.circle(img, (cx, cy), cap // 2, (0, 0, 230), -1)          # kirmizi balon
+        bgr = (230, 60, 0) if renk == 'mavi' else (0, 0, 230)
+        ust = cy - int(cap * 1.6)
+        cv2.rectangle(img, (cx - mg // 2, ust - my // 2),
+                      (cx + mg // 2, ust + my // 2), bgr, -1)
+    return img
+
+
+# Kritik senaryo: YAKIN DOST + UZAK DUSMAN.
+# "En buyuk kirmizi = dusman" kurali burada CUVALLIYOR; geometri kurali dogru
+# cevabi vermeli.
+img = sahne(1280, 720, [
+    (300, 400, 120, 340, 110, 'mavi'),   # YAKIN DOST  (buyuk mavi maket)
+    (1000, 380, 34, 90, 32, 'kirmizi'),  # UZAK DUSMAN (kucuk kirmizi maket)
+])
+yon = sp.IzYoneticisi()
+izler, kirmizi, mavi = sp.kareyi_coz(img, yon, time.time())
+izler, _, _ = sp.kareyi_coz(img, yon, time.time() + 0.04)   # gorulme >= 2 icin
+
+bulunan = {}
+for iz in izler:
+    yan = 'sol' if iz.yaw < 0 else 'sag'
+    bulunan[yan] = iz
+print(f"  bulunan iz sayisi: {len(izler)}")
+for iz in izler:
+    print(f"    yaw {iz.yaw:+6.1f}  sinif={iz.sinif:9s} mavi_oran={iz.mavi_oran:.2f} "
+          f"kirmizi_alan={iz.kirmizi_alan}")
+
+kontrol("iki hedef de bulundu", len(izler) == 2)
+if 'sol' in bulunan and 'sag' in bulunan:
+    kontrol("yakin buyuk hedef DOST olarak isaretlendi",
+            bulunan['sol'].sinif == sp.DOST, bulunan['sol'].sinif)
+    kontrol("uzak kucuk hedef DUSMAN olarak isaretlendi",
+            bulunan['sag'].sinif == sp.DUSMAN, bulunan['sag'].sinif)
+    # ESKI kuralin cuvalladigini goster
+    eski_kural = max(izler, key=lambda i: i.kirmizi_alan)
+    print(f"  >>> ESKI kural ('en buyuk kirmizi') secerdi: yaw {eski_kural.yaw:+.1f} "
+          f"({eski_kural.sinif})")
+    kontrol("eski kural gercekten dostu secerdi (sorunun kaniti)",
+            eski_kural.sinif == sp.DOST)
+
+print()
+print("=" * 70)
+print("4. ADAY SIRALAMA — Asama 3'te dost EN SONA siralanir (elenmez)")
+print("=" * 70)
+kl = engagement.KaraListe()
+izl = [iz.sozluk() for iz in izler]
+s3 = engagement.aday_sirala(izl, kl, 'task3')
+# ESKIDEN dost adaylari listeden SILINIYORDU. Gozcu dusmani yanlislikla dost
+# sayarsa o hedef bir daha hic denenmiyordu; sona siralamanin maliyeti ise
+# yalnizca zaman, cunku ates kilidi zaten `dusman-` sarti ariyor.
+kontrol("asama3: dost aday listede KALIYOR",
+        any(i['sinif'] == 'dost' for i in s3), str([i['sinif'] for i in s3]))
+kontrol("asama3: dusman dosttan ONCE deneniyor",
+        s3[0]['sinif'] == 'dusman' and s3[-1]['sinif'] == 'dost',
+        str([i['sinif'] for i in s3]))
+s2 = engagement.aday_sirala(izl, kl, 'task2')
+kontrol("asama2: en buyuk kirmizi once", len(s2) >= 1 and s2[0]['kirmizi_alan'] >=
+        (s2[1]['kirmizi_alan'] if len(s2) > 1 else 0))
+
+print()
+print("=" * 70)
+print("5. DURUM MAKINESI — dost dogrulamasi angajmani iptal etmeli")
+print("=" * 70)
+m = engagement.AngajmanMakinesi()
+m.basla('task3')
+kontrol("baslangic TARAMA", m.durum == engagement.TARAMA, m.durum)
+
+sahte_iz = [{'id': 1, 'yaw': 12.0, 'pitch': -2.0, 'yaw_hiz': 1.0, 'pitch_hiz': 0.0,
+             'sinif': 'kararsiz', 'mavi_oran': 0.4, 'kirmizi_alan': 900,
+             'cap': 20, 'gorulme': 5, 'kayip': 0}]
+hedef = m.tarama_adimi(sahte_iz)
+kontrol("YONELME'ye gecti", m.durum == engagement.YONELME, m.durum)
+kontrol("hedef acisi ONGORULU (hiz x sure eklenmis)", hedef[0] > 12.0,
+        f"{hedef[0]:.3f} > 12.0")
+
+m.yonelme_adimi(hedef[0], hedef[1])
+kontrol("taret oturunca DOGRULAMA", m.durum == engagement.DOGRULAMA, m.durum)
+
+# DOST dogrulanirsa: kara listeye girmeli, TARAMA'ya donmeli
+dost_cift = engagement.cift_eslestir(
+    [det('dost-F16', 600, 300, 96, 60, 0.9), det('balon', 633, 415, 30, 30, 0.9)])
+for _ in range(config.VERIFY_CONFIRM_FRAMES):
+    m.dogrulama_adimi(dost_cift)
+kontrol("dost -> TARAMA'ya donuldu", m.durum == engagement.TARAMA, m.durum)
+kontrol("dost kara listeye alindi", m.kara_liste.icinde_mi(hedef[0], hedef[1]))
+kontrol("kara listedeki aday bir daha secilmiyor",
+        m.tarama_adimi([{**sahte_iz[0], 'yaw': hedef[0], 'pitch': hedef[1]}]) is None)
+
+# DUSMAN dogrulanirsa: KILIT'e gecmeli
+m2 = engagement.AngajmanMakinesi()
+m2.basla('task2')
+h = m2.tarama_adimi(sahte_iz)
+m2.yonelme_adimi(h[0], h[1])
+dusman_cift = engagement.cift_eslestir(uzak)
+for _ in range(config.VERIFY_CONFIRM_FRAMES):
+    m2.dogrulama_adimi(dusman_cift)
+kontrol("dusman -> KILIT", m2.durum == engagement.KILIT, m2.durum)
+
+# Nisan tutulunca ATES
+for _ in range(config.AIM_HOLD_FRAMES):
+    m2.kilit_adimi(2.0, 15.0, True)
+kontrol("nisan tutulunca ATES", m2.durum == engagement.ATES, m2.durum)
+
+print()
+print("=" * 70)
+print("6. ATES KILIDI")
+print("=" * 70)
+cift = dusman_cift[0]
+izin, ger = engagement.ates_serbest_mi(cift, m2, True, True, 0.0, 0.0, 0.0)
+kontrol("tum kosullar tamamsa serbest", izin, ger)
+
+izin, ger = engagement.ates_serbest_mi(cift, m2, False, True, 0.0, 0.0, 0.0)
+kontrol("balon GORULMEDIYSE engellenir (eski Asama3 acigi)", not izin, ger)
+
+# ESKI KURAL (LOCK_BALLOON_ANCHOR=False): maket bu karede yoksa ates yok.
+config.LOCK_BALLOON_ANCHOR = False
+izin, ger = engagement.ates_serbest_mi(
+    engagement.HedefCifti(None, cift.balon, 1.0), m2, True, True, 0.0, 0.0, 0.0)
+kontrol("[eski kural] maket yoksa engellenir", not izin, ger)
+config.LOCK_BALLOON_ANCHOR = True
+# BALON CAPASI (29.9 B25): kimlik DOGRULAMA'da dusman olarak baglandiysa,
+# maketin bu karede gorunmemesi/etiketinin kaymasi atesi KESMEZ.
+izin, ger = engagement.ates_serbest_mi(
+    engagement.HedefCifti(None, cift.balon, 1.0), m2, True, True, 0.0, 0.0, 0.0)
+kontrol("[capa] kimlik dusman dogrulandiysa maketsiz karede ates SERBEST", izin, ger)
+_kayik = engagement.cift_eslestir(
+    [det('dusman-Helikopter', 600, 300, 96, 60, 0.36), det('balon', 633, 415, 30, 30)])[0]
+izin, ger = engagement.ates_serbest_mi(_kayik, m2, True, True, 0.0, 0.0, 0.0)
+kontrol("[capa] etiket dusman-tipi arasinda kaydiysa (guven 0.36) ates SERBEST", izin, ger)
+_dostg = engagement.cift_eslestir(
+    [det('dost-F16', 600, 300, 96, 60, 0.9), det('balon', 633, 415, 30, 30)])[0]
+izin, ger = engagement.ates_serbest_mi(_dostg, m2, True, True, 0.0, 0.0, 0.0)
+kontrol("[capa] bu karede GUVENLE dost gorunuyorsa ates ENGELLI", not izin, ger)
+
+dost = engagement.cift_eslestir(
+    [det('dost-F16', 600, 300, 96, 60), det('balon', 633, 415, 30, 30)])[0]
+izin, ger = engagement.ates_serbest_mi(dost, m2, True, True, 0.0, 0.0, 0.0)
+kontrol("DOST'a ates engellenir", not izin, ger)
+
+izin, ger = engagement.ates_serbest_mi(cift, m2, True, False, 0.0, 0.0, 0.0)
+kontrol("nisan disindaysa engellenir", not izin, ger)
+
+izin, ger = engagement.ates_serbest_mi(cift, m2, True, True, 5.0, -15.0, 15.0)
+kontrol("atesiz bolgede engellenir", not izin, ger)
+
+izin, ger = engagement.ates_serbest_mi(cift, m2, True, True, 0.0, 0.0, 0.0)
+kontrol("atesiz bolge (0,0) tanimsiz sayilir — eski hata", izin, ger)
+
+print()
+print("=" * 70)
+print("7. OLCEK KONTROLLERI (15 metre, gercek boyutlar)")
+print("=" * 70)
+balon_aci = 2 * np.degrees(np.arctan(0.07 / 15))
+maket_aci = 2 * np.degrees(np.arctan(0.225 / 15))
+b_avci = balon_aci / config.HUNTER_DPP_YAW
+m_avci = maket_aci / config.HUNTER_DPP_YAW
+b_gozcu = balon_aci / config.SPOTTER_DPP_YAW
+print(f"  balon 14 cm @ 15 m: {balon_aci:.3f} derece -> avci {b_avci:.0f} px, gozcu {b_gozcu:.0f} px")
+print(f"  maket 45 cm @ 15 m: {maket_aci:.3f} derece -> avci {m_avci:.0f} px")
+kontrol("balon avcida YOLO icin yeterli (>=20 px)", b_avci >= 20, f"{b_avci:.0f} px")
+kontrol("balon gozcude blob icin yeterli (>=8 px)", b_gozcu >= 8, f"{b_gozcu:.0f} px")
+kontrol("gozcu min blob alani balonun altinda",
+        config.SPOTTER_MIN_BLOB_AREA < 3.14 * (b_gozcu / 2) ** 2,
+        f"{config.SPOTTER_MIN_BLOB_AREA} < {3.14*(b_gozcu/2)**2:.0f}")
+
+# Hedef acisal hizi ve feedforward olu bandi
+for mesafe in (15, 8, 5):
+    b = 7.5
+    x = mesafe
+    w = np.degrees(b / (x * x + b * b) * 0.4)
+    ff_var = w >= config.FEEDFORWARD_VELOCITY_DEADBAND
+    kalan = w * config.FEEDFORWARD_LEAD_TIME / config.HUNTER_DPP_YAW
+    print(f"  {mesafe:2d} m: hedef {w:.2f} derece/sn | ff {'ACIK' if ff_var else 'kapali'} "
+          f"| ff'siz kalan hata {kalan:.0f} px")
+kontrol("olu bant gercek hedef hizlarinin altinda",
+        config.FEEDFORWARD_VELOCITY_DEADBAND < 2.6,
+        f"{config.FEEDFORWARD_VELOCITY_DEADBAND} < 2.6")
+
+# Hata kapisi acisal anlamini korumali
+tam, sifir = config.FEEDFORWARD_ERROR_GATE_PIXELS
+print(f"  hata kapisi: {tam:.0f}/{sifir:.0f} px = "
+      f"{tam*config.HUNTER_DPP_YAW:.2f}/{sifir*config.HUNTER_DPP_YAW:.2f} derece")
+kontrol("hata kapisi genis kameradaki aciyi koruyor (~1.6/6.4 derece)",
+        abs(tam * config.HUNTER_DPP_YAW - 1.6) < 0.2 and
+        abs(sifir * config.HUNTER_DPP_YAW - 6.4) < 0.4)
+
+# Avci gorus acisi devir teslime yetiyor mu
+fov_y = config.HUNTER_WIDTH * config.HUNTER_DPP_YAW
+fov_p = config.HUNTER_HEIGHT * abs(config.HUNTER_DPP_PITCH)
+print(f"  avci gorus acisi: {fov_y:.1f} x {fov_p:.1f} derece")
+kontrol("devir teslim payi yeterli (yari-pitch > 5 derece)", fov_p / 2 > 5,
+        f"{fov_p/2:.1f}")
+
+# --- 8. TEK BASINA BALON (kalibrasyon senaryosu) ---
+print()
+print("=" * 70)
+print("8. TEK BASINA BALON — kalibrasyon icin kilitlenebilmeli, ates edilememeli")
+print("=" * 70)
+tek = [det('balon', 500, 400, 120, 120)]
+kontrol("otonom modda cift olusmaz (guvenlik)",
+        len(engagement.cift_eslestir(tek)) == 0)
+_c = engagement.cift_eslestir(tek, tek_balonlara_izin=True)
+kontrol("manuel/kalibrasyon modunda kilitlenebilir",
+        len(_c) == 1 and _c[0].balon is not None and _c[0].maket is None)
+_m = engagement.AngajmanMakinesi(); _m.basla('task2')
+_m.durum = engagement.ATES; _m.dogrulanan_sinif = None     # kalibrasyon: kimlik YOK
+_izin, _ger = engagement.ates_serbest_mi(_c[0], _m, True, True, 0.0, 0.0, 0.0)
+kontrol("tek balona ATES asla serbest degil (kimlik dogrulanmadi)", not _izin, _ger)
+config.LOCK_BALLOON_ANCHOR = False
+_m.dogrulanan_sinif = 'dusman-Drone'
+_izin, _ger = engagement.ates_serbest_mi(_c[0], _m, True, True, 0.0, 0.0, 0.0)
+kontrol("[eski kural] kimlik olsa da maketsiz balona ates yok", not _izin, _ger)
+config.LOCK_BALLOON_ANCHOR = True
+_kar = [det('dusman-Drone', 600, 300, 96, 60), det('balon', 633, 415, 30, 30),
+        det('balon', 200, 700, 40, 40)]
+kontrol("manuel: cift + yalniz balon = 2 hedef",
+        len(engagement.cift_eslestir(_kar, tek_balonlara_izin=True)) == 2)
+kontrol("otonom: yalniz balon elenir = 1 hedef",
+        len(engagement.cift_eslestir(_kar)) == 1)
+
+
+# --- 9. DOGRULAMA ZAMAN ASIMI: aday kisa sureli kara listeye girmeli ---
+print()
+print("=" * 70)
+print("9. DOGRULAMA ZAMAN ASIMI — bos acida sonsuz dongu olmamali")
+print("=" * 70)
+# Saha kaydi (AnalizVideo.mp4 17-23 sn): taret gozcunun -21 derece dedigi
+# adaya gitti, avcida hicbir cift goremedi, DOGRULAMA zaman asimina ugradi,
+# TARAMA ayni adayi yine sectii ve taret 4 saniye bos duvara bakti.
+_iz_a = {'id': 1, 'yaw': -21.0, 'pitch': -0.4, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+         'sinif': 'dusman', 'kirmizi_alan': 5000, 'gorulme': 9}
+_iz_b = {'id': 2, 'yaw': 12.0, 'pitch': 1.0, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+         'sinif': 'dusman', 'kirmizi_alan': 2000, 'gorulme': 9}
+_m9 = engagement.AngajmanMakinesi()
+_m9.basla('task2')
+_ilk = _m9.tarama_adimi([_iz_a, _iz_b])
+kontrol("once en buyuk kirmizi alanli aday secilir", _ilk is not None and abs(_ilk[0] + 21.0) < 0.01,
+        f"{_ilk}")
+_m9._gec(engagement.DOGRULAMA)
+_m9.durum_zamani = time.time() - (config.ENGAGE_VERIFY_TIMEOUT + 0.1)
+_m9.dogrulama_adimi([])          # avcida hicbir cift yok
+kontrol("zaman asiminda TARAMA'ya donuldu", _m9.durum == engagement.TARAMA, _m9.durum)
+kontrol("basarisiz aday kara listeye alindi",
+        _m9.kara_liste.icinde_mi(-21.0, -0.4))
+_ikinci = _m9.tarama_adimi([_iz_a, _iz_b])
+kontrol("TARAMA artik SIRADAKI adaya geciyor",
+        _ikinci is not None and abs(_ikinci[0] - 12.0) < 0.01, f"{_ikinci}")
+kontrol("kara liste KISA omurlu (kalici eleme degil)",
+        0 < config.BLACKLIST_VERIFY_TTL_SEC < config.BLACKLIST_TTL_SEC,
+        f"{config.BLACKLIST_VERIFY_TTL_SEC} sn")
+
+# --- 10. PITCH REDUKTORU: adim/derece ve darbe hizi tavani ---
+print()
+print("=" * 70)
+print("10. PITCH REDUKTORU (PLF060 1:5) — adim/derece ve darbe tavani")
+print("=" * 70)
+import motor_fire_module as mfm
+kontrol("pitch redüksiyonu 5.0", abs(mfm.GEAR_RATIO_PITCH - 5.0) < 1e-9,
+        f"{mfm.GEAR_RATIO_PITCH}")
+kontrol("pitch yaw'dan daha ince cozunurluklu",
+        mfm.STEPS_PER_DEGREE_PITCH > mfm.STEPS_PER_DEGREE_YAW,
+        f"pitch {mfm.STEPS_PER_DEGREE_PITCH:.3f} > yaw {mfm.STEPS_PER_DEGREE_YAW:.3f}")
+_tavan = 1.0 / (2 * mfm.MIN_DELAY)
+for _ad, _oy, _op in (("saf yaw", 1.0, 0.0), ("saf pitch", 0.0, 1.0),
+                      ("capraz", 1.0, 1.0)):
+    _hiz = 1.0 / (2 * mfm._servo_gecikme_siniri(_oy, _op))
+    kontrol(f"otonom darbe hizi donanim tavanini asmiyor ({_ad})",
+            _hiz <= _tavan + 1e-6, f"{_hiz:.0f} <= {_tavan:.0f} darbe/sn")
+# 1:5'te SERVO_MAX_DEG_PER_SEC (100) pitch'te donanim tavanina kirpilir.
+_pitch_otonom = (1.0 / (2 * mfm._servo_gecikme_siniri(0.0, 1.0))
+                 / mfm.STEPS_PER_DEGREE_PITCH)
+_yaw_otonom = (1.0 / (2 * mfm._servo_gecikme_siniri(1.0, 0.0))
+               / mfm.STEPS_PER_DEGREE_YAW)
+print(f"  otonom tepe hiz: yaw {_yaw_otonom:.0f} derece/sn, "
+      f"pitch {_pitch_otonom:.0f} derece/sn (kirpilmis)")
+# Otonom yaw tepe hizi iki tavanin KUCUGU: yazilim siniri
+# (SERVO_MAX_DEG_PER_SEC) ile donanim siniri (MIN_DELAY / adim-derece).
+# MIN_DELAY 0.00040'a cekildiginde (sahada titresim icin yavaslatildi)
+# donanim tavani 46.9 derece/sn'e duser ve yazilim sinirini gecersiz kilar.
+_yaw_tavan = min(mfm.SERVO_MAX_DEG_PER_SEC,
+                 _tavan / mfm.STEPS_PER_DEGREE_YAW)
+kontrol("yaw iki tavanin kucugune cikabiliyor",
+        abs(_yaw_otonom - _yaw_tavan) < 1.0,
+        f"{_yaw_otonom:.1f} = min(yazilim {mfm.SERVO_MAX_DEG_PER_SEC:.0f}, "
+        f"donanim {_tavan / mfm.STEPS_PER_DEGREE_YAW:.1f}) derece/sn")
+# Devir teslim butcesi: en kotu pitch yolu ~20 derece, ENGAGE_SLEW_TIMEOUT icinde
+# bitmeli. Pitch hizi bunun altina duserse yalpalama zaman asimina ugrar.
+kontrol("pitch hizi devir teslim butcesine yetiyor",
+        20.0 / _pitch_otonom < config.ENGAGE_SLEW_TIMEOUT * 0.5,
+        f"20 derece / {_pitch_otonom:.0f} = {20.0/_pitch_otonom:.2f} sn "
+        f"< {config.ENGAGE_SLEW_TIMEOUT*0.5:.2f} sn")
+_coz = 1.0 / mfm.STEPS_PER_DEGREE_PITCH
+kontrol("pitch cozunurlugu olu bandin altinda",
+        _coz / abs(config.HUNTER_DPP_PITCH) < config.PID_DEADBAND_PIXELS,
+        f"{_coz:.4f} derece/adim = {_coz/abs(config.HUNTER_DPP_PITCH):.1f} px")
+
+# --- 11. YENI AVCI KAMERA (Arducam B0495C / AR0234 + 12 mm) ---
+print()
+print("=" * 70)
+print("11. YENI AVCI KAMERA (AR0234 + 12 mm) ve MODEL GIRISI UYUMU")
+print("=" * 70)
+_PIKSEL_UM, _ODAK_MM = 3.0, 12.0
+
+
+def _ima_odak(dpp, piksel_sayisi):
+    """Olculen derece/pikselin ima ettigi odak uzakligi (mm)."""
+    fov = piksel_sayisi * dpp
+    return (piksel_sayisi * _PIKSEL_UM / 1000.0) / (2 * np.tan(np.radians(fov / 2)))
+
+
+_fy = _ima_odak(config.HUNTER_DPP_YAW, config.HUNTER_WIDTH)
+_fp = _ima_odak(abs(config.HUNTER_DPP_PITCH), config.HUNTER_HEIGHT)
+_ETK_G0, _ETK_Y0 = config.hunter_etkin_kare()
+print(f"  ima edilen odak: yaw {_fy:.2f} mm, pitch {_fp:.2f} mm "
+      f"(takilan lens {_ODAK_MM:.0f} mm)")
+# Olculen degeri teorik degere ZORLAMIYORUZ (lens gercekte 11.5-12.5 mm
+# olabilir); yalnizca fiziksel olarak makul mu diye bakiyoruz.
+kontrol("derece/piksel takilan lensle uyumlu (12 +- 1.5 mm)",
+        abs(_fy - _ODAK_MM) < 1.5 and abs(_fp - _ODAK_MM) < 1.5,
+        f"yaw {_fy:.2f} mm, pitch {_fp:.2f} mm")
+# KARE PIKSEL + REKTILINEER LENS => iki eksende |derece/piksel| AYNI OLMALI.
+# Sahada bir kez 1.40 kat fark cikti ve yaw kazanci sessizce %40 hatali
+# calisiyordu; bu kontrol onu yakalamak icin var.
+#
+# KUCUK bir fark KASITLI olabilir: yaw'da dislide mekanik bosluk var ve
+# sahada derece/piksel'i biraz yukseltmek telafi olarak kullanildi. Bu YAN
+# ETKILI bir cozum -- ayni sabit dunya-acisi defterini, hiz tahminini ve
+# gozcu devir teslimi karsilastirmasini da kaydiriyor. Temizi KP_YAW'i
+# yukseltmektir. Bu yuzden %10'a kadar tolere ediliyor, otesi hata sayiliyor.
+_oran = config.HUNTER_DPP_YAW / abs(config.HUNTER_DPP_PITCH)
+print(f"  yaw/pitch olcek orani: {_oran:.4f} "
+      f"(1.0 olmali; kucuk sapma bosluk telafisi olabilir)")
+kontrol("yaw ve pitch olcegi fiziksel olarak tutarli (fark < %10)",
+        abs(_oran - 1.0) < 0.10,
+        f"{config.HUNTER_DPP_YAW} vs {abs(config.HUNTER_DPP_PITCH)}")
+kontrol("pitch isareti negatif (goruntude asagi = pitch azalir)",
+        config.HUNTER_DPP_PITCH < 0)
+
+# --- Kamera karesi ile MODEL GIRISI arasindaki uyum ---
+_ETK_G, _ETK_Y = config.hunter_etkin_kare()
+_kamera_en = _ETK_G / _ETK_Y
+_model_en = config.IMG_WIDTH / config.IMG_HEIGHT
+print(f"  kamera {config.HUNTER_WIDTH}x{config.HUNTER_HEIGHT} -> kirpma sonrasi "
+      f"{_ETK_G}x{_ETK_Y} (en/boy {_kamera_en:.3f})  ->  model "
+      f"{config.IMG_WIDTH}x{config.IMG_HEIGHT} (en/boy {_model_en:.3f})")
+kontrol("en/boy bozulmasi ihmal edilebilir (<%5)",
+        abs(_kamera_en / _model_en - 1.0) < 0.05,
+        f"%{abs(_kamera_en/_model_en - 1)*100:.1f}")
+_kucultme = config.HUNTER_WIDTH / config.IMG_WIDTH
+print(f"  kucultme carpani: {_kucultme:.2f}x, suzgec {config.MODEL_RESIZE_INTERPOLATION}")
+# INTER_LINEAR kucultmede yalnizca birkac komsuyu ornekler; 1.4 katin
+# ustunde piksel ATLAR (aliasing + gurultu). O bolgede AREA zorunlu.
+kontrol("buyuk kucultmede dogru suzgec kullaniliyor",
+        _kucultme <= 1.4 or config.MODEL_RESIZE_INTERPOLATION == "AREA",
+        f"{_kucultme:.2f}x -> {config.MODEL_RESIZE_INTERPOLATION}")
+kontrol("suzgec adi gecerli",
+        config.MODEL_RESIZE_INTERPOLATION in ("AREA", "LINEAR"),
+        config.MODEL_RESIZE_INTERPOLATION)
+
+_gs = config.HUNTER_WIDTH * config.HUNTER_DPP_YAW
+_gd = _ETK_Y0 * abs(config.HUNTER_DPP_PITCH)
+print(f"  gorus acisi: {_gs:.1f} x {_gd:.1f} derece")
+kontrol("dikey yari gorus acisi devir tesleme yetiyor (>5 derece)",
+        _gd / 2 > 5.0, f"{_gd/2:.1f} derece")
+
+_balon_px = balon_aci / config.HUNTER_DPP_YAW
+_balon_model = _balon_px * config.IMG_WIDTH / config.HUNTER_WIDTH
+print(f"  15 m'de balon: kaynak {_balon_px:.0f} px -> model uzayinda "
+      f"{_balon_model:.0f} px")
+kontrol("balon model uzayinda YOLO icin yeterli (>=16 px)", _balon_model >= 16,
+        f"{_balon_model:.0f} px")
+# Model uzayindaki boyut YALNIZCA gorus acisina bagli olmali; cozunurlugu
+# degistirmek hedefi buyutmez. Bu ozdeslik bozulursa bir yerde tutarsizlik var.
+_dogrudan = balon_aci / _gs * config.IMG_WIDTH
+kontrol("model uzayi boyutu yalnizca gorus acisina bagli",
+        abs(_balon_model - _dogrudan) < 0.5,
+        f"{_balon_model:.1f} == {_dogrudan:.1f}")
+# OLU BANDIN OLCUTU DEGISTI (2026-09-23, 29.12 B37). Eskiden "tespit
+# gurultusu kaynak cozunurlukle olceklenir" kuralina baglanmisti (1280'de
+# 5 px -> 1920'de 8 px). Sahada olculdu ki olu bandin gercek maliyeti
+# gurultu degil, HAREKETLI hedefte kalici nisan hatasi: taret bant icinde
+# hic kimildamadigi icin hedef kaciyor (aşama2son.mp4: hata 56 karenin
+# hepsinde ayni isaretli, ort +14.1 px). Yeni olcut ikili:
+#   (a) olu bant nisan TOLERANSINDAN kucuk olmali — yoksa "bandin icinde"
+#       olmak "nisan tamam" anlamina gelmez ve sistem toleransa giremez;
+#   (b) bir motor adimindan buyuk olmali — yoksa taret adim cozunurlugunde
+#       avlanir (1 yaw adimi = 0.0375 derece = 2.7 px).
+_adim_px = (1.0 / 26.667) / abs(config.HUNTER_DPP_YAW)
+kontrol("olu bant nisan toleransindan kucuk (yoksa toleransa hic girilemez)",
+        config.PID_DEADBAND_PIXELS < config.AIM_TOLERANCE_MIN_PIXELS,
+        f"{config.PID_DEADBAND_PIXELS} px < {config.AIM_TOLERANCE_MIN_PIXELS} px")
+kontrol("olu bant bir motor adimindan buyuk (adim cozunurlugunde avlanma yok)",
+        config.PID_DEADBAND_PIXELS > _adim_px,
+        f"{config.PID_DEADBAND_PIXELS} px > {_adim_px:.1f} px (1 adim)")
+# En sik yapilan hata: cozunurluk degistirilip derece/piksel unutuluyor
+# (veya tersi). Ima edilen ODAK UZAKLIGI bu ikisinin BIRLIKTE dogru olmasini
+# gerektirir; biri degisip digeri kalirsa odak sacma bir degere firlar.
+kontrol("cozunurluk ve derece/piksel BIRLIKTE guncellenmis",
+        abs(_ima_odak(config.HUNTER_DPP_YAW, config.HUNTER_WIDTH) - _ODAK_MM) < 1.5,
+        f"ima edilen odak {_ima_odak(config.HUNTER_DPP_YAW, config.HUNTER_WIDTH):.2f} mm")
+
+# --- 12. ISTER UYUMU: avci onceligi, dost eleme, asamaya gore ceza ---
+print()
+print("=" * 70)
+print("12. ISTER UYUMU — avci onceligi / dost siralamasi / dost cezasi")
+print("=" * 70)
+
+
+def _cift(sinif='dusman-F16', skor=0.9):
+    return engagement.cift_eslestir(
+        [det(sinif, 600, 300, 96, 60, skor), det('balon', 633, 415, 30, 30, skor)])
+
+
+_izl = [{'id': 9, 'yaw': -21.0, 'pitch': -0.4, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+         'sinif': 'dusman', 'kirmizi_alan': 9000, 'gorulme': 9}]
+
+# (a) Avci gecerli bir cift goruyorsa gozcuye HIC gidilmemeli
+m12 = engagement.AngajmanMakinesi(); m12.basla('task2')
+_sec = m12.tarama_adimi(_izl, _cift(), [(2.0, 1.0)])
+kontrol("avci hedefi goruyorken aci komutu URETILMIYOR", _sec is None, str(_sec))
+kontrol("dogrudan DOGRULAMA'ya gecildi", m12.durum == engagement.DOGRULAMA, m12.durum)
+kontrol("hedef acisi ciftin GERCEK acisina ayarlandi",
+        abs(m12.hedef_yaw - 2.0) < 1e-6 and abs(m12.hedef_pitch - 1.0) < 1e-6,
+        f"{m12.hedef_yaw}, {m12.hedef_pitch}")
+
+# (b) Ayni cift kara listedeyse avci onceligi devreye GIRMEMELI
+m12b = engagement.AngajmanMakinesi(); m12b.basla('task2')
+m12b.kara_liste.ekle(2.0, 1.0, 5.0, 'dost')
+_sec = m12b.tarama_adimi(_izl, _cift(), [(2.0, 1.0)])
+kontrol("kara listedeki cifte tekrar angaje OLUNMUYOR",
+        m12b.durum == engagement.YONELME, m12b.durum)
+kontrol("bunun yerine gozcunun acisina gidiliyor",
+        _sec is not None and abs(_sec[0] + 21.0) < 0.01, str(_sec))
+
+# (c) Guveni dusuk veya maketi olmayan cift avci onceligi vermemeli
+m12c = engagement.AngajmanMakinesi(); m12c.basla('task2')
+m12c.tarama_adimi(_izl, _cift(skor=0.30), [(2.0, 1.0)])
+kontrol("dusuk guvenli cift avci onceligi kazanmiyor",
+        m12c.durum == engagement.YONELME, m12c.durum)
+m12d = engagement.AngajmanMakinesi(); m12d.basla('task2')
+m12d.tarama_adimi(_izl, engagement.cift_eslestir(
+    [det('balon', 633, 415, 30, 30)], tek_balonlara_izin=True), [(2.0, 1.0)])
+kontrol("maketi olmayan cift avci onceligi kazanmiyor",
+        m12d.durum == engagement.YONELME, m12d.durum)
+
+# (d) Asama 3: gozcunun 'dost' dedigi iz ELENMEMELI, sona siralanmali
+kl12 = engagement.KaraListe()
+_karisik = [
+    {'id': 1, 'yaw': -10.0, 'pitch': 0.0, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+     'sinif': 'dost', 'kirmizi_alan': 20000, 'gorulme': 9},
+    {'id': 2, 'yaw': 5.0, 'pitch': 0.0, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+     'sinif': 'kararsiz', 'kirmizi_alan': 3000, 'gorulme': 9},
+    {'id': 3, 'yaw': 20.0, 'pitch': 0.0, 'yaw_hiz': 0.0, 'pitch_hiz': 0.0,
+     'sinif': 'dusman', 'kirmizi_alan': 1000, 'gorulme': 9},
+]
+_s3 = engagement.aday_sirala(_karisik, kl12, 'task3')
+kontrol("asama3: dost artik ELENMIYOR (gozcu yanilirsa hedef kaybolmasin)",
+        len(_s3) == 3, f"{len(_s3)} aday")
+kontrol("asama3 sirasi: dusman -> kararsiz -> dost",
+        [i['sinif'] for i in _s3] == ['dusman', 'kararsiz', 'dost'],
+        str([i['sinif'] for i in _s3]))
+_s2 = engagement.aday_sirala(_karisik, kl12, 'task2')
+kontrol("asama2: sinif ayrimi yok, en buyuk kirmizi once",
+        _s2[0]['kirmizi_alan'] == 20000, str(_s2[0]['kirmizi_alan']))
+
+# (e) DOST cezasi asamaya gore: asama 2'de kisa, asama 3'te kalici
+def _dost_cezasi(asama):
+    mm = engagement.AngajmanMakinesi(); mm.basla(asama)
+    h = mm.tarama_adimi(_izl)
+    mm.yonelme_adimi(h[0], h[1])
+    for _ in range(config.VERIFY_CONFIRM_FRAMES):
+        mm.dogrulama_adimi(_cift('dost-F16'))
+    return mm._dost_ttl(), mm.kara_liste.icinde_mi(h[0], h[1])
+
+_ttl2, _var2 = _dost_cezasi('task2')
+_ttl3, _var3 = _dost_cezasi('task3')
+kontrol("asama3'te dost cezasi pratikte kalici", _ttl3 >= 600.0, f"{_ttl3} sn")
+kontrol("asama2'de dost cezasi KISA (ortamda dost yok, bu bir YOLO hatasi)",
+        _ttl2 <= config.BLACKLIST_VERIFY_TTL_SEC, f"{_ttl2} sn")
+kontrol("her iki asamada da kara listeye giriliyor", _var2 and _var3)
+
+# --- 13. CAPRAZ ESLESME ve KILIT KOPRUSU ---
+print()
+print("=" * 70)
+print("13. CAPRAZ ESLESME KORUMASI ve KILIT KOPRUSU")
+print("=" * 70)
+
+# (a) Dusmanin maketi + DOSTUN balonu: ESLESMEMELI.
+# Dusmanin kendi balonu o karede tespit edilmemis; dostun balonu yatayda yakin.
+_capraz = [det('dusman-F16', 600, 300, 126, 80),
+           det('dost-Helikopter', 760, 300, 100, 70),
+           det('balon', 790, 430, 40, 40)]          # DOSTUN balonu
+_c13 = engagement.cift_eslestir(_capraz)
+_dusman = next(c for c in _c13 if engagement.dusman_mi(c.sinif))
+_dost = next(c for c in _c13 if engagement.dost_mu(c.sinif))
+kontrol("dusman maketi DOSTUN balonunu kapamiyor", _dusman.balon is None)
+kontrol("balon dogru sahibiyle (dost) eslesti", _dost.balon is not None)
+# Ates kilidi acisindan sonuc: dusman ciftinin balonu yok -> ates serbest degil
+_m13 = engagement.AngajmanMakinesi(); _m13.basla('task3')
+_m13.durum = engagement.ATES; _m13.dogrulanan_sinif = 'dusman-F16'
+_izn, _ger = engagement.ates_serbest_mi(_dusman, _m13, True, True, 0.0, 0.0, 0.0)
+kontrol("dostun balonuna ates ENGELLENDI", not _izn, _ger)
+
+# (b) Ayni sahnede dusmanin KENDI balonu varsa dogru eslesmeli
+_normal = _capraz + [det('balon', 640, 430, 40, 40)]
+_c13b = engagement.cift_eslestir(_normal)
+_d2 = next(c for c in _c13b if engagement.dusman_mi(c.sinif))
+kontrol("kendi balonu varken dusman dogru esleiyor", _d2.balon is not None)
+kontrol("balon gercekten dusmanin altindaki",
+        abs((_d2.balon['bbox'][0] + 20) - 660) < 5, str(_d2.balon['bbox']))
+
+# (c) KILIT koprusu: maket bir kare gorunmezse balon tek basina takip edilir
+_m14 = engagement.AngajmanMakinesi(); _m14.basla('task2')
+_m14.durum = engagement.KILIT
+_m14.dogrulanan_sinif = 'dusman-F16'
+_tam = engagement.cift_eslestir([det('dusman-F16', 600, 300, 126, 80),
+                                 det('balon', 640, 430, 40, 40)])
+_sec, _kopru = _m14.kilit_hedefi_sec(_tam, [(5.0, 1.0)])
+kontrol("maket varken normal takip", _sec is not None and not _kopru)
+kontrol("kilit acisi kaydedildi", _m14.kilit_aci == (5.0, 1.0))
+
+_yalniz = engagement.cift_eslestir([det('balon', 640, 430, 40, 40)],
+                                   tek_balonlara_izin=True)
+_sec, _kopru = _m14.kilit_hedefi_sec(_yalniz, [(5.1, 1.0)])
+kontrol("maket kaybolunca balon KOPRU ile takip ediliyor",
+        _sec is not None and _kopru, f"kopru={_kopru}")
+kontrol("durum hala KILIT", _m14.durum == engagement.KILIT, _m14.durum)
+
+# (d) Kopru YANDAKI hedefe atlamamali
+_m15 = engagement.AngajmanMakinesi(); _m15.basla('task2')
+_m15.durum = engagement.KILIT; _m15.dogrulanan_sinif = 'dusman-F16'
+_m15.kilit_aci = (5.0, 1.0)
+_sec, _kopru = _m15.kilit_hedefi_sec(_yalniz, [(5.0 + 3 * config.LOCK_BRIDGE_MAX_DEG, 1.0)])
+kontrol("uzaktaki balona KOPRU KURULMUYOR", _sec is None, f"{_sec}")
+
+# (e) [eski kural] Kopru butcesi dolunca kilit birakilir. Capa modunda
+# butce YOK: balon capaya bagli kaldigi surece takip surer (29.9 B25).
+config.LOCK_BALLOON_ANCHOR = False
+_m16 = engagement.AngajmanMakinesi(); _m16.basla('task2')
+_m16.durum = engagement.KILIT; _m16.dogrulanan_sinif = 'dusman-F16'
+_m16.kilit_aci = (5.0, 1.0)
+for _ in range(config.LOCK_BRIDGE_MAX_FRAMES + 1):
+    _m16.kilit_hedefi_sec(_yalniz, [(5.0, 1.0)])
+kontrol("[eski kural] kopru butcesi dolunca TARAMA'ya donuluyor",
+        _m16.durum == engagement.TARAMA, _m16.durum)
+config.LOCK_BALLOON_ANCHOR = True
+_m16b = engagement.AngajmanMakinesi(); _m16b.basla('task2')
+_m16b.durum = engagement.KILIT; _m16b.dogrulanan_sinif = 'dusman-F16'
+_m16b.kilit_aci = (5.0, 1.0)
+for _ in range(config.LOCK_BRIDGE_MAX_FRAMES + 3):
+    _s16, _ = _m16b.kilit_hedefi_sec(_yalniz, [(5.0, 1.0)])
+kontrol("[capa] maketsiz balon capada kaldikca kilit SURER (butce yok)",
+        _s16 is not None and _m16b.durum == engagement.KILIT, _m16b.durum)
+
+# (f) EMNIYET AGI: kilit acisinda BASKA SINIFTAN maket belirirse kilit dusmeli
+_m17 = engagement.AngajmanMakinesi(); _m17.basla('task3')
+_m17.durum = engagement.KILIT; _m17.dogrulanan_sinif = 'dusman-F16'
+_m17.kilit_aci = (5.0, 1.0)
+_dost_cift = engagement.cift_eslestir([det('dost-Helikopter', 600, 300, 126, 80),
+                                       det('balon', 640, 430, 40, 40)])
+# TEK KARE kilidi DUSURMEMELI: sahada 0.1-0.2 saniye suren sahte etiketler
+# goruldu (guven 0.6'ya kadar). Zamansal onay olmadan bir hayalet iyi bir
+# kilidi TARAMA'ya gonderiyordu.
+_m17.kilit_hedefi_sec(_dost_cift, [(5.0, 1.0)])
+kontrol("TEK karelik yabanci maket kilidi DUSURMUYOR",
+        _m17.durum == engagement.KILIT, _m17.durum)
+# Ama israrla goruluyorsa kilit birakilmali
+for _ in range(config.LOCK_ABORT_CONFIRM_FRAMES - 1):
+    _sec, _ = _m17.kilit_hedefi_sec(_dost_cift, [(5.0, 1.0)])
+kontrol("kilit acisinda DOST ISRARLA gorulunce kilit birakildi",
+        _sec is None and _m17.durum == engagement.TARAMA, _m17.durum)
+# Arada dogru sinif gorulurse sayac SIFIRLANMALI
+_m19 = engagement.AngajmanMakinesi(); _m19.basla('task3')
+_m19.durum = engagement.KILIT; _m19.dogrulanan_sinif = 'dusman-F16'
+_m19.kilit_aci = (5.0, 1.0)
+_dusman_cift19 = engagement.cift_eslestir(
+    [det('dusman-F16', 600, 300, 126, 80), det('balon', 640, 430, 40, 40)])
+for _ in range(config.LOCK_ABORT_CONFIRM_FRAMES + 2):
+    _m19.kilit_hedefi_sec(_dost_cift, [(5.0, 1.0)])       # yabanci
+    _m19.kilit_hedefi_sec(_dusman_cift19, [(5.0, 1.0)])   # dogru sinif
+kontrol("arada dogru sinif gorulurse iptal sayaci sifirlaniyor",
+        _m19.durum == engagement.KILIT, _m19.durum)
+
+# (g) R2: dogrulanan sinif tutmayan ciftte RASTGELE hedefe dusulmuyor
+_m18 = engagement.AngajmanMakinesi(); _m18.basla('task3')
+_m18.durum = engagement.KILIT; _m18.dogrulanan_sinif = 'dusman-Drone'
+_sec, _ = _m18.kilit_hedefi_sec(_dost_cift, [(40.0, 9.0)])   # cok uzakta
+kontrol("sinif tutmayan cifte SESSIZCE dusulmuyor", _sec is None, f"{_sec}")
+
+print()
+print("=" * 70)
+print("14. NISAN SUREKLILIGI, IMHA DOGRULAMA, BOYUT KAPISI")
+print("=" * 70)
+
+# (a) Kaynak degisiminde pitch sicramasi -- salinimin kok nedeni.
+# Saha geometrisi (asama2-3-hedefTakip.mp4): maket 162x208, balon 78x74.
+_mk = det('dusman-F16', 800, 300, 162, 208)
+_bl = det('balon', 842, 533, 78, 74)
+_c_tam = engagement.cift_eslestir([_mk, _bl])[0]
+_ofs = _c_tam.olculen_ofset()
+_n_tam = _c_tam.nisan_noktasi()
+kontrol("balon varken olculen ofset uretiliyor",
+        _ofs is not None and abs(_ofs[0]) < 0.01,
+        f"dx/mw={_ofs[0]:.3f} dy/mw={_ofs[1]:.3f}")
+
+_c_yok = engagement.cift_eslestir([_mk])[0]
+_n_sabit = _c_yok.nisan_noktasi()                        # eski sabit formul
+_n_ogrn = _c_yok.nisan_noktasi(ogrenilen_ofset=_ofs)     # ogrenilmis
+_sicrama_sabit = abs(_n_sabit[1] - _n_tam[1])
+_sicrama_ogrn = abs(_n_ogrn[1] - _n_tam[1])
+kontrol("sabit formul GERCEKTEN sicrama uretiyor (regresyon tanigi)",
+        _sicrama_sabit > 20.0, f"{_sicrama_sabit:.1f} px")
+kontrol("ogrenilen ofset sicramayi SIFIRLIYOR",
+        _sicrama_ogrn < 0.5, f"{_sicrama_ogrn:.2f} px (sabit formul {_sicrama_sabit:.1f})")
+kontrol("ogrenilen yolda balon 'gercek gorundu' SAYILMIYOR",
+        _n_ogrn[3] is False, f"{_n_ogrn[3]}")
+
+# (b) Hedef Takip: balon yoksa maketin TAM ORTASI (tahmin yok)
+_n_mrk = _c_yok.nisan_noktasi(maket_merkezine=True)
+kontrol("takip modu maketin tam ortasina nisan aliyor",
+        abs(_n_mrk[0] - (800 + 81)) < 0.5 and abs(_n_mrk[1] - (300 + 104)) < 0.5,
+        f"({_n_mrk[0]:.0f}, {_n_mrk[1]:.0f}) beklenen (881, 404)")
+
+# (c) Imha dogrulama penceresi
+# Pencere artik GECIKMELI: once FIRE_CONFIRM_DELAY_SEC (patlama suresi)
+# bekleniyor, balon ancak ondan SONRA sayilmaya basliyor.
+_PENCERE = config.FIRE_CONFIRM_DELAY_SEC + config.FIRE_CONFIRM_SEC
+
+
+def _ates_edip_bekle(balon_var, kare=8):
+    m = engagement.AngajmanMakinesi(); m.basla('task2')
+    m._gec(engagement.ATES); m.ates_kaydet()
+    ilk = m.ates_dogrulama_adimi(balon_var)
+    # Sayim penceresinin ICINE gir (gecikme gecti, sure dolmadi) ki
+    # balon gorulme sayaci gercekten islesin.
+    t0 = m.son_ates_zamani
+    for i in range(kare):
+        m.son_ates_zamani = t0 - (config.FIRE_CONFIRM_DELAY_SEC + 0.01
+                                  + i * 0.01)
+        m.ates_dogrulama_adimi(balon_var)
+    m.son_ates_zamani = t0 - _PENCERE - 0.01
+    son = m.ates_dogrulama_adimi(balon_var)
+    return ilk, son, m
+
+_ilk, _son, _ = _ates_edip_bekle(False)
+kontrol("ates ANINDA imha sayilmiyor (pencere aciliyor)", _ilk == 'bekle', _ilk)
+kontrol("balon kaybolunca imha ONAYLANIYOR", _son == 'onaylandi', _son)
+
+_ilk, _son, _ = _ates_edip_bekle(True)
+kontrol("balon duruyorsa TEKRAR ates isteniyor", _son == 'tekrar', _son)
+
+# Butce dolunca pes edilmeli (sonsuz ates dongusu olmasin)
+_m20 = engagement.AngajmanMakinesi(); _m20.basla('task2')
+_m20._gec(engagement.ATES)
+for _ in range(config.FIRE_MAX_ATTEMPTS):
+    _m20.ates_kaydet()
+    _t20 = _m20.son_ates_zamani
+    # Once sayim penceresinde balonu gordur, sonra pencereyi doldur
+    for _i in range(6):
+        _m20.son_ates_zamani = _t20 - (config.FIRE_CONFIRM_DELAY_SEC + 0.01 + _i * 0.01)
+        _m20.ates_dogrulama_adimi(True)
+    _m20.son_ates_zamani = _t20 - _PENCERE - 0.01
+    _sonuc20 = _m20.ates_dogrulama_adimi(True)
+kontrol("atis butcesi dolunca 'pes' ediliyor", _sonuc20 == 'pes',
+        f"{_sonuc20} ({_m20.ates_sayisi} atis)")
+
+# Tek karelik kacirma "imha" sanilmamali
+_m21 = engagement.AngajmanMakinesi(); _m21.basla('task2')
+_m21._gec(engagement.ATES); _m21.ates_kaydet()
+_t21 = _m21.son_ates_zamani
+# Sayim penceresinin icinde: balon cogunlukla goruluyor (MAX_SEEN'i asacak)
+for _i, _g in enumerate((True, False, True, True, False, True, True, True)):
+    _m21.son_ates_zamani = _t21 - (config.FIRE_CONFIRM_DELAY_SEC + 0.01 + _i * 0.01)
+    _m21.ates_dogrulama_adimi(_g)
+_m21.son_ates_zamani = _t21 - _PENCERE - 0.01
+kontrol("pencerede balon ISRARLA gorulduyse imha SAYILMIYOR",
+        _m21.ates_dogrulama_adimi(True) == 'tekrar',
+        f"{_m21._ates_balon_gorulme} kare goruldu, esik {config.FIRE_CONFIRM_MAX_SEEN}")
+
+# TARAMA'ya donunce atis butcesi ve ofset sifirlanmali
+_m22 = engagement.AngajmanMakinesi(); _m22.basla('task2')
+_m22._gec(engagement.ATES); _m22.ates_kaydet()
+_m22.nisan_ofseti = (0.0, 1.0, 0.2)
+_m22._gec(engagement.TARAMA)
+kontrol("yeni hedefe gecince atis butcesi sifirlaniyor",
+        _m22.ates_sayisi == 0 and _m22.nisan_ofseti is None,
+        f"ates={_m22.ates_sayisi} ofset={_m22.nisan_ofseti}")
+
+# (d) Sinif bazli boyut kapisi: olculen gercek/sahte kutular
+import inference_module as _im
+for _ad, _sinif, _px, _bekle in (
+        ("gercek maket", 'dusman-F16', 172, True),
+        ("gercek balon", 'balon', 78, True),
+        ("gercek balon 7.5 m", 'balon', 100, True),
+        ("sahte fuze (olculdu)", 'dusman-fuze', 693, False),
+        ("sahte kutu 2", 'dusman-F16', 487, False),
+        ("sahte kutu 3", 'dusman-F16', 445, False)):
+    kontrol(f"boyut kapisi: {_ad} {_px} px -> {'gecmeli' if _bekle else 'elenmeli'}",
+            _im._acisal_boyut_makul_mu((0, 0, _px, _px), _sinif) is _bekle)
+
+print()
+print("=" * 70)
+print("15. GOZCU GOSTERIM BLOKLARI (yalnizca cizim, yonlendirmeye etkisiz)")
+print("=" * 70)
+
+_g = np.zeros((720, 1280, 3), np.uint8); _g[:] = (35, 35, 35)
+
+
+def _ucak(x, y, renk):
+    cv2.rectangle(_g, (x - 8, y - 40), (x + 8, y + 40), renk, -1)
+    cv2.rectangle(_g, (x - 35, y - 6), (x + 35, y + 6), renk, -1)
+
+
+_KRM, _MAV = (40, 40, 220), (220, 120, 40)
+_ucak(320, 300, _KRM)                          # balonsuz kirmizi maket
+_ucak(450, 300, _MAV)                          # dost mavi maket
+cv2.circle(_g, (450, 358), 11, _KRM, -1)       # dostun balonu
+_ucak(750, 285, _KRM)                          # dusman maket
+cv2.circle(_g, (750, 343), 11, _KRM, -1)       # dusmanin balonu
+
+_hsv = cv2.cvtColor(_g, cv2.COLOR_BGR2HSV)
+_krm = sp._temizle(sp._maske(_hsv, config.SPOTTER_RED_RANGES))
+_mav = sp._temizle(sp._maske(_hsv, config.SPOTTER_BLUE_RANGES))
+
+_adaylar = sp.balon_adaylari(_krm)
+_bloklar = sp.gosterim_bloklari(_krm, _mav)
+_blok_aday = [b for b in _bloklar if b['aday']]
+_blok_elenen = [b for b in _bloklar if b['renk'] == 'kirmizi' and not b['aday']]
+_blok_mavi = [b for b in _bloklar if b['renk'] == 'mavi']
+
+kontrol("gosterim aday sayisi GERCEK aday sayisiyla ayni",
+        len(_blok_aday) == len(_adaylar), f"{len(_blok_aday)} vs {len(_adaylar)}")
+kontrol("elenen kirmizi maketler cizim listesinde var",
+        len(_blok_elenen) >= 2, f"{len(_blok_elenen)} adet")
+kontrol("mavi blob cizim listesinde var (dost gorunur olsun)",
+        len(_blok_mavi) >= 1, f"{len(_blok_mavi)} adet")
+kontrol("mavi blob ASLA aday degil",
+        all(not b['aday'] for b in _blok_mavi))
+kontrol("maket elenme sebebi DOLGUNLUK olarak raporlaniyor",
+        any('dolgunluk' in b['ret'] for b in _blok_elenen),
+        ", ".join(sorted({b['ret'] for b in _blok_elenen})))
+
+# Cizim etiketi ile gercek karar ASLA ayrismamali (tek kapi: balon_kapisi)
+_uyum = True
+for _b in _bloklar:
+    if _b['renk'] != 'kirmizi':
+        continue
+    _gercek = any(abs(a['cx'] - (_b['x'] + _b['w'] / 2.0)) < 3 and
+                  abs(a['cy'] - (_b['y'] + _b['h'] / 2.0)) < 3 for a in _adaylar)
+    if _gercek != _b['aday']:
+        _uyum = False
+kontrol("cizimin 'aday' etiketi gercek kararla birebir uyuyor", _uyum)
+
+# YONLENDIRME DEGISMEDI: izler hala yalnizca balon adaylarindan uretiliyor
+_yon = sp.IzYoneticisi()
+_izler, _, _ = sp.kareyi_coz(_g, _yon, 1000.0)
+kontrol("iz sayisi = balon aday sayisi (maketler iz acmiyor)",
+        len(_izler) == len(_adaylar), f"{len(_izler)} iz / {len(_adaylar)} aday")
+kontrol("dost balonu 'dost', dusman balonu 'dusman' siniflandi",
+        sorted(i.sinif for i in _izler) == ['dost', 'dusman'],
+        ", ".join(sorted(i.sinif for i in _izler)))
+
+print()
+print("=" * 70)
+print("16. IMHA DOGRULAMA KILIDI ve REZONANS SUZGECI")
+print("=" * 70)
+
+# (a) SAHA SENARYOSU: ates 7.60 sn, balon 8.10'da kayboldu (0.5 sn sonra).
+# Gecikmeli sayim olmadan bu 15 kare "balon hala orada" sayiliyordu.
+_m23 = engagement.AngajmanMakinesi(); _m23.basla('task3')
+_m23._gec(engagement.ATES); _m23.ates_kaydet()
+_t23 = _m23.son_ates_zamani
+_sonuc23 = None
+for _k in range(80):
+    _gecen = _k / 30.0
+    _m23.son_ates_zamani = _t23 - _gecen
+    _sonuc23 = _m23.ates_dogrulama_adimi(_gecen < 0.50)   # balon 0.5 sn daha gorunur
+    if _sonuc23 != 'bekle':
+        break
+kontrol("patlamis balon 0.5 sn daha gorunse de IMHA ONAYLANIYOR",
+        _sonuc23 == 'onaylandi',
+        f"{_sonuc23}, pencerede sayilan {_m23._ates_balon_gorulme} kare")
+
+# Balon gercekten duruyorsa hala 'tekrar' demeli (koruma kaybolmamali)
+_m24 = engagement.AngajmanMakinesi(); _m24.basla('task3')
+_m24._gec(engagement.ATES); _m24.ates_kaydet()
+_t24 = _m24.son_ates_zamani
+for _k in range(80):
+    _m24.son_ates_zamani = _t24 - _k / 30.0
+    _s24 = _m24.ates_dogrulama_adimi(True)
+    if _s24 != 'bekle':
+        break
+kontrol("balon GERCEKTEN duruyorsa hala 'tekrar'", _s24 == 'tekrar', _s24)
+
+# (b) KILITLENME CIKISI -- 18. bolumdeki 20 saniyelik takilmanin caresi
+_m25 = engagement.AngajmanMakinesi(); _m25.basla('task3')
+_m25.dogrulanan_sinif = 'dusman-Fuze'; _m25._gec(engagement.ATES)
+_m25.ates_kaydet()
+_birak = None
+for _k in range(1, 300):
+    if _m25.ates_engellendi():
+        _birak = _k
+        break
+kontrol("ates ardisik engellenince hedef BIRAKILIYOR",
+        _birak == config.FIRE_RETRY_GIVEUP_FRAMES,
+        f"{_birak} kare (esik {config.FIRE_RETRY_GIVEUP_FRAMES})")
+_m25.imha_edilemedi()
+kontrol("birakildiktan sonra TARAMA'ya donuluyor",
+        _m25.durum == engagement.TARAMA, _m25.durum)
+
+# Basarili ates engel sayacini sifirlamali
+_m25.basla('task3'); _m25._gec(engagement.ATES)
+_m25.ates_engellendi(); _m25.ates_engellendi()
+_m25.ates_kaydet()
+kontrol("basarili ates engel sayacini sifirliyor",
+        _m25.ates_engel_ardisik == 0, f"{_m25.ates_engel_ardisik}")
+
+# TARAMA'ya gecince de sifirlanmali
+_m26 = engagement.AngajmanMakinesi(); _m26.basla('task2')
+_m26._gec(engagement.ATES); _m26.ates_kaydet(); _m26.ates_engellendi()
+_m26._gec(engagement.TARAMA)
+kontrol("TARAMA'ya gecince ates/engel sayaclari sifirlaniyor",
+        _m26.ates_sayisi == 0 and _m26.ates_engel_ardisik == 0,
+        f"ates={_m26.ates_sayisi} engel={_m26.ates_engel_ardisik}")
+
+# (c) PID CIKIS SUZGECI: hem ETKIN hem KUYRUKSUZ olmali (29.6 bolum)
+# Suzgec 2.7 Hz yapisal rezonansi sonumluyor -- kapatildiginda sahada
+# titresim RMS 0.121'den 0.345 dereceye cikti, o yuzden ETKIN kalmali.
+# Ama komut ARTIMLI (set_proportional_angles_delta), bu yuzden hafizasi
+# hata bittikten sonra (1-a)/a x son_cikis kadar fazladan yol gonderirdi.
+# Cozum suzgeci kapatmak DEGIL, olu banda girildiginde hafizayi bosaltmak;
+# asagidaki kaynak kontrolu o satirin yerinde durdugunu guvenceye alir.
+import math as _math
+_a = config.PID_OUTPUT_SMOOTHING
+kontrol("PID cikis suzgeci ETKIN (0 ise rezonans sonumu yok)", _a > 0.0, f"{_a}")
+_kaynak = io.open('bukrek_main.py', encoding='utf-8').read()
+# KUYRUK KESME DURUYOR AMA HAFIZA SILME GECIKTIRILDI (29.12 B37):
+# olu bantta cikisin KENDISI sifirlaniyor (kuyruk yok), hafiza ise ancak
+# ardisik PID_DEADBAND_SETTLE_FRAMES kare bant icinde kalinirsa siliniyor.
+kontrol("olu bantta cikis sifirlaniyor (kuyruk kesme yerinde)",
+        "if _olu_yaw:\n                pid_yaw = 0.0" in _kaynak
+        and "if _olu_pitch:\n                pid_pitch = 0.0" in _kaynak,
+        "bukrek_main.process_tracking icindeki kuyruk kesme satirlari")
+kontrol("suzgec hafizasi ancak YERLESINCE siliniyor (kisa dip rampayi bozmuyor)",
+        "if self._olu_ardisik_yaw >= _yerlesme:\n                    self._pid_cikis_yaw = 0.0" in _kaynak
+        and "if self._olu_ardisik_pitch >= _yerlesme:\n                    self._pid_cikis_pitch = 0.0" in _kaynak,
+        "olu bant yerlesme sayaci")
+kontrol("yerlesme esigi 2-6 kare arasinda", 2 <= config.PID_DEADBAND_SETTLE_FRAMES <= 6,
+        str(config.PID_DEADBAND_SETTLE_FRAMES))
+if _a > 0:
+    _fc = -_math.log(1 - _a) * 30.0 / (2 * _math.pi)
+    _kaz = lambda f: 1.0 / _math.sqrt(1 + (f / _fc) ** 2)
+    kontrol("kesim frekansi olculen salinim bandinin (2.2-3.2 Hz) ALTINDA",
+            _fc < 2.2, f"fc={_fc:.2f} Hz")
+    kontrol("yavas yonelme (0.5 Hz) neredeyse hic bastirilmiyor",
+            _kaz(0.5) > 0.90, f"kazanc {_kaz(0.5):.2f}")
+    kontrol("rezonans bandi (2.7 Hz) belirgin bastiriliyor",
+            _kaz(2.7) < 0.65, f"kazanc {_kaz(2.7):.2f}")
+
+print()
+print("=" * 70)
+print("17. DOGRULAMADA BALON SARTI ve DAR KARA LISTE")
+print("=" * 70)
+
+# (a) SAHA SENARYOSU (analizaşama3.mp4): balonsuz dusman-F16'ya kilitlenildi
+# ve 42 saniye cikilamadi. Dogrulama artik balonu sart kosuyor.
+_balonsuz = engagement.cift_eslestir([det('dusman-F16', 800, 300, 130, 150)])
+_balonlu = engagement.cift_eslestir(
+    [det('dusman-F16', 800, 300, 130, 150), det('balon', 845, 470, 45, 45)])
+_m27 = engagement.AngajmanMakinesi(); _m27.basla('task3')
+_m27.hedef_yaw, _m27.hedef_pitch = -0.17, 0.0     # sahada olculen aci
+_m27._gec(engagement.DOGRULAMA)
+_s27 = None
+# Balona SURE TANINIYOR (VERIFY_NO_BALLOON_GIVEUP_SEC): sinif tutarliligi
+# 4 karede saglansa da balon gec gorulebilecegi icin hemen elenmiyor.
+# Sanal zamani ilerleterek o esigi asiyoruz.
+_t27 = _m27.durum_zamani
+for _k in range(int(config.VERIFY_NO_BALLOON_GIVEUP_SEC * 30) + 4):
+    _m27.durum_zamani = _t27 - _k / 30.0
+    _s27 = _m27.dogrulama_adimi(_balonsuz)
+    if _m27.durum != engagement.DOGRULAMA:
+        break
+kontrol("balonsuz hedef ~%.2f sn icinde birakiliyor" % config.VERIFY_NO_BALLOON_GIVEUP_SEC,
+        _k / 30.0 <= config.VERIFY_NO_BALLOON_GIVEUP_SEC + 0.10,
+        f"{_k} kare = {_k/30.0:.2f} sn")
+
+# Balon GEC gorulurse (esigin icinde) hedef KACIRILMAMALI
+_m27b = engagement.AngajmanMakinesi(); _m27b.basla('task3')
+_m27b.hedef_yaw, _m27b.hedef_pitch = 0.0, 0.0
+_m27b._gec(engagement.DOGRULAMA)
+_t27b = _m27b.durum_zamani
+_gec_esik = int(config.VERIFY_NO_BALLOON_GIVEUP_SEC * 30) - 3
+for _k in range(60):
+    _m27b.durum_zamani = _t27b - _k / 30.0
+    _m27b.dogrulama_adimi(_balonlu if _k >= _gec_esik else _balonsuz)
+    if _m27b.durum != engagement.DOGRULAMA:
+        break
+kontrol("balon GEC gorulurse hedef kacirilmiyor",
+        _m27b.durum == engagement.KILIT,
+        f"{_m27b.durum} (balon {_gec_esik/30.0:.2f} sn'de goruldu)")
+kontrol("balonsuz hedef KILIT'e ALINMIYOR",
+        _m27.durum == engagement.TARAMA, _m27.durum)
+kontrol("balonsuz hedef kara listeye giriyor",
+        _m27.kara_liste.icinde_mi(-0.17, 0.0))
+
+# KOMSU HEDEF ETKILENMEMELI -- "bir daha gitmeme" riskinin testi
+kontrol("olculen komsu hedef (+6.23 der) SERBEST kaliyor",
+        not _m27.kara_liste.icinde_mi(6.23, 0.0))
+kontrol("1 metre yanal ayrim (16 m -> 3.58 der) SERBEST kaliyor",
+        not _m27.kara_liste.icinde_mi(-0.17 + 3.58, 0.0),
+        f"dar yaricap {config.BLACKLIST_NO_BALLOON_RADIUS_DEG} derece")
+# Eski genis yaricapla komsu KAPANIRDI -- regresyon tanigi
+kontrol("genis yaricap (4.0) 3.58 dereceyi kapatirdi (sorunun kaniti)",
+        3.58 <= config.BLACKLIST_RADIUS_DEG)
+
+# (b) BALONLU hedef hala dogrulanmali
+_m28 = engagement.AngajmanMakinesi(); _m28.basla('task3')
+_m28.hedef_yaw, _m28.hedef_pitch = 6.23, 0.0
+_m28._gec(engagement.DOGRULAMA)
+for _k in range(config.VERIFY_CONFIRM_FRAMES + 1):
+    _s28 = _m28.dogrulama_adimi(_balonlu)
+kontrol("balonlu hedef KILIT'e aliniyor", _m28.durum == engagement.KILIT, _m28.durum)
+
+# Balon ARA SIRA gorulse de yeter (anlik kayip cezalandirilmamali)
+_m29 = engagement.AngajmanMakinesi(); _m29.basla('task3')
+_m29.hedef_yaw, _m29.hedef_pitch = 0.0, 0.0
+_m29._gec(engagement.DOGRULAMA)
+for _k in range(config.VERIFY_CONFIRM_FRAMES + 1):
+    _m29.dogrulama_adimi(_balonlu if _k == 1 else _balonsuz)
+kontrol("balon 4 karede SADECE 1 kez gorulse de kilitleniyor",
+        _m29.durum == engagement.KILIT,
+        f"{_m29.durum} (esik {config.VERIFY_MIN_BALLOON_FRAMES} kare)")
+
+# (c) KILIT zaman asimi da kara listeye almali (emniyet agi)
+_m30 = engagement.AngajmanMakinesi(); _m30.basla('task3')
+_m30.hedef_yaw, _m30.hedef_pitch = 10.0, 0.0
+_m30.dogrulanan_sinif = 'dusman-F16'
+_m30._gec(engagement.KILIT)
+_m30.durum_zamani -= config.ENGAGE_LOCK_TIMEOUT + 0.1
+_m30.kilit_adimi(50.0, 20.0, False)
+kontrol("kilit zaman asiminda TARAMA'ya donuluyor",
+        _m30.durum == engagement.TARAMA, _m30.durum)
+kontrol("kilit zaman asiminda KARA LISTEYE de aliniyor",
+        _m30.kara_liste.icinde_mi(10.0, 0.0),
+        "eskiden alinmiyordu -> ayni hedefe aninda geri donuluyordu")
+kontrol("kilit zaman asimi komsuyu kapatmiyor",
+        not _m30.kara_liste.icinde_mi(10.0 + 3.58, 0.0))
+
+# (d) Gozcu esikleri: SAHADA OLCULEN balon gecmeli
+kontrol("gozcu: olculen balon (alan 34) artik gecer",
+        config.SPOTTER_MIN_BLOB_AREA <= 34,
+        f"esik {config.SPOTTER_MIN_BLOB_AREA}")
+kontrol("gozcu: olculen balon dolgunlugu (0.50) artik gecer",
+        config.SPOTTER_BALLOON_MIN_FILL <= 0.50,
+        f"esik {config.SPOTTER_BALLOON_MIN_FILL}")
+kontrol("gozcu kapisi 34 px / 0.53 dolgunluk balonu GECIRIYOR",
+        sp.balon_kapisi(34, 8, 8) is None)
+
+# --- 18. YAW ENKODERI (encoder_module): cerceveleme, sarma, olcek, saglik ---
+print()
+print("=" * 70)
+print("18. YAW ENKODERI — Waveshare cerceveleme, sarma cozumu, olcek, saglik")
+print("=" * 70)
+import encoder_module as em
+
+# Cerceveleme: ayar cercevesi 20 bayt, 250k kodu 5, saglama toplami dogru
+_a = em.ayar_cercevesi(250000)
+kontrol("ayar cercevesi 20 bayt, AA 55 12 05 ile basliyor",
+        len(_a) == 20 and _a[:4] == bytes([0xAA, 0x55, 0x12, 0x05]), _a.hex(' '))
+kontrol("ayar cercevesi saglama toplami", _a[19] == (sum(_a[2:19]) & 0xFF))
+_v = em.veri_cercevesi(0x67F, [0x40, 0x01, 0x65, 0, 0, 0, 0, 0])
+kontrol("veri cercevesi: AA C8 7F 06 ... 55",
+        _v == bytes.fromhex("aa c8 7f 06 40 01 65 00 00 00 00 00 55"), _v.hex(' '))
+_buf = bytearray(em.veri_cercevesi(0x2FF, [0x00, 0x20, 0, 0]) + em.ayar_cercevesi(250000)
+                 + em.veri_cercevesi(0x0FF, [0, 0x81, 0x11, 6, 0, 0, 0, 0]) + b'\xaa\xc4\xff')
+_c = em.cozumle(_buf)
+kontrol("cozumle: iki cerceve cikti, ayar yankisi atlandi, yarim cerceve tamponda kaldi",
+        [x[0] for x in _c] == [0x2FF, 0x0FF] and bytes(_buf) == b'\xaa\xc4\xff', str(_c))
+_buf.extend(b'\x02\x00\x20\x00\x00\x55')
+kontrol("cozumle: yarim cerceve tamamlaninca cikiyor",
+        em.cozumle(_buf) == [(0x2FF, bytes([0, 0x20, 0, 0]))] and len(_buf) == 0)
+
+# Sarma: 16380 -> 3 ileri sarma, geri donus
+_t, _top = em.sarma_coz(3, 16380, 0, 16384)
+kontrol("sarma ileri: 16380 -> 3 tur +1, toplam 16387", (_t, _top) == (1, 16387), f"{_t} {_top}")
+_t, _top = em.sarma_coz(16380, 3, _t, 16384)
+kontrol("sarma geri: 3 -> 16380 tur 0, toplam 16380", (_t, _top) == (0, 16380), f"{_t} {_top}")
+kontrol("sarma yok: 100 -> 150 toplam 150", em.sarma_coz(150, 100, 0, 16384) == (0, 150))
+kontrol("acilis: merkez yakini oldugu gibi", em.baslangic_toplam(8300, 8192, 16384) == 8300)
+kontrol("acilis: ham 16000 (merkezden +7808) ayni turda", em.baslangic_toplam(16000, 8192, 16384) == 16000)
+kontrol("acilis: ham 100 (merkezden -8092) ayni turda", em.baslangic_toplam(100, 8192, 16384) == 100)
+
+# Olcek: R=2, CPR 16384 -> 91.02 sayim/derece; 5 derece = 455 sayim (sahada 467-491 olculdu)
+_k = em.sayim_per_derece(16384, 2.0)
+kontrol("R=2: 91.0 sayim/derece", abs(_k - 91.02) < 0.05, f"{_k:.2f}")
+kontrol("merkezde 0 derece", em.sayim_to_derece(8192, 16384, 2.0, 8192) == 0.0)
+kontrol("merkez+455 sayim = 5.0 derece", abs(em.sayim_to_derece(8192 + 455, 16384, 2.0, 8192) - 5.0) < 0.01)
+kontrol("ters bayragi isareti cevirir", em.sayim_to_derece(8192 + 455, 16384, 2.0, 8192, ters=True) < 0)
+kontrol("ofset: sifirlama sonrasi 0", em.sayim_to_derece(9000, 16384, 2.0, 8192, ofset=9000 - 8192) == 0.0)
+kontrol("taret +90 = enkoder tam yarim tur (8192 sayim)",
+        abs(em.sayim_to_derece(8192 + 8192, 16384, 2.0, 8192) - 90.0) < 0.01)
+
+# Nesne, donanimsiz: _isle ile besle, saglik ve aci
+_e = em.Enkoder(port="yok", bitrate=250000, cpr=16384, oran=2.0, merkez=8192, ters=False,
+                sync_ms=10, zaman_asimi=0.25, node_id=127)
+kontrol("veri gelmeden sagliksiz ve aci None", not _e.saglikli_mi(0.0) and _e.taret_acisi(0.0) is None)
+_e._isle(0x2FF, (8192).to_bytes(4, 'little'), simdi=1.00)
+kontrol("ilk TPDO2: saglikli, 0.00 derece", _e.saglikli_mi(1.05) and abs(_e.taret_acisi(1.05)) < 1e-9,
+        str(_e.taret_acisi(1.05)))
+_e._isle(0x2FF, (8192 + 455).to_bytes(4, 'little'), simdi=1.01)
+kontrol("+455 sayim -> +5.0 derece", abs(_e.taret_acisi(1.02) - 5.0) < 0.01, f"{_e.taret_acisi(1.02)}")
+kontrol("0.3 sn veri gelmezse sagliksiz, aci None", not _e.saglikli_mi(1.35) and _e.taret_acisi(1.35) is None)
+_e._isle(0x0FF, bytes(8), simdi=1.40)
+kontrol("EMCY sayiliyor, aciyi degistirmiyor", _e.durum()['emcy'] == 1 and _e.durum()['toplam'] == 8192 + 455)
+_e._isle(0x2FF, (16380).to_bytes(4, 'little'), simdi=2.00)
+_e._isle(0x2FF, (3).to_bytes(4, 'little'), simdi=2.01)
+kontrol("nesne icinde sarma: 16380 -> 3, aci ~ +90.1",
+        abs(_e.taret_acisi(2.02) - (16387 - 8192) / _k) < 0.01, f"{_e.taret_acisi(2.02):.2f}")
+_e.sifirla()
+kontrol("sifirla(): mevcut konum 0 derece", abs(_e.taret_acisi(2.03)) < 1e-9)
+_r = _e.rapor(simdi=2.04)
+kontrol("rapor(): encoder_ok / encoder_yaw / encoder_raw", set(_r) == {"encoder_ok", "encoder_yaw", "encoder_raw"} and _r["encoder_ok"])
+kontrol("sabitler motor_fire_module'de: CPR 16384, merkez 8192, oran 2.0, 250k",
+        (mfm.ENCODER_CPR, mfm.ENCODER_CENTER, mfm.ENCODER_GEAR_RATIO, mfm.ENCODER_BITRATE) == (16384, 8192, 2.0, 250000))
+
+# --- 19. FAZ 5': DURUNCA HIZALA (enkoder_hizala) ---
+print()
+print("=" * 70)
+print("19. FAZ 5' — durunca hizala, yeniden yaklasma, manuel/reset korumasi")
+print("=" * 70)
+mfm._simulated_yaw = 10.0; mfm._simulated_pitch = 0.0
+mfm._servo_active = False; mfm._bloklayan_hareket = False
+mfm._yaw_moving_direction = mfm._pitch_moving_direction = 0
+mfm._son_adim_zamani = 0.0; mfm._servo_hedef_gecerli = False; mfm._yeniden_yaklasma = 0
+kontrol("duruyor: 0.15 sn adim yok", mfm.taret_duruyor_mu(simdi=1.0))
+kontrol("adim 0.1 sn once atildiysa durmuyor", not mfm.taret_duruyor_mu(simdi=0.1))
+_f = mfm.enkoder_hizala(11.5, simdi=1.0)
+kontrol("hizalama: sayac 10.0 -> 11.5, fark +1.5", abs(_f - 1.5) < 1e-9 and abs(mfm._simulated_yaw - 11.5) < 1e-9, f"{_f} {mfm._simulated_yaw}")
+kontrol("hizalama sayaci artti", mfm.hizalama_durumu()["encoder_snap_n"] >= 1)
+kontrol("esik alti fark (0.03) uygulanmaz, 0.0 doner", mfm.enkoder_hizala(11.53, simdi=1.0) == 0.0 and abs(mfm._simulated_yaw - 11.5) < 1e-9)
+# Sinir 10 -> 45 (29.10): 20 derecelik fark artik UYGULANIR, 60 derece supheli.
+kontrol("20 derece fark uygulanir (eski sinir 10 idi, sahada 10-22 derece gorüldu)",
+        abs(mfm.enkoder_hizala(31.5, simdi=1.0) - 20.0) < 1e-9 and abs(mfm._simulated_yaw - 31.5) < 1e-9)
+mfm._simulated_yaw = 11.5
+kontrol("supheli fark (60 derece) uygulanmaz, None", mfm.enkoder_hizala(71.5, simdi=1.0) is None and abs(mfm._simulated_yaw - 11.5) < 1e-9)
+mfm._son_adim_zamani = 0.95
+kontrol("son adim 50 ms once: hizalama yok", mfm.enkoder_hizala(12.0, simdi=1.0) is None)
+mfm._son_adim_zamani = 0.0; mfm._servo_active = True
+kontrol("servo aktifken hizalama yok", mfm.enkoder_hizala(12.0, simdi=1.0) is None)
+mfm._servo_active = False; mfm._yaw_moving_direction = 1
+kontrol("manuel hareket varken hizalama yok", mfm.enkoder_hizala(12.0, simdi=1.0) is None)
+mfm._yaw_moving_direction = 0; mfm._bloklayan_hareket = True
+kontrol("bloklayan hareket sirasinda hizalama yok", mfm.enkoder_hizala(12.0, simdi=1.0) is None)
+mfm._bloklayan_hareket = False
+kontrol("enkoder None ise hizalama yok", mfm.enkoder_hizala(None, simdi=1.0) is None)
+# yeniden yaklasma: hedef 20, servo 'vardi' (sayac 20), enkoder 18.5 diyor
+mfm.set_target_angles(20.0, 0.0)
+kontrol("set_target_angles: hedef gecerli, servo aktif", mfm._servo_hedef_gecerli and mfm._servo_active)
+# Yeniden yaklasma 29.11'de KAPATILDI (PID ile kavga); mekanizma duruyor,
+# asagidaki davranis testleri bayragi gecici olarak acarak calisir.
+mfm.ENCODER_REENGAGE = True
+mfm._servo_active = False; mfm._simulated_yaw = 20.0; mfm._son_adim_zamani = 0.0
+_f = mfm.enkoder_hizala(18.5, simdi=5.0)
+kontrol("varista 1.5 eksik: sayac 18.5, servo TEKRAR ACILDI (bayrak acikken)", abs(_f + 1.5) < 1e-9 and mfm._servo_active and mfm._yeniden_yaklasma == 1, f"{_f} {mfm._servo_active}")
+mfm._servo_active = False; mfm._simulated_yaw = 19.95; mfm._son_adim_zamani = 0.0
+_f = mfm.enkoder_hizala(19.96, simdi=6.0)
+kontrol("kalan 0.04 < tolerans: yeniden yaklasma YOK", not mfm._servo_active and mfm._yeniden_yaklasma == 1)
+mfm._simulated_yaw = 20.0
+for _k in range(3):
+    mfm._servo_active = False; mfm._son_adim_zamani = 0.0
+    mfm.enkoder_hizala(18.0, simdi=10.0 + _k); mfm._simulated_yaw = 20.0
+kontrol("hedef basina en fazla 3 duzeltme; 4.'de servo acilmiyor", not mfm._servo_active and mfm._yeniden_yaklasma == 3, f"{mfm._yeniden_yaklasma}")
+mfm.set_target_angles(20.0, 0.0)
+kontrol("yeni hedef sayaci sifirlar", mfm._yeniden_yaklasma == 0)
+mfm.ENCODER_REENGAGE = False
+mfm.set_manual_move_direction(1, 0, 0.5); mfm.set_manual_move_direction(0, 0, 0.5)
+mfm._servo_active = False; mfm._simulated_yaw = 20.0; mfm._son_adim_zamani = 0.0
+_f = mfm.enkoder_hizala(18.5, simdi=20.0)
+kontrol("manuel surusten sonra hedef GECERSIZ: sayac duzelir, servo ACILMAZ", abs(_f + 1.5) < 1e-9 and not mfm._servo_active and not mfm._servo_hedef_gecerli)
+mfm.set_target_angles(20.0, 0.0); mfm.reset_current_angles()
+kontrol("reset sonrasi hedef gecersiz", not mfm._servo_hedef_gecerli and not mfm._servo_active)
+mfm.set_target_angles(5.0, 0.0); mfm.stop_all_motors()
+kontrol("stop_all_motors sonrasi hedef gecersiz", not mfm._servo_hedef_gecerli)
+_eski = mfm.ENCODER_REST_SNAP; mfm.ENCODER_REST_SNAP = False
+mfm._servo_active = False; mfm._simulated_yaw = 0.0; mfm._son_adim_zamani = 0.0
+kontrol("ENCODER_REST_SNAP=False: hicbir sey yapmaz", mfm.enkoder_hizala(3.0, simdi=30.0) is None and mfm._simulated_yaw == 0.0)
+mfm.ENCODER_REST_SNAP = _eski
+mfm.reset_current_angles()
+
+# --- 20. SINIF LISTESI (v23 data.yaml ile birebir) ---
+print()
+print("=" * 70)
+print("20. SINIF LISTESI — config.CLASSES, v23 data.yaml sirasi")
+print("=" * 70)
+_v23 = ['balon', 'dost-F16', 'dost-Helikopter', 'dusman-Drone', 'dusman-F16', 'dusman-Fuze', 'dusman-Helikopter']
+kontrol("config.CLASSES v23 data.yaml ile birebir ayni (7 sinif, ayni sira)", list(config.CLASSES) == _v23, str(config.CLASSES))
+kontrol("balon sinifi listede ve BALLOON_CLASS ile ayni", config.BALLOON_CLASS in config.CLASSES)
+kontrol("dusman-Helikopter 'dusman-' on ekiyle dusman sayiliyor", config.CLASSES[6].startswith('dusman-'))
+
+# --- 21. CIKARIM CIKIS DUZENLERI: klasik [1,4+nc,N] ve uctan uca [1,N,6] ---
+print()
+print("=" * 70)
+print("21. CIKARIM CIKIS DUZENLERI — klasik ve uctan uca (v23)")
+print("=" * 70)
+import inference_module as im
+_m = im.YoloModel.__new__(im.YoloModel)          # model yuklemeden
+_m.img_width, _m.img_height = 1056, 608
+_S = ['balon', 'dost-F16', 'dost-Helikopter', 'dusman-Drone', 'dusman-F16', 'dusman-Fuze', 'dusman-Helikopter']
+# uctan uca: 300 satir, ilki dusman-Helikopter 0.9 guvenle (100,50)-(200,150), ikincisi dusuk guven
+_e = np.zeros((1, 300, 6), np.float32)
+_e[0, 0] = (100, 50, 200, 150, 0.90, 6)
+_e[0, 1] = (300, 60, 340, 100, 0.10, 0)
+_d = _m._postprocess(_e, 1920, 1105, _S)      # 1920/1056 = 1.818 olcek
+kontrol("uctan uca: 1 tespit (dusuk guven elendi)", len(_d) == 1, str(_d))
+kontrol("uctan uca: sinif adi 'dusman-Helikopter' (indeks 6)", _d and _d[0]['class_name'] == 'dusman-Helikopter')
+kontrol("uctan uca: skor 0.90, koordinat skor sanilmiyor", _d and abs(_d[0]['score'] - 0.90) < 1e-6)
+kontrol("uctan uca: kutu ham kareye olceklendi (x 181, w 181)", _d and _d[0]['bbox'][0] == 181 and _d[0]['bbox'][2] == 181, str(_d and _d[0]['bbox']))
+# klasik: [1, 11, N] — bir hucrede balon 0.95
+_k = np.zeros((1, 11, 50), np.float32)
+_k[0, :4, 7] = (150, 100, 40, 40)              # cx, cy, w, h
+_k[0, 4 + 0, 7] = 0.95                         # balon
+_d2 = _m._postprocess(_k, 1920, 1105, _S)
+kontrol("klasik duzen hala calisiyor: 1 balon, skor 0.95", len(_d2) == 1 and _d2[0]['class_name'] == 'balon' and abs(_d2[0]['score'] - 0.95) < 1e-6, str(_d2))
+
+# --- 22. ATES KAPISI: TARET HAREKETLIYKEN ATES YOK (29.7 B17) ---
+print()
+print("=" * 70)
+print("22. ATES KAPISI — taret hareketliyken ates edilmez")
+print("=" * 70)
+_m22 = engagement.AngajmanMakinesi(); _m22.basla('task3')
+_c22 = engagement.cift_eslestir([det('dusman-Fuze', 800, 300, 120, 140),
+                                 det('balon', 830, 470, 40, 40)])[0]
+_m22.dogrulanan_sinif = 'dusman-Fuze'
+_m22._gec(engagement.ATES)
+_ort = dict(cift=_c22, makine=_m22, balon_gorundu=True, nisan_tamam=True,
+            yaw=0.0, no_fire_start=0.0, no_fire_end=0.0)
+_i, _g = engagement.ates_serbest_mi(**_ort, taret_hizi=0.5)
+kontrol("taret duruyorken (0.5 derece/sn) ates SERBEST", _i, _g)
+_i, _g = engagement.ates_serbest_mi(**_ort,
+                                    taret_hizi=config.FIRE_MAX_TURRET_RATE_DEG_S + 5)
+kontrol("taret hizliyken ates ENGELLI", not _i and 'taret hareketli' in _g, _g)
+_i, _g = engagement.ates_serbest_mi(**_ort, taret_hizi=None)
+kontrol("enkoder yoksa (None) kapi UYGULANMAZ — eski davranis", _i, _g)
+_i, _g = engagement.ates_serbest_mi(_c22, _m22, True, True, 0.0, 0.0, 0.0)
+kontrol("taret_hizi hic verilmezse de calisir (geriye uyum)", _i, _g)
+# Sinir 3 -> 12 (29.13 B44): bu kapi artik yalnizca devir teslim slew'ini
+# (30-130 derece/sn) kesen bir emniyet siniri. Hedefle birlikte donen taret
+# 3-8 derece/sn'ye cikabilir ve bu ates sebebi olmamali; isabet kapisi
+# nisan hatasinin degisim hizi.
+kontrol("taret hizi siniri yalnizca slew'i kesecek kadar yuksek (8-30 derece/sn)",
+        8.0 <= config.FIRE_MAX_TURRET_RATE_DEG_S <= 30.0,
+        f"{config.FIRE_MAX_TURRET_RATE_DEG_S} derece/sn")
+
+# --- 23. NISAN KARARI BAYAT OLMAMALI (29.7 B16) ---
+print()
+print("=" * 70)
+print("23. NISAN KARARI — telafi edilmis hataya bakiyor mu")
+print("=" * 70)
+_kaynak2 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("is_aimed_at_target telafi edilmis hatadan (derece) kuruluyor",
+        "self.is_aimed_at_target = (abs(_hata_yaw_px) <= _tolerans" in _kaynak2,
+        "bukrek_main.process_tracking")
+kontrol("ham piksel hatasi artik nisan karari vermiyor",
+        "self.is_aimed_at_target = (abs(error_yaw_pixel)" not in _kaynak2)
+kontrol("kilit_adimi de telafi edilmis hatayla besleniyor",
+        "_hata_px = max(abs(_hata_yaw_px), abs(_hata_pitch_px))" in _kaynak2)
+# 29.14 B47: kilit_adimi ve is_aimed_at_target AYNI olcutu kullanmali.
+# Eskiden biri bileske (hypot), digeri eksen basina bakiyordu; ayni
+# tolerans degeriyle bileske sqrt(2) kat daha siki bir kosuldur ve
+# "nisan TAMAM yaziyor ama ATES'e gecmiyor" durumunu uretiyordu.
+kontrol("nisan ve kilit kararlari ayni olcutu (eksen basina en buyuk) kullaniyor",
+        "_hata_px = max(abs(_hata_yaw_px), abs(_hata_pitch_px))" in _kaynak2
+        and "self.is_aimed_at_target = (abs(_hata_yaw_px) <= _tolerans" in _kaynak2)
+
+# --- 24. OLU BOLGE OLMAMALI: her hata er gec komut uretmeli (29.8 B21) ---
+print()
+print("=" * 70)
+print("24. OLU BOLGE — olu bandin ustundeki her hata komut uretebilmeli")
+print("=" * 70)
+# Sahada bir gun kaybettiren hata: suzgec hafizasi MIN_OUTPUT esiginde de
+# sifirlaninca, ilk karede komut uretmek icin gereken hata
+#     MIN_OUTPUT / (a x KP)
+# kalici bir esige donusuyordu (yaw 19 px, pitch 22 px) ve NISAN TOLERANSI
+# bunun altinda oldugu icin sistem toleransa hic giremiyordu. Taret 16-17
+# pikselde cakili kaliyordu (aşama3HedefImha2.mp4, t=3.0-4.7).
+# Asagidaki benzetim gercek zinciri taklit eder: suzgec -> MIN_OUTPUT -> MAX.
+def _zincir(hata_derece, kp, dpp, kare=8):
+    _a = config.PID_OUTPUT_SMOOTHING
+    _min = config.MIN_OUTPUT_PIXELS * abs(config.HUNTER_DPP_YAW)
+    _max = 2.0
+    hafiza = 0.0
+    for _ in range(kare):
+        u = kp * hata_derece
+        y = _a * u + (1 - _a) * hafiza if _a > 0 else u
+        hafiza = y                      # MIN_OUTPUT hafizayi BOZMAMALI
+        if abs(y) > _max:
+            hafiza = _max if y > 0 else -_max
+        gonderilen = 0.0 if abs(y) < _min else max(-_max, min(_max, y))
+        if gonderilen != 0.0:
+            return True
+    return False
+
+for _ad, _kp, _dpp in (("yaw", config.KP_YAW, config.HUNTER_DPP_YAW),
+                       ("pitch", config.KP_PITCH, config.HUNTER_DPP_PITCH)):
+    _olu_bant = config.PID_DEADBAND_PIXELS * abs(_dpp)
+    _hemen_ustu = _olu_bant * 1.05      # olu bandin hemen ustundeki hata
+    kontrol(f"{_ad}: olu bandin hemen ustundeki hata ({config.PID_DEADBAND_PIXELS * 1.05:.1f} px) "
+            f"8 kare icinde komut uretiyor",
+            _zincir(_hemen_ustu, _kp, _dpp),
+            f"hata {_hemen_ustu:.4f} derece")
+    _tol = config.AIM_TOLERANCE_MIN_PIXELS * abs(_dpp)
+    kontrol(f"{_ad}: nisan toleransi kadarlik hata ({config.AIM_TOLERANCE_MIN_PIXELS:.0f} px) "
+            f"komut uretiyor (tolerans ULASILABILIR olmali)",
+            _zincir(_tol, _kp, _dpp), f"hata {_tol:.4f} derece")
+
+kontrol("nisan toleransi olu banttan BUYUK (yoksa taret toleransa giremez)",
+        config.AIM_TOLERANCE_MIN_PIXELS > config.PID_DEADBAND_PIXELS,
+        f"tolerans {config.AIM_TOLERANCE_MIN_PIXELS} px, olu bant {config.PID_DEADBAND_PIXELS} px")
+
+_k24 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("sarma onleme YALNIZCA MAX doygunlugunda (MIN_OUTPUT hafizayi bozmamali)",
+        "if abs(output_yaw) > self.MAX_OUTPUT_DEGREE:" in _k24
+        and "self._pid_cikis_yaw = math.copysign(self.MAX_OUTPUT_DEGREE, output_yaw)" in _k24,
+        "bukrek_main.process_tracking")
+
+# --- 25. BALON CAPASI: kimlik bir kez, balon takip (29.9 B25) ---
+print()
+print("=" * 70)
+print("25. BALON CAPASI — etiket kaysa da kilit ve ates surer, dost israrinda duser")
+print("=" * 70)
+def _cift_at(sinif, guven=0.8, x=600):
+    return engagement.cift_eslestir(
+        [det(sinif, x, 300, 96, 60, guven), det('balon', x + 33, 415, 30, 30, 0.85)])[0]
+_m25 = engagement.AngajmanMakinesi(); _m25.basla('task3')
+_m25.durum = engagement.KILIT; _m25.dogrulanan_sinif = 'dusman-Fuze'
+_s, _k = _m25.kilit_hedefi_sec([_cift_at('dusman-Fuze')], [(5.0, 1.0)])
+kontrol("dogru etiket: normal takip, capa (5.0,1.0)", _s is not None and not _k and _m25.kilit_aci == (5.0, 1.0))
+# ayni balon, maket bu karede Helikopter (sahada goruldu)
+_s, _k = _m25.kilit_hedefi_sec([_cift_at('dusman-Helikopter', 0.6)], [(5.2, 1.1)])
+kontrol("etiket dusman-Helikopter'e kaydi: capa uzerinden takip SURER", _s is not None and _k and _m25.durum == engagement.KILIT)
+kontrol("capa balonla birlikte guncellendi", _m25.kilit_aci == (5.2, 1.1), str(_m25.kilit_aci))
+# maket 'balon' sanildi -> iki balon, maket yok
+_ikibalon = engagement.cift_eslestir([det('balon', 600, 300, 40, 90, 0.5), det('balon', 633, 415, 30, 30, 0.85)],
+                                     tek_balonlara_izin=True)
+_acilar = [(9.0, 3.0), (5.3, 1.1)]
+_s, _k = _m25.kilit_hedefi_sec(_ikibalon, _acilar)
+kontrol("maket 'balon' sanilinca capaya EN YAKIN balon secildi (uzak olan degil)",
+        _s is not None and _k and _m25.kilit_aci == (5.3, 1.1), str(_m25.kilit_aci))
+_m25.durum = engagement.ATES
+_izin, _ger = engagement.ates_serbest_mi(_s, _m25, True, True, 0.0, 0.0, 0.0)
+kontrol("capadaki maketsiz balona ATES SERBEST (kimlik dusman-Fuze)", _izin, _ger)
+_m25.durum = engagement.KILIT
+# balon 2 kare kayboldu -> yaricap buyudu, 3. karede 2.0 derece otede yakalandi
+for _ in range(2):
+    _s, _ = _m25.kilit_hedefi_sec([], [])
+kontrol("balon 2 kare yok: kilit dusmedi, kayip sayildi", _s is None and _m25.durum == engagement.KILIT and _m25.capa_kayip == 2)
+_s, _k = _m25.kilit_hedefi_sec([_cift_at('dusman-Drone', 0.4)], [(5.3 + 1.9, 1.1)])
+kontrol("kayip sonrasi buyuyen yaricapla (1.2+2x0.4=2.0) 1.9 derece otedeki balon yakalandi", _s is not None, str(_m25.capa_kayip))
+_s, _k = _m25.kilit_hedefi_sec([_cift_at('dusman-Fuze')], [(5.3 + 1.9 + 2.5, 1.1)])
+kontrol("2.5 derece otedeki AYNI SINIF cift capaya ALINMADI (3 hedefte baska dusman olabilir)", _s is None)
+# DOST israri -> kilit birakilir, kara liste
+_m25b = engagement.AngajmanMakinesi(); _m25b.basla('task3')
+_m25b.durum = engagement.KILIT; _m25b.dogrulanan_sinif = 'dusman-Fuze'; _m25b.kilit_aci = (5.0, 1.0)
+_m25b.kilit_hedefi_sec([_cift_at('dost-F16', 0.9)], [(5.0, 1.0)])
+_m25b.kilit_hedefi_sec([_cift_at('dost-F16', 0.9)], [(5.0, 1.0)])
+kontrol("dost 2 kare: henuz KILIT (tek kare hayalet korumasi)", _m25b.durum == engagement.KILIT)
+_s, _ = _m25b.kilit_hedefi_sec([_cift_at('dost-F16', 0.9)], [(5.0, 1.0)])
+kontrol("dost 3 ardisik kare guvenle: kilit BIRAKILDI, TARAMA", _s is None and _m25b.durum == engagement.TARAMA)
+kontrol("dost acisi kara listede", _m25b.kara_liste.icinde_mi(5.0, 1.0))
+_m25c = engagement.AngajmanMakinesi(); _m25c.basla('task3')
+_m25c.durum = engagement.KILIT; _m25c.dogrulanan_sinif = 'dusman-Fuze'; _m25c.kilit_aci = (5.0, 1.0)
+for _ in range(5):
+    _s, _ = _m25c.kilit_hedefi_sec([_cift_at('dost-F16', 0.45)], [(5.0, 1.0)])
+kontrol("dusuk guvenli (0.45) dost etiketi kilidi DUSURMUYOR (sahte etiket)", _s is not None and _m25c.durum == engagement.KILIT)
+
+# --- 26. DOGRULAMA PENCERESI: taraf cogunlugu (29.9 B26) ---
+print()
+print("=" * 70)
+print("26. DOGRULAMA PENCERESI — dusman tipleri karissa da 4/6 ile dogrulanir")
+print("=" * 70)
+def _dogrula(sira):
+    m = engagement.AngajmanMakinesi(); m.basla('task3')
+    m._gec(engagement.DOGRULAMA)
+    son = None
+    for s in sira:
+        son = m.dogrulama_adimi([_cift_at(s, 0.7)])
+    return m, son
+_m26, _s26 = _dogrula(['dusman-Fuze', 'dusman-Helikopter', 'dusman-Fuze', 'dusman-Drone', 'dusman-Fuze'])
+kontrol("F,H,F,D,F: 4 dusman/5 -> dogrulandi, sinif en sik olan (dusman-Fuze)",
+        _m26.durum == engagement.KILIT and _m26.dogrulanan_sinif == 'dusman-Fuze', f"{_m26.durum} {_m26.dogrulanan_sinif}")
+_m26b, _ = _dogrula(['dusman-Fuze', 'dost-F16', 'dusman-Fuze', 'dost-F16', 'dusman-Fuze'])
+kontrol("3 dusman + 2 dost: 4 yok -> DOGRULANMADI", _m26b.durum == engagement.DOGRULAMA, _m26b.durum)
+_m26c, _s26c = _dogrula(['dost-F16', 'dost-Helikopter', 'dost-F16', 'dost-F16'])
+kontrol("4 dost: DOST karari, TARAMA + kara liste", _s26c == 'dost-F16' and _m26c.durum == engagement.TARAMA, f"{_s26c} {_m26c.durum}")
+_m26d, _ = _dogrula(['dusman-Fuze'] * config.VERIFY_CONFIRM_FRAMES)
+kontrol("eski davranis korunuyor: 4 ardisik ayni sinif -> KILIT", _m26d.durum == engagement.KILIT)
+
+# --- 27. FAZ 6 ve HEDEF HIZI KAPISI (29.9 B27/B28) ---
+print()
+print("=" * 70)
+print("27. FAZ 6 — enkoder acisi aradegerleme; hedef hizi kapisi")
+print("=" * 70)
+import encoder_module as _em
+_g = [(10.0, 0.0), (10.1, 1.0), (10.2, 3.0)]
+kontrol("aci_at: tam ornekte ornek degeri", abs(_em.aci_at(_g, 10.1) - 1.0) < 1e-9)
+kontrol("aci_at: ortada dogrusal (10.15 -> 2.0)", abs(_em.aci_at(_g, 10.15) - 2.0) < 1e-9)
+kontrol("aci_at: gecmisten eski -> ilk deger", _em.aci_at(_g, 9.0) == 0.0)
+kontrol("aci_at: gecmisten yeni -> son deger", _em.aci_at(_g, 11.0) == 3.0)
+kontrol("aci_at: bos gecmis -> None", _em.aci_at([], 10.0) is None)
+_k27 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("FAZ 6: _angle_at enkoder kontrolde iken enkoder gecmisini kullaniyor",
+        "_ey = encoder_module.aci_at(self._enk_aci_gecmisi, t)" in _k27)
+kontrol("FAZ 6: enkoder kontrolde iken sayacin yaw'i current_yaw_angle'a yazilmiyor",
+        "if self._enkoder_kontrolde():\n            # FAZ 6: yaw ENKODERDEN gelir" in _k27)
+kontrol("FAZ 6: enkoder gecikmesi geri alinarak damgalaniyor",
+        "self._enk_aci_gecmisi.append((_simdi - _lag, float(_y)))" in _k27)
+kontrol("FAZ 6 config: ENCODER_CONTROL acik, gecikme 0-0.15 sn arasinda",
+        config.ENCODER_CONTROL and 0.0 <= config.ENCODER_LAG_SEC <= 0.15)
+_m27 = engagement.AngajmanMakinesi(); _m27.basla('task3')
+_m27.durum = engagement.ATES; _m27.dogrulanan_sinif = 'dusman-Fuze'
+_c27 = _cift_at('dusman-Fuze')
+_i, _g27 = engagement.ates_serbest_mi(_c27, _m27, True, True, 0.0, 0.0, 0.0, hedef_hizi=0.5)
+kontrol("hedef yavas (0.5 derece/sn): ates SERBEST", _i, _g27)
+_i, _g27 = engagement.ates_serbest_mi(_c27, _m27, True, True, 0.0, 0.0, 0.0,
+                                     hedef_hizi=config.FIRE_MAX_TARGET_RATE_DEG_S + 3)
+kontrol("hedef sallaniyor (sinir+3): ates ENGELLI", not _i and 'hedef hareketli' in _g27, _g27)
+_i, _g27 = engagement.ates_serbest_mi(_c27, _m27, True, True, 0.0, 0.0, 0.0, hedef_hizi=None)
+kontrol("hiz olcumu yoksa kapi uygulanmaz", _i, _g27)
+kontrol("hedef hizi siniri yalnizca asiri durumu keser (5-15 derece/sn)",
+        5.0 <= config.FIRE_MAX_TARGET_RATE_DEG_S <= 15.0,
+        f"{config.FIRE_MAX_TARGET_RATE_DEG_S} derece/sn")
+
+# --- 28. MUTLAK KOMUT CERCEVESI (29.10, görüntüTıklama.mp4) ---
+# FAZ 6 ile PC'nin acisi enkoderden; Pi 'set_angles'i sayaca gore yurutur.
+# Sahada sayac-enkoder farki +19.23 derece iken nisangahin sagina tiklama
+# tareti 19.25 derece SOLA gonderdi. Donusum bu farki geri ekler.
+print()
+print("28. Mutlak komut: enkoder cercevesi -> sayac cercevesi")
+_sc = _em.sayac_cercevesine
+kontrol("fark yokken hedef aynen gecer", abs(_sc(-12.6, -14.02, -14.02) - (-12.6)) < 1e-9)
+# sahadaki durum: enkoder -14.02, sayac +5.21 (fark +19.23); tiklama +1.4 derece saga
+kontrol("sayac 19.23 ileride: hedefe fark eklenir (-12.62 -> +6.61)",
+        abs(_sc(-12.62, 5.21, -14.02) - 6.61) < 1e-9)
+kontrol("sayac geride: fark cikarilir", abs(_sc(10.0, -3.0, 2.0) - 5.0) < 1e-9)
+kontrol("sarma: 179 + 3 -> -178", abs(_sc(179.0, 3.0, 0.0) - (-178.0)) < 1e-9)
+kontrol("sayac bilinmiyorsa donusum yok", _sc(7.5, None, -14.0) == 7.5)
+_k28 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("send_angle_command enkoder kontroldeyken sayac cercevesine ceviriyor",
+        "yaw = encoder_module.sayac_cercevesine(" in _k28
+        and _k28.index("yaw = encoder_module.sayac_cercevesine(")
+            < _k28.index('command = {"action": "set_angles"'))
+kontrol("sayac yaw'i her raporda saklaniyor (_sayac_yaw_son)",
+        "def _update_current_angles(self, yaw, pitch):\n        self._sayac_yaw_son = yaw" in _k28)
+kontrol("FAZ 4 kaydi sayac sutununa gercek sayaci yaziyor",
+        "_sy = (self._sayac_yaw_son if self._sayac_yaw_son is not None" in _k28)
+_k28m = io.open('motor_fire_module.py', encoding='utf-8').read()
+kontrol("Pi: hizalama siniri 10 dereceden buyuk (sahada 10-22 derece fark olustu)",
+        "ENCODER_SNAP_MAX_DEG = 45.0" in _k28m)
+
+# --- 29. PAKET 4 (29.11): ileri alma, kapali dongu yonelme, pitch hizi, bosluk ---
+print()
+print("29. Paket 4 — enkoder ileri alma, yonelme tekrari, pitch hiz kapisi, bosluk enjeksiyonu")
+# isaretli hiz
+kontrol("hiz_isaretli: 0.1 sn'de +2 derece -> +20 derece/sn",
+        abs(_em.hiz_isaretli([(10.0, 5.0), (10.05, 6.0), (10.1, 7.0)]) - 20.0) < 1e-9)
+kontrol("hiz_isaretli: geri giderken negatif", _em.hiz_isaretli([(0.0, 1.0), (0.1, 0.0)]) < 0)
+kontrol("hiz_isaretli: tek ornek -> None", _em.hiz_isaretli([(0.0, 1.0)]) is None)
+kontrol("hiz_isaretli: pencere cok dar -> None", _em.hiz_isaretli([(0.0, 1.0), (0.01, 1.5)]) is None)
+# bosluk enjeksiyonu
+_be = _em.bosluk_enjeksiyonu
+kontrol("bosluk: ilk komutta eklenmez (yon 0)", _be(0.3, 0, 0.4) == (0.3, 1))
+kontrol("bosluk: ayni yonde eklenmez", _be(0.3, 1, 0.4) == (0.3, 1))
+kontrol("bosluk: yon degisince ters yonde bosluk eklenir (-0.2 -> -0.6)",
+        abs(_be(-0.2, 1, 0.4)[0] + 0.6) < 1e-9 and _be(-0.2, 1, 0.4)[1] == -1)
+kontrol("bosluk: sifir komut yonu degistirmez", _be(0.0, -1, 0.4) == (0.0, -1))
+kontrol("bosluk: kapaliyken (0) eklenmez", _be(-0.2, 1, 0.0) == (-0.2, -1))
+_c, _y = 0, 0
+_dizi = []
+for _k in (0.5, 0.3, 0.0, -0.2, -0.1, 0.0, 0.0, 0.15):
+    _c, _y = _be(_k, _y, 0.4); _dizi.append(round(_c, 3))
+kontrol("bosluk: dizi 0.5,0.3,0,-0.2,-0.1,0,0,0.15 -> yalniz iki yon degisiminde ekleme",
+        _dizi == [0.5, 0.3, 0.0, -0.6, -0.1, 0.0, 0.0, 0.55], str(_dizi))
+# config
+kontrol("ENCODER_LAG_SEC 0.02 (olculen ~20 ms)", abs(config.ENCODER_LAG_SEC - 0.02) < 1e-9)
+kontrol("ileri alma acik", config.ENCODER_RATE_EXTRAPOLATE is True)
+kontrol("yonelme tekrari: 0.5 derece / 3 kez / 0.3 sn / durus 1.5 derece/sn",
+        config.YONELME_TEKRAR_MIN_DEG == 0.5 and config.YONELME_TEKRAR_MAX == 3
+        and config.YONELME_TEKRAR_ARALIK_SEC == 0.3 and config.YONELME_DURUS_HIZI_DEG_S == 1.5)
+# Bosluk enjeksiyonu 29.13 B43'te KAPATILDI: role gibi davranip limit
+# cevrim uretiyordu. Mekanizma kodda duruyor ama sabit 0 olmali.
+kontrol("bosluk enjeksiyonu KAPALI (role gibi davranip salinim uretiyordu)",
+        config.YAW_BACKLASH_DEG == 0.0 and config.PITCH_BACKLASH_DEG == 0.0,
+        f"yaw {config.YAW_BACKLASH_DEG}, pitch {config.PITCH_BACKLASH_DEG}")
+# kaynak kontrolleri
+_k29 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("current_yaw_angle hiz x gecikme ile ileri aliniyor",
+        "self.current_yaw_angle = float(_y) + _hiz * _lag" in _k29)
+kontrol("YONELME'de durunca ve uzaksa mutlak komut tekrar gonderiliyor",
+        "self._yonelme_tekrar += 1" in _k29
+        and _k29.index("self._yonelme_tekrar += 1") < _k29.index("self._yonelme_son_gonderim = _simdi"))
+kontrol("yonelme tekrari hareket halinde yapilmiyor (durus hizi sarti)",
+        "self.taret_yaw_hizi < config.YONELME_DURUS_HIZI_DEG_S" in _k29)
+kontrol("ates kapisi yaw ve pitch hizinin buyugunu aliyor",
+        "taret_hizi=self._taret_hizi()" in _k29 and "def _taret_pitch_hizi" in _k29)
+kontrol("bosluk enjeksiyonu MAX sinirindan sonra, gonderimden once",
+        _k29.index("encoder_module.bosluk_enjeksiyonu(\n            output_yaw")
+        > _k29.index("output_yaw = max(min(output_yaw, self.MAX_OUTPUT_DEGREE)")
+        and _k29.index("encoder_module.bosluk_enjeksiyonu(\n            output_yaw")
+        < _k29.index("self.send_proportional_move_command(output_yaw, output_pitch)"))
+_k29m = io.open('motor_fire_module.py', encoding='utf-8').read()
+kontrol("Pi: yeniden yaklasma KAPALI (PID ile kavga)", "ENCODER_REENGAGE = False" in _k29m)
+kontrol("Pi: tepe hiz 30 derece/sn (adim kaybi)", "SERVO_MAX_DEG_PER_SEC = 30.0" in _k29m)
+# Pi davranisi: REENGAGE kapaliyken hizalama sonrasi servo acilmamali
+mfm._simulated_yaw = 10.0; mfm._servo_active = False; mfm._son_adim_zamani = 0.0
+mfm._servo_hedef_gecerli = True; mfm._target_yaw = 8.0; mfm._yeniden_yaklasma = 0
+mfm.enkoder_hizala(11.0, simdi=1.0)
+kontrol("Pi: hizalama sonrasi bayat hedefe servo ACILMIYOR",
+        mfm._servo_active is False and abs(mfm._simulated_yaw - 11.0) < 1e-9)
+
+# --- 30. PAKET 5 (29.12): AKICI TAKIP ---
+# Sahada olculdu (aşama2son.mp4, 2.96-6.56 sn): hedef 0.44 derece/sn ile
+# yaklasirken nisan hatasi 56 karenin HEPSINDE ayni isaretli (ort +14.1 px,
+# hic sifiri gecmiyor), karelerin yalnizca %25'i 10 px toleransta, taretin
+# %55'i tamamen duruyor. Asagidaki kapali dongu benzetimi ayni zinciri
+# (olu bant -> suzgec -> MIN_OUTPUT -> MAX, olu zamanli geri besleme)
+# taklit eder ve ESKI ayarlarla o 14 pikseli yeniden uretir.
+print()
+print("30. Paket 5 — akici takip (feedforward birimi, olu bant, esik birikimi)")
+import collections as _coll
+
+
+def _takip_sim(hiz, fps=15.0, ff=False, olu_px=5.0, min_px=2.5, yerlesme=3,
+               ondeleme=0.0, birikim=False, a_olcekle=True,
+               kp=None, T_sabit=0.15, sure=8.0):
+    """Kapali dongu takip benzetimi. Doner: son yarinin ortalama hatasi (px)."""
+    dpp = abs(config.HUNTER_DPP_YAW)
+    kp = config.KP_YAW if kp is None else kp
+    dt = 1.0 / fps
+    a = config.PID_OUTPUT_SMOOTHING
+    if a_olcekle and config.PID_SMOOTHING_REF_FPS > 0:
+        a = 1.0 - (1.0 - a) ** (dt * config.PID_SMOOTHING_REF_FPS)
+    olu, esik, ust = olu_px * dpp, min_px * dpp, 2.0
+    taret = hedef = hafiza = kalan = 0.0
+    ardisik = 0
+    gecikme = _coll.deque([0.0] * max(1, int(round((T_sabit + dt) / dt))))
+    hatalar = []
+    n = int(sure * fps)
+    for k in range(n):
+        hedef += hiz * dt
+        gecikme.append(hedef)
+        olculen = gecikme.popleft()
+        gercek = hedef - taret
+        hata = (olculen - taret) + (hiz * ondeleme if ff else 0.0)
+        pid = kp * hata
+        icinde = abs(hata) < olu
+        ardisik = ardisik + 1 if icinde else 0
+        if icinde:
+            pid = 0.0
+            if ardisik >= yerlesme:
+                hafiza = 0.0
+        else:
+            hafiza = a * pid + (1 - a) * hafiza
+            pid = hafiza
+        cikis = pid + (hiz * dt if ff else 0.0)
+        cikis = max(-ust, min(ust, cikis))
+        if birikim:
+            toplam = cikis + kalan
+            if abs(toplam) < esik:
+                cikis, kalan = 0.0, toplam
+            else:
+                cikis, kalan = toplam, 0.0
+        elif 0 < abs(cikis) < esik:
+            cikis = 0.0
+        taret += cikis
+        if k > n * 0.5:
+            hatalar.append(gercek / dpp)
+    return sum(hatalar) / len(hatalar)
+
+
+_eski = _takip_sim(0.44, ff=False, olu_px=7.0, min_px=4.0, yerlesme=1,
+                   birikim=False, a_olcekle=False)
+kontrol("ESKI ayarlar sahada olculen kalici hatayi yeniden uretiyor (+14 px civari)",
+        12.0 <= _eski <= 19.0, f"{_eski:.1f} px (sahada +14.1)")
+_yeni = _takip_sim(0.44, ff=True, ondeleme=config.TARGET_LEAD_TIME_SEC, birikim=True)
+kontrol("YENI ayarlarla ayni hedefte kalici hata nisan toleransinin altinda",
+        abs(_yeni) < config.AIM_TOLERANCE_MIN_PIXELS,
+        f"{_yeni:.1f} px < {config.AIM_TOLERANCE_MIN_PIXELS} px (eski {_eski:.1f})")
+kontrol("YENI, ESKI'den en az 3 kat iyi", abs(_yeni) * 3 < abs(_eski),
+        f"{_yeni:.1f} vs {_eski:.1f}")
+for _h in (1.5, 4.0):
+    _v = _takip_sim(_h, ff=True, ondeleme=config.TARGET_LEAD_TIME_SEC, birikim=True)
+    _e = _takip_sim(_h, ff=False, olu_px=7.0, min_px=4.0, yerlesme=1,
+                    birikim=False, a_olcekle=False)
+    kontrol(f"{_h} derece/sn hedefte yeni ayar eskiden iyi", abs(_v) < abs(_e) / 2.0,
+            f"{_v:.1f} vs {_e:.1f} px")
+kontrol("sabit hedefte kalici hata yok (olu bant avlanma uretmiyor)",
+        abs(_takip_sim(0.0, ff=True, ondeleme=config.TARGET_LEAD_TIME_SEC, birikim=True)) < 1.0)
+kontrol("30 fps'te takip 15 fps'ten kotu DEGIL (suzgec kare suresiyle olcekli)",
+        abs(_takip_sim(0.44, fps=30.0, ff=True, ondeleme=config.TARGET_LEAD_TIME_SEC,
+                       birikim=True)) <= abs(_yeni) + 1.0)
+
+# Esik birikimi: toplam yol korunmali
+_esik_d = config.MIN_OUTPUT_PIXELS * abs(config.HUNTER_DPP_YAW)
+_kalan, _gonderilen = 0.0, 0.0
+_kucuk = _esik_d / 4.0
+for _ in range(40):
+    _t = _kucuk + _kalan
+    if abs(_t) < _esik_d:
+        _kalan = _t
+    else:
+        _gonderilen += _t
+        _kalan = 0.0
+kontrol("esik alti komutlar birikip toplam yolu koruyor",
+        abs(_gonderilen + _kalan - 40 * _kucuk) < 1e-9,
+        f"gonderilen {_gonderilen:.4f} + kalan {_kalan:.4f}")
+kontrol("birikimsiz olsaydi 40 karede hic komut gitmezdi",
+        _kucuk < _esik_d)
+
+# config ve kaynak kontrolleri
+kontrol("feedforward ACIK ve kazanc makul", 0.5 <= config.FEEDFORWARD_GAIN <= 1.5,
+        str(config.FEEDFORWARD_GAIN))
+kontrol("feedforward hiz olu bandi gercek hedef hizinin altinda (0.44 derece/sn)",
+        config.FEEDFORWARD_VELOCITY_DEADBAND < 0.44, str(config.FEEDFORWARD_VELOCITY_DEADBAND))
+kontrol("hedef ondelemesi 0-0.3 sn arasinda", 0.0 <= config.TARGET_LEAD_TIME_SEC <= 0.3)
+kontrol("kamera kare hizi isteniyor", config.KAMERA_AYARLARI['hunter'].get('fps') == config.HUNTER_FPS
+        and config.HUNTER_FPS >= 30)
+_k30 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("feedforward KARE SURESIYLE olcekleniyor (konum degil hiz)",
+        "lead = _dt_ff * config.FEEDFORWARD_GAIN" in _k30)
+kontrol("feedforward olu banttan SONRA, suzgecin disinda ekleniyor",
+        "output_yaw = pid_yaw + feedforward_yaw" in _k30
+        and _k30.index("output_yaw = pid_yaw + feedforward_yaw")
+            > _k30.index("self._pid_cikis_yaw = _a * pid_yaw"))
+kontrol("hedef ondelemesi hataya giriyor ama world_yaw HAM kaliyor",
+        "error_yaw_degree = (world_yaw + _ond_yaw" in _k30
+        and "self._last_world_yaw = world_yaw" in _k30)
+_k30c = io.open('camera_module.py', encoding='utf-8').read()
+kontrol("camera_module kare hizini kameraya soruyor",
+        "capture.set(cv2.CAP_PROP_FPS, ayar[\"fps\"])" in _k30c)
+
+# --- 31. PAKET 6 (29.13): BOSLUK ROLESI VE ATES KAPILARI ---
+# Sahada olculdu (aşama2Son1.mp4, 19:24:36-19:25:11): kilitte taret
+# +-0.7 derece salindi, 0.72-0.92 Hz, F16 kilidinde 50/271 komut yon
+# degistirdi ve hicbir balon imha edilemedi. Bir onceki kosumda AYNI KOD
+# uc hedefi de vurmustu. Fark: bosluk enjeksiyonu YALNIZCA hata isaret
+# degistirince tetiklenir; 29.12 olcumunde hata 56 karede hic isaret
+# degistirmemisti, bu kosumda surekli degisti.
+print()
+print("31. Paket 6 — bosluk rolesi kapatildi, ates kapilari yeniden tanimlandi")
+import numpy as _np
+
+
+def _role_sim(bosluk, gurultu_px=3.0, hiz=0.44, fps=15.0, T=0.15, sure=12.0, tohum=1):
+    """Olcum gurultulu kapali dongu; `bosluk` = yon degisiminde enjekte
+    edilen derece. Doner: (hata std px, tepeden tepeye px, isaret degisimi)."""
+    rng = _np.random.default_rng(tohum)
+    dpp = abs(config.HUNTER_DPP_YAW)
+    dt = 1.0 / fps
+    a = 1 - (1 - config.PID_OUTPUT_SMOOTHING) ** (dt * config.PID_SMOOTHING_REF_FPS)
+    olu = config.PID_DEADBAND_PIXELS * dpp
+    esik = config.MIN_OUTPUT_PIXELS * dpp
+    taret = hedef = hafiza = kalan = hiz_tah = 0.0
+    ardisik = 0
+    yon = 0
+    onceki = 0.0
+    gec = _coll.deque([0.0] * max(1, int(round((T + dt) / dt))))
+    izi = []
+    for k in range(int(sure * fps)):
+        hedef += hiz * dt
+        gec.append(hedef)
+        olculen = gec.popleft() + rng.normal(0, gurultu_px * dpp)
+        if k:
+            hiz_tah = 0.3 * ((olculen - onceki) / dt) + 0.7 * hiz_tah
+        onceki = olculen
+        hata = (olculen - taret) + hiz_tah * config.TARGET_LEAD_TIME_SEC
+        pid = config.KP_YAW * hata
+        icinde = abs(hata) < olu
+        ardisik = ardisik + 1 if icinde else 0
+        if icinde:
+            pid = 0.0
+            if ardisik >= config.PID_DEADBAND_SETTLE_FRAMES:
+                hafiza = 0.0
+        else:
+            hafiza = a * pid + (1 - a) * hafiza
+            pid = hafiza
+        cikis = max(-2.0, min(2.0, pid + hiz_tah * dt))
+        if cikis != 0.0:
+            y = 1 if cikis > 0 else -1
+            if bosluk > 0 and yon != 0 and y != yon:
+                cikis += y * bosluk
+            yon = y
+        toplam = cikis + kalan
+        if abs(toplam) < esik:
+            cikis, kalan = 0.0, toplam
+        else:
+            cikis, kalan = toplam, 0.0
+        taret += cikis
+        izi.append((hedef - taret) / dpp)
+    son = _np.array(izi[len(izi) // 2:])
+    return son.std(), son.max() - son.min(), int((_np.diff(_np.sign(son)) != 0).sum())
+
+
+_kapali = _role_sim(0.0)
+_acik = _role_sim(0.4)
+kontrol("bosluk enjeksiyonu ACIKken olcum gurultusu salinimi buyutuyor",
+        _acik[0] > 3 * _kapali[0],
+        f"std {_acik[0]:.1f} px (acik) vs {_kapali[0]:.1f} px (kapali)")
+kontrol("enjeksiyon kapaliyken salinim genligi makul (tepe-tepe < 20 px)",
+        _kapali[1] < 20.0, f"{_kapali[1]:.1f} px")
+_tmz = _role_sim(0.4, gurultu_px=0.0)
+kontrol("gurultu yokken enjeksiyon hic tetiklenmiyor (ikili davranisin sebebi)",
+        _tmz[2] == 0 and abs(_tmz[0] - _role_sim(0.0, gurultu_px=0.0)[0]) < 1e-9,
+        f"isaret degisimi {_tmz[2]}")
+
+# Ates kapilari: hedefle birlikte duzgun giden taret ates edebilmeli
+_m31 = engagement.AngajmanMakinesi()
+_m31.basla('task2')
+_m31.dogrulanan_sinif = 'dusman-Fuze'
+_m31._gec(engagement.ATES)
+_c31 = _cift_at('dusman-Fuze')
+_ort31 = dict(cift=_c31, makine=_m31, balon_gorundu=True, nisan_tamam=True,
+              yaw=0.0, no_fire_start=0.0, no_fire_end=0.0)
+_i, _g = engagement.ates_serbest_mi(**_ort31, taret_hizi=5.0, hedef_hizi=5.0, hata_hizi=4.0)
+kontrol("hedefle BIRLIKTE giden taret (5 derece/sn) ates edebiliyor", _i, _g)
+_i, _g = engagement.ates_serbest_mi(**_ort31, taret_hizi=2.0, hedef_hizi=2.0, hata_hizi=200.0)
+kontrol("nisan hizla kayiyorsa (200 px/sn) ates ENGELLI",
+        not _i and 'kayiyor' in _g, _g)
+_i, _g = engagement.ates_serbest_mi(**_ort31, taret_hizi=40.0, hedef_hizi=2.0, hata_hizi=1.0)
+kontrol("devir teslim slew'inde (40 derece/sn) ates ENGELLI",
+        not _i and 'taret hareketli' in _g, _g)
+_i, _g = engagement.ates_serbest_mi(**_ort31, hata_hizi=None)
+kontrol("hata hizi olculemiyorsa kapi uygulanmaz (geriye uyum)", _i, _g)
+_sinir_px = config.FIRE_MAX_ERROR_DRIFT_PIXELS / config.FIRE_SHOT_LATENCY_SEC
+kontrol("kayma siniri tolerans mertebesinde",
+        config.FIRE_MAX_ERROR_DRIFT_PIXELS <= config.AIM_TOLERANCE_MIN_PIXELS * 1.5,
+        f"{config.FIRE_MAX_ERROR_DRIFT_PIXELS} px ({_sinir_px:.0f} px/sn)")
+
+# Balon grace
+_c31b = _cift_at('dusman-Fuze')
+_c31b.balon = None
+_i, _g = engagement.ates_serbest_mi(cift=_c31b, makine=_m31, balon_gorundu=False,
+                                    nisan_tamam=True, yaw=0.0, no_fire_start=0.0,
+                                    no_fire_end=0.0, balon_yakin=False)
+kontrol("balon hic gorulmediyse ates ENGELLI (grace yok)",
+        not _i and 'balon' in _g, _g)
+_i, _g = engagement.ates_serbest_mi(cift=_c31b, makine=_m31, balon_gorundu=False,
+                                    nisan_tamam=True, yaw=0.0, no_fire_start=0.0,
+                                    no_fire_end=0.0, balon_yakin=True)
+kontrol("balon son birkac karede goruldyse ates SERBEST (tespit titremesi)", _i, _g)
+kontrol("grace penceresi kisa (1-6 kare)", 1 <= config.FIRE_BALLOON_GRACE_FRAMES <= 6,
+        str(config.FIRE_BALLOON_GRACE_FRAMES))
+_k31 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("hata degisim hizi olculuyor ve ates kapisina veriliyor",
+        "self.hata_degisim_hizi = engagement.nisan_kayma_hizi(self._hata_gecmisi)" in _k31
+        and "hata_hizi=self.hata_degisim_hizi" in _k31)
+
+# --- 32. KAYMA KESTIRICISI (29.14 B46) ---
+# Kullanici bildirdi: "takip biraz daha iyi ama sikma esigi cok yuksek,
+# neredeyse hic atesleme yapmiyor". Sebep: kapi gercek kaymayi degil
+# TESPIT GURULTUSUNU olcuyordu.
+print()
+print("32. Kayma kestiricisi — gurultuyu degil gercek kaymayi olcmeli")
+_rng = _np.random.default_rng(7)
+_fps, _dt = 15.0, 1 / 15.0
+_n = int(round(config.FIRE_DRIFT_WINDOW_SEC * _fps))
+
+
+def _pencere(kayma_px_s, gurultu_px, tohum_rng):
+    return [(k * _dt,
+             kayma_px_s * k * _dt + tohum_rng.normal(0, gurultu_px),
+             tohum_rng.normal(0, gurultu_px)) for k in range(_n)]
+
+
+def _eski_kestirici(g):
+    """Ilk surum: ardisik farkin BUYUKLUGUNU EMA'la (daima pozitif)."""
+    v = 0.0
+    for k in range(1, len(g)):
+        ham = _math.hypot(g[k][1] - g[k - 1][1], g[k][2] - g[k - 1][2]) / (g[k][0] - g[k - 1][0])
+        v = 0.4 * ham + 0.6 * v
+    return v
+
+
+_yeni_sifir = [engagement.nisan_kayma_hizi(_pencere(0.0, 3.0, _rng)) for _ in range(400)]
+_eski_sifir = [_eski_kestirici(_pencere(0.0, 3.0, _rng)) for _ in range(400)]
+_y_ort = sum(_yeni_sifir) / len(_yeni_sifir)
+_e_ort = sum(_eski_sifir) / len(_eski_sifir)
+kontrol("gercek kayma YOKken eski kestirici gurultuyu kayma sanıyordu",
+        _e_ort * config.FIRE_SHOT_LATENCY_SEC > config.FIRE_MAX_ERROR_DRIFT_PIXELS,
+        f"eski {_e_ort:.0f} px/sn -> atisa kadar {_e_ort*config.FIRE_SHOT_LATENCY_SEC:.0f} px "
+        f"(sinir {config.FIRE_MAX_ERROR_DRIFT_PIXELS:.0f})")
+kontrol("gercek kayma YOKken yeni kestirici ATESI SERBEST birakiyor",
+        _y_ort * config.FIRE_SHOT_LATENCY_SEC < config.FIRE_MAX_ERROR_DRIFT_PIXELS / 2,
+        f"yeni {_y_ort:.0f} px/sn -> atisa kadar {_y_ort*config.FIRE_SHOT_LATENCY_SEC:.1f} px")
+_p90 = sorted(_yeni_sifir)[int(0.9 * len(_yeni_sifir))]
+kontrol("iyi takipte kapi karelerin %90'inda aciliyor",
+        _p90 * config.FIRE_SHOT_LATENCY_SEC < config.FIRE_MAX_ERROR_DRIFT_PIXELS,
+        f"p90 {_p90*config.FIRE_SHOT_LATENCY_SEC:.1f} px < {config.FIRE_MAX_ERROR_DRIFT_PIXELS:.0f}")
+_kayan = [engagement.nisan_kayma_hizi(_pencere(60.0, 3.0, _rng)) for _ in range(200)]
+_k_ort = sum(_kayan) / len(_kayan)
+kontrol("gercekten kayan nisanda (60 px/sn) kapi hala KAPANIYOR",
+        _k_ort * config.FIRE_SHOT_LATENCY_SEC > config.FIRE_MAX_ERROR_DRIFT_PIXELS,
+        f"{_k_ort:.0f} px/sn -> {_k_ort*config.FIRE_SHOT_LATENCY_SEC:.0f} px")
+kontrol("ornek yetmezse None (kapi uygulanmaz)",
+        engagement.nisan_kayma_hizi([(0.0, 0.0, 0.0), (0.1, 1.0, 0.0)]) is None)
+kontrol("sabit hatada kayma sifir",
+        abs(engagement.nisan_kayma_hizi([(k * _dt, 7.0, -3.0) for k in range(8)])) < 1e-9)
+kontrol("duz kaymada egim tam dogru",
+        abs(engagement.nisan_kayma_hizi([(k * _dt, 20.0 * k * _dt, 0.0) for k in range(8)]) - 20.0) < 1e-6)
+kontrol("nisan toleransi silah hassasiyetiyle tutarli (12 px = 4.4 cm @ 15 m)",
+        11.0 <= config.AIM_TOLERANCE_MIN_PIXELS <= 14.0,
+        f"{config.AIM_TOLERANCE_MIN_PIXELS} px")
+
+# --- 33. ATESLEME TAKIBI DURDURMAMALI (29.15 B49) ---
+# Sahada olculdu (aşama2son3.mp4 + enkoder kaydi): HER atisin hemen
+# ardindan taret tam 0.58-0.68 saniye hic kimildamadi; videodaki 18
+# duraklamanin tamami 9 atisla birebir ortustu. Sebep: tetik dizisi
+# (0.20+0.10+0.20+0.10 = 0.60 sn) sunucunun KOMUT ALMA is parcacinda
+# calisiyordu ve o sure boyunca hicbir takip komutu islenmiyordu.
+print()
+print("33. Atesleme takibi durdurmamali — tetik dizisi ayri is parcacinda")
+kontrol("fire_weapon ayri is parcacigi baslatan yapiya sahip",
+        hasattr(mfm, '_ates_dizisi') and hasattr(mfm, 'ates_suruyor_mu'))
+kontrol("baslangicta ates dizisi calismiyor", not mfm.ates_suruyor_mu())
+
+# Gercek davranis testi: GPIO'yu taklit edip tetik dizisini yavaslatiyoruz.
+_eski = (mfm._gpio_initialized, mfm.lgh, mfm.RELAY_ACTIVE, mfm.RELAY_INACTIVE,
+         mfm.FIRE_MODE, mfm._servo_ates)
+try:
+    mfm._gpio_initialized = True
+    mfm.lgh = object()
+    mfm.RELAY_ACTIVE, mfm.RELAY_INACTIVE = 1, 0
+    mfm.FIRE_MODE = 'servo'
+    _izler = []
+
+    def _yavas_ates():
+        _izler.append(('basladi', time.time()))
+        time.sleep(0.30)
+        _izler.append(('bitti', time.time()))
+
+    mfm._servo_ates = _yavas_ates
+    _t0 = time.time()
+    _sonuc = mfm.fire_weapon()
+    _donus = time.time() - _t0
+    kontrol("fire_weapon ANINDA donuyor (komut dongusu bloklanmiyor)",
+            _sonuc is True and _donus < 0.05, f"{_donus*1000:.0f} ms")
+    time.sleep(0.05)
+    kontrol("dizi arka planda calisiyor", mfm.ates_suruyor_mu())
+    kontrol("dizi surerken ikinci istek yok sayiliyor (ust uste ates yok)",
+            mfm.fire_weapon() is False)
+    mfm._ates_ipi.join(timeout=2.0)
+    kontrol("dizi tamamlandi ve bayrak temizlendi",
+            not mfm.ates_suruyor_mu() and len(_izler) == 2)
+    kontrol("dizi gercekten 0.3 sn surdu (ama cagiran beklemedi)",
+            _izler[1][1] - _izler[0][1] >= 0.29,
+            f"{(_izler[1][1]-_izler[0][1])*1000:.0f} ms dizi / {_donus*1000:.0f} ms cagiran")
+    _izler.clear()
+    _t0 = time.time()
+    mfm.fire_weapon(bloklayarak=True)
+    kontrol("bloklayarak=True istendiginde cagiran BEKLIYOR (elle test yolu)",
+            time.time() - _t0 >= 0.29)
+finally:
+    (mfm._gpio_initialized, mfm.lgh, mfm.RELAY_ACTIVE, mfm.RELAY_INACTIVE,
+     mfm.FIRE_MODE, mfm._servo_ates) = _eski
+    mfm._ates_ipi = None
+
+_k33 = io.open('motor_fire_module.py', encoding='utf-8').read()
+kontrol("tetik dizisi FIRE_MODE'a gore hem servo hem role yolunu kapsiyor",
+        "def _ates_dizisi():" in _k33 and "_servo_ates()" in _k33
+        and "LGpio.gpio_write(lgh, FIRE_PIN, RELAY_ACTIVE)" in _k33)
+_k33s = io.open('rpi_motor_server.py', encoding='utf-8').read()
+kontrol("sunucu ates komutunu bloklamadan cagiriyor",
+        "motor_fire_module.fire_weapon()" in _k33s)
+
+# Ates ondelemesi: yalnizca ates karrini kaydirmali, PID'i degil
+kontrol("FIRE_LEAD_TIME_SEC tanimli ve makul (0-0.4 sn)",
+        0.0 <= config.FIRE_LEAD_TIME_SEC <= 0.4, str(config.FIRE_LEAD_TIME_SEC))
+_k33b = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("ates karari ayri bayrak kullaniyor (ates_nisan_tamam)",
+        "self.ates_nisan_tamam, self.current_yaw_angle" in _k33b
+        and "_ates_ond = getattr(config, 'FIRE_LEAD_TIME_SEC'" in _k33b)
+kontrol("ates ondelemesi PID hatasina KARISMIYOR",
+        "output_yaw = pid_yaw + feedforward_yaw" in _k33b
+        and "FIRE_LEAD_TIME_SEC" not in _k33b.split("output_yaw = pid_yaw")[1])
+kontrol("ondeleme 0 iken ates bayragi nisan bayragiyla ayni",
+        "self.ates_nisan_tamam = self.is_aimed_at_target" in _k33b)
+
+# --- 34. YANLIS IMHA (29.16 B50) ---
+# Sahada olculdu (aşama2son4.mp4): en yakin (ortadaki) hedefin balonu
+# karelerin yalnizca ~%35'inde tespit ediliyordu (balon 62+ px, egitim
+# dagiliminin disinda). "Ates sonrasi balon gorunmuyor" testi o hedefte
+# her zaman "imha" der; sistem patlamamis balonu vurulmus sandi, siradaki
+# hedefe gecti ve 12 saniye sonra (BLACKLIST_TTL_SEC) ayni hedef
+# balonuyla birlikte yeniden karsisina cikti — videonun sonundaki
+# "alakasiz davranis" buydu.
+print()
+print("34. Yanlis imha — balon zaten gorunmuyorsa 'kayboldu' imha kaniti degil")
+
+
+def _imha_denemesi(onceki_oran, sonra_balon_var=False, atis=1):
+    """Atistan ONCE `onceki_oran` oraninda gorulen balon, atistan sonra
+    `sonra_balon_var`. Doner: (sonuc, makine)."""
+    m = engagement.AngajmanMakinesi()
+    m.basla('task2')
+    n = config.FIRE_CONFIRM_BASELINE_FRAMES
+    for i in range(n):
+        m.balon_gozlemi(i < round(onceki_oran * n))
+    m._gec(engagement.ATES)
+    for _ in range(atis):
+        m.ates_kaydet()
+    t0 = m.son_ates_zamani
+    for i in range(8):
+        m.son_ates_zamani = t0 - (config.FIRE_CONFIRM_DELAY_SEC + 0.01 + i * 0.01)
+        m.ates_dogrulama_adimi(sonra_balon_var)
+    m.son_ates_zamani = t0 - _PENCERE - 0.01
+    return m.ates_dogrulama_adimi(sonra_balon_var), m
+
+
+_s, _m = _imha_denemesi(1.0)
+kontrol("balon atistan once HEP goruluyordu, sonra yok -> imha ONAYLANIR",
+        _s == 'onaylandi', _s)
+_s, _m = _imha_denemesi(0.35)
+kontrol("balon atistan once de %35 goruluyordu -> imha ONAYLANMAZ, tekrar",
+        _s == 'tekrar' and 'dogrulanamadi' in _m.dogrulama_notu, f"{_s} | {_m.dogrulama_notu}")
+_s, _m = _imha_denemesi(0.35, atis=config.FIRE_MAX_ATTEMPTS)
+kontrol("ayni durumda butce dolunca PES (sonsuz dongu yok)", _s == 'pes', _s)
+_s, _m = _imha_denemesi(0.8)
+kontrol("taban orani esigin ustunde (%80) -> imha ONAYLANIR", _s == 'onaylandi', _s)
+_s, _m = _imha_denemesi(1.0, sonra_balon_var=True)
+kontrol("balon hala goruluyorsa taban ne olursa olsun TEKRAR", _s == 'tekrar', _s)
+
+_m34 = engagement.AngajmanMakinesi()
+_m34.basla('task2')
+kontrol("olcum yokken taban oran None (kapi uygulanmaz)",
+        _m34.balon_gorulme_orani() is None)
+for _i in range(10):
+    _m34.balon_gozlemi(_i % 2 == 0)
+kontrol("taban oran dogru hesaplaniyor (%50)",
+        abs(_m34.balon_gorulme_orani() - 0.5) < 1e-9)
+for _i in range(config.FIRE_CONFIRM_BASELINE_FRAMES * 2):
+    _m34.balon_gozlemi(True)
+kontrol("taban penceresi kayiyor (eski gozlemler dusuyor)",
+        _m34.balon_gorulme_orani() == 1.0
+        and len(_m34._balon_gecmisi) <= config.FIRE_CONFIRM_BASELINE_FRAMES)
+_m34.dogrulama_notu = 'eski not'
+_m34._gec(engagement.KILIT)          # once baska bir duruma gec ki
+_m34._gec(engagement.TARAMA)         # TARAMA'ya donus gercek bir gecis olsun
+kontrol("yeni hedefe gecince taban oran sifirlaniyor",
+        _m34.balon_gorulme_orani() is None and _m34.dogrulama_notu == '')
+kontrol("taban oran esigi makul (0.3-0.8)",
+        0.3 <= config.FIRE_CONFIRM_MIN_BEFORE_RATE <= 0.8,
+        str(config.FIRE_CONFIRM_MIN_BEFORE_RATE))
+kontrol("vurulamayan hedefin kara liste suresi dogrulama TTL'inden uzun",
+        config.BLACKLIST_GIVEUP_TTL_SEC > config.BLACKLIST_VERIFY_TTL_SEC * 3,
+        f"{config.BLACKLIST_GIVEUP_TTL_SEC} sn")
+kontrol("kilit_adimi balon gozlemini besliyor",
+        "self.balon_gozlemi(balon_gorundu)" in io.open('engagement.py', encoding='utf-8').read())
+
+# --- 35. ATES SONRASI TANI ve BUTCE (29.17) ---
+# Sahada (aşama2son5.mp4) 3 hedefin ucu de 20.7 saniyede imha edildi.
+# Kalan iki soru: (a) atis sonrasi duraklamalar olu banttan mi Pi'nin
+# bloklanmasindan mi geliyor, (b) ilk hedefte 3 atislik butcenin 2'si
+# neden kullanilmadan birakildi.
+print()
+print("35. Ates sonrasi tani penceresi ve atis butcesi")
+kontrol("tani penceresi tanimli ve makul (0.4-2.0 sn)",
+        0.4 <= config.FIRE_DIAG_WINDOW_SEC <= 2.0, str(config.FIRE_DIAG_WINDOW_SEC))
+_k35 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("ates aninda tani penceresi aciliyor (aci ve komut sayaci)",
+        "self._ates_tani = {" in _k35 and "'aci0': self.current_yaw_angle" in _k35)
+kontrol("pencere komut toplamini ve fiili donusu karsilastiriyor",
+        "_fiili = abs((self.current_yaw_angle - _tn['aci0']" in _k35
+        and "_bloklu = (_tn['komut'] > 0.15" in _k35)
+kontrol("tani, komut gonderiminden ONCE isleniyor (ayni karenin komutu sayilsin)",
+        _k35.index("self._ates_tani = None\n\n        if output_yaw != 0.0")
+        < _k35.index("self.send_proportional_move_command(output_yaw, output_pitch)"))
+kontrol("olu bant kaynakli durus yanlis alarm uretmiyor (komutsuz kare sayiliyor)",
+        "_tn['komutsuz'] += 1" in _k35)
+# Butce: 22 -> 35 kare
+kontrol("ates tekrar butcesi 2 saniyenin uzerinde (@15fps)",
+        config.FIRE_RETRY_GIVEUP_FRAMES / 15.0 >= 2.0,
+        f"{config.FIRE_RETRY_GIVEUP_FRAMES} kare = {config.FIRE_RETRY_GIVEUP_FRAMES/15.0:.1f} sn")
+kontrol("ama sonsuz dongu korumasi duruyor (5 saniyenin altinda)",
+        config.FIRE_RETRY_GIVEUP_FRAMES / 15.0 < 5.0)
+# Vazgecme sonrasi hedef makul surede geri alinmali
+kontrol("vazgecilen hedef kara listesi tur suresine gore makul (3-10 sn)",
+        3.0 <= config.BLACKLIST_GIVEUP_TTL_SEC <= 10.0,
+        f"{config.BLACKLIST_GIVEUP_TTL_SEC} sn")
+kontrol("vazgecme TTL'i imha TTL'inden kisa (vurulamayan hedefe daha cabuk donulsun)",
+        config.BLACKLIST_GIVEUP_TTL_SEC < config.BLACKLIST_TTL_SEC)
+
+# --- 36. OLU KILIT (29.18) ---
+# Sahada olculdu (aşama2son6.mp4): +2.9 derecedeki F16 imha edildi ve 12
+# saniyeligine kara listeye alindi. TARAMA dogru sekilde baska bir adaya
+# (+6.8 derece) yoneldi, ama DOGRULAMA ve KILIT kara listeye hic bakmadigi
+# icin sistem ayni olu F16'ya (+1.6 derece, kara listenin TAM ICINDE)
+# kilitlendi. Nisan mukemmeldi (kayma 1-5 px, "nisan TAMAM") ama balon
+# olmadigi icin ATES'e hic gecilemedi ve 29.4 saniyelik turun 8.75
+# saniyesi orada gecti. Imha 1/3.
+print()
+print("36. Olu kilit — kara liste her asamada, balonsuz kilit hizli eleniyor")
+_m36 = engagement.AngajmanMakinesi()
+_m36.basla('task2')
+_c_a, _c_b = _cift_at('dusman-F16'), _cift_at('dusman-Helikopter')
+_a_a, _a_b = (2.9, 1.0), (6.8, 1.0)
+_m36.hedef_yaw, _m36.hedef_pitch = _a_a
+_m36.imha_edildi()                      # gercek imha yolundan kara listeye al
+_kc, _ka = _m36.kara_liste_disinda([_c_a, _c_b], [_a_a, _a_b])
+kontrol("imha edilen acidaki cift angajmandan ELENIYOR",
+        len(_kc) == 1 and _kc[0] is _c_b and _ka[0] == _a_b,
+        f"{len(_kc)} cift kaldi")
+_kc, _ka = _m36.kara_liste_disinda([_c_a, _c_b], [(1.6, 1.0), _a_b])
+kontrol("kara liste yaricapi icindeki (1.3 derece oteki) cift de ELENIYOR",
+        len(_kc) == 1 and _kc[0] is _c_b)
+# KOMSU HEDEF KAPANMAMALI: sahada iki hedef 3.9 derece arayla duruyordu.
+kontrol("3.9 derece otedeki KOMSU hedef angajmanda kaliyor",
+        _m36.kara_liste.icinde_mi(_a_a[0], _a_a[1])
+        and not _m36.kara_liste.icinde_mi(_a_b[0], _a_b[1]),
+        f"imha yaricapi {config.BLACKLIST_KILL_RADIUS_DEG} derece")
+kontrol("imha yaricapi genel yaricaptan dar",
+        config.BLACKLIST_KILL_RADIUS_DEG < config.BLACKLIST_RADIUS_DEG)
+_m36.kara_liste.temizle()
+_kc, _ka = _m36.kara_liste_disinda([_c_a, _c_b], [_a_a, _a_b])
+kontrol("kara liste bosken hicbir cift elenmiyor", len(_kc) == 2)
+_kc, _ka = _m36.kara_liste_disinda([_c_a], [])
+kontrol("acisi bilinmeyen cift elenmiyor (bilgi yoksa dislama yok)", len(_kc) == 1)
+_k36 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("filtre durum makinesinin HER asamasindan once uygulaniyor",
+        "ciftler, acilar = m.kara_liste_disinda(ciftler, acilar)" in _k36
+        and _k36.index("m.kara_liste_disinda(ciftler, acilar)")
+            < _k36.index("secim = m.tarama_adimi("))
+
+# Balonsuz kilit
+_m36b = engagement.AngajmanMakinesi()
+_m36b.basla('task2')
+_m36b.dogrulanan_sinif = 'dusman-F16'
+_m36b._gec(engagement.KILIT)
+_m36b.kilit_aci = (1.6, 1.0)
+_m36b.hedef_yaw, _m36b.hedef_pitch = 1.6, 1.0
+for _ in range(5):
+    _m36b.kilit_adimi(2.0, 15.0, False)
+kontrol("balonsuz kilit hemen birakilmiyor (tespit titremesine pay)",
+        _m36b.durum == engagement.KILIT, _m36b.durum)
+_m36b._balonsuz_baslangic -= config.LOCK_NO_BALLOON_GIVEUP_SEC + 0.1
+_m36b.kilit_adimi(2.0, 15.0, False)
+kontrol("balonsuz sure dolunca KILIT birakiliyor",
+        _m36b.durum == engagement.TARAMA, _m36b.durum)
+kontrol("birakilan olu kilit DAR yaricapla kara listeye aliniyor",
+        _m36b.kara_liste.icinde_mi(1.6, 1.0)
+        and not _m36b.kara_liste.icinde_mi(1.6 + config.BLACKLIST_NO_BALLOON_RADIUS_DEG + 0.5, 1.0))
+_m36c = engagement.AngajmanMakinesi()
+_m36c.basla('task2')
+_m36c.dogrulanan_sinif = 'dusman-F16'
+_m36c._gec(engagement.KILIT)
+_m36c.hedef_yaw, _m36c.hedef_pitch = 0.0, 0.0
+for _ in range(4):
+    _m36c.kilit_adimi(200.0, 15.0, False)
+_m36c.kilit_adimi(200.0, 15.0, True)          # balon bir kez gorundu
+kontrol("balon bir kez gorununce balonsuz sayaci sifirlaniyor",
+        _m36c._balonsuz_baslangic is None and _m36c.durum == engagement.KILIT)
+kontrol("balonsuz vazgecme suresi grace penceresinden uzun",
+        config.LOCK_NO_BALLOON_GIVEUP_SEC
+        > config.FIRE_BALLOON_GRACE_FRAMES / 15.0,
+        f"{config.LOCK_NO_BALLOON_GIVEUP_SEC} sn > "
+        f"{config.FIRE_BALLOON_GRACE_FRAMES/15.0:.2f} sn")
+kontrol("kilit zaman asimi tur suresine gore makul (2-5 sn)",
+        2.0 <= config.ENGAGE_LOCK_TIMEOUT <= 5.0, f"{config.ENGAGE_LOCK_TIMEOUT} sn")
+kontrol("balonsuz vazgecme, genel kilit zaman asimindan ONCE devreye giriyor",
+        config.LOCK_NO_BALLOON_GIVEUP_SEC < config.ENGAGE_LOCK_TIMEOUT)
+
+# --- 37. KARA LISTE MERKEZI ve NISAN NOKTASI GURULTUSU (29.19) ---
+# Sahada olculdu (aşama2son7.mp4): t=10.5'te F16'nin atis butcesi doldu ve
+# hedef birakildi, ama kara liste kaydi GOZCUNUN ILK tahminine dustugu icin
+# sistem 0.5 saniye sonra ayni hedefe geri kilitlendi; o tek hedef turun
+# 12.5 saniyesini yedi.
+print()
+print("37. Kara liste merkezi kilit acisini takip etmeli; nisan noktasi yumusatma")
+_m37 = engagement.AngajmanMakinesi()
+_m37.basla('task2')
+_m37.hedef_yaw, _m37.hedef_pitch = 9.0, 1.0      # gozcunun ILK tahmini
+_m37.dogrulanan_sinif = 'dusman-F16'
+_m37._gec(engagement.KILIT)
+_m37.kilit_aci = (9.0, 1.0)
+# Hedef yaklasirken acisi KADEME KADEME kayiyor (her kare capa yaricapi
+# icinde); capa onu takip etmeli ve kara liste merkezi de onunla gitmeli.
+_c37 = _cift_at('dusman-F16')
+for _yeni in [8.5, 8.0, 7.2, 6.4, 5.6, 4.8, 4.0, 3.2, 2.5]:
+    _m37.kilit_hedefi_sec([_c37], [(_yeni, 1.0)])
+kontrol("kilit acisi kaydikca kara liste MERKEZI de kayiyor",
+        abs(_m37.hedef_yaw - 2.5) < 1e-9,
+        f"hedef_yaw {_m37.hedef_yaw}")
+_m37.imha_edilemedi()
+kontrol("vazgecme kaydi hedefin GERCEK acisina dusuyor",
+        _m37.kara_liste.icinde_mi(2.5, 1.0), "2.5 derece kara listede")
+kontrol("gozcunun eski tahmini artik gereksiz yere kapatilmiyor",
+        not _m37.kara_liste.icinde_mi(9.0, 1.0), "9.0 derece serbest")
+_k37 = io.open('engagement.py', encoding='utf-8').read()
+kontrol("capa guncellemesi tek noktadan geciyor (_capayi_guncelle)",
+        _k37.count("self.kilit_aci = a\n") == 0
+        and "def _capayi_guncelle" in _k37)
+
+# Nisan noktasi yumusatma
+kontrol("nisan noktasi suzgeci acik ve makul (0.2-0.8)",
+        0.2 <= config.AIM_POINT_SMOOTHING <= 0.8, str(config.AIM_POINT_SMOOTHING))
+_a37 = config.AIM_POINT_SMOOTHING
+_gurultu_azaltma = (_a37 / (2 - _a37)) ** 0.5
+_gecikme = (1 - _a37) / _a37 / 15.0
+kontrol("suzgec gurultuyu belirgin azaltiyor (>%35)",
+        _gurultu_azaltma < 0.65, f"gurultu x{_gurultu_azaltma:.2f}")
+kontrol("eklenen gecikme hedef ondelemesinden kucuk (telafi ediliyor)",
+        _gecikme < config.TARGET_LEAD_TIME_SEC,
+        f"{_gecikme*1000:.0f} ms < {config.TARGET_LEAD_TIME_SEC*1000:.0f} ms")
+_k37b = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("suzgec dunya acisina uygulaniyor (piksele degil)",
+        "self._suzgec_world_yaw = (_ay * world_yaw" in _k37b)
+kontrol("buyuk sicramada suzgec ATLANIYOR (yeni hedefe yaklasma yavaslamasin)",
+        "> _snap" in _k37b and "self._suzgec_world_yaw = world_yaw" in _k37b)
+kontrol("hedef degisiminde suzgec sifirlaniyor",
+        "self._suzgec_world_yaw = None" in _k37b.split("def reset_pid_state")[1][:600])
+# Benzetim: 10 px'lik olcum gurultusu ne kadar azaliyor
+_rng37 = _np.random.default_rng(3)
+_ham = _rng37.normal(0, 10.0, 600)
+_s = 0.0; _ciktı = []
+for _v in _ham:
+    _s = _a37 * _v + (1 - _a37) * _s
+    _ciktı.append(_s)
+kontrol("benzetim: 10 px gurultu suzgecten sonra belirgin azaliyor",
+        _np.std(_ciktı) < 10.0 * 0.7,
+        f"{_np.std(_ham):.1f} px -> {_np.std(_ciktı):.1f} px")
+
+# --- 38. ARAYUZ AYARLAR SEKMESI (29.20) ---
+# Ayarlar penceresi takip/tespit/ates mantigina HICBIR SEY EKLEMEZ; yalnizca
+# mevcut `config` sabitlerini canli degistirir ve kamera surecine UVC komutu
+# gonderir. Asagidaki kontroller katalogun koda uyumlu kaldigini guvenceye
+# alir: bir sabit yeniden adlandirilir ya da araligin disina cikarilirsa
+# arayuz sessizce bozulur, test bunu yakalar.
+print()
+print("38. Arayuz Ayarlar sekmesi — katalog butunlugu ve hareket siniri")
+_eksik, _aralik_disi = [], []
+for _satir in config.AYARLANABILIR_PARAMETRELER:
+    _ad, _etiket, _mn, _mx, _adim, _ond, _acik = _satir
+    if _etiket is None:
+        continue
+    _deger = config.ayar_oku(_ad)
+    if _deger is None:
+        _eksik.append(_ad)
+    elif not (_mn <= _deger <= _mx):
+        _aralik_disi.append(f"{_ad}={_deger} [{_mn},{_mx}]")
+kontrol("katalogdaki her parametre config'de VAR", not _eksik, ", ".join(_eksik))
+kontrol("her parametrenin GUNCEL degeri kendi araliginda",
+        not _aralik_disi, ", ".join(_aralik_disi))
+kontrol("her parametrenin aciklamasi var (arayuzde parantez icinde gosterilir)",
+        all(p[6] for p in config.AYARLANABILIR_PARAMETRELER if p[1] is not None))
+kontrol("baslik satirlari etiketi None, metni dolu",
+        all(p[6] for p in config.AYARLANABILIR_PARAMETRELER if p[1] is None))
+kontrol("kamera denetimi katalogu UVC ozellik adlariyla ortusuyor",
+        {p[0] for p in config.KAMERA_UVC_ARALIKLARI}
+        == {a for a, _ in __import__('camera_module')._UVC_OZELLIKLERI})
+for _k in ('hunter', 'spotter'):
+    _bilinmeyen = (set(config.KAMERA_KONTROLLERI.get(_k, {}))
+                   - {p[0] for p in config.KAMERA_UVC_ARALIKLARI})
+    kontrol(f"{_k} kontrol sozlugunde katalog disi anahtar yok",
+            not _bilinmeyen, str(_bilinmeyen))
+
+# ayar_uygula / ayar_oku
+_eski_kp = config.KP_YAW
+kontrol("ayar_uygula bilinen sabiti degistiriyor",
+        config.ayar_uygula('KP_YAW', 0.85) and config.KP_YAW == 0.85)
+config.ayar_uygula('KP_YAW', _eski_kp)
+kontrol("ayar_uygula bilinmeyen adi sessizce reddediyor",
+        config.ayar_uygula('BOYLE_BIR_SABIT_YOK', 1) is False)
+kontrol("ayar_oku yoksa varsayilani doner",
+        config.ayar_oku('BOYLE_BIR_SABIT_YOK', 42) == 42)
+
+# Harekete yasak alan: VARSAYILAN KAPALI olmali (mevcut davranis degismesin)
+kontrol("hareket siniri VARSAYILAN KAPALI (mevcut davranis korunur)",
+        config.HAREKET_SINIRI_AKTIF is False)
+kontrol("kapaliyken deger AYNEN gecer (kirpma yok)",
+        config.hareket_sinirla(250.0, 77.0) == (250.0, 77.0, False))
+config.HAREKET_SINIRI_AKTIF = True
+_eski_sinir = (config.HAREKET_YAW_MIN, config.HAREKET_YAW_MAX,
+               config.HAREKET_PITCH_MIN, config.HAREKET_PITCH_MAX)
+config.HAREKET_YAW_MIN, config.HAREKET_YAW_MAX = -20.0, 20.0
+config.HAREKET_PITCH_MIN, config.HAREKET_PITCH_MAX = -10.0, 10.0
+kontrol("acikken aralik disi hedef KIRPILIYOR",
+        config.hareket_sinirla(75.0, 40.0) == (20.0, 10.0, True))
+kontrol("acikken aralik ICINDEKI hedefe dokunulmuyor",
+        config.hareket_sinirla(5.0, -3.0) == (5.0, -3.0, False))
+kontrol("ters girilen sinirlar (min>max) da dogru kirpiliyor",
+        (config.__dict__.update({'HAREKET_YAW_MIN': 20.0, 'HAREKET_YAW_MAX': -20.0}) or True)
+        and config.hareket_sinirla(75.0, 0.0)[0] == 20.0)
+(config.HAREKET_YAW_MIN, config.HAREKET_YAW_MAX,
+ config.HAREKET_PITCH_MIN, config.HAREKET_PITCH_MAX) = _eski_sinir
+config.HAREKET_SINIRI_AKTIF = False
+
+# Kaynak kontrolleri: komut yolunda kirpma var, varsayilanda etkisiz
+_k38 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("mutlak komut hareket sinirindan geciyor",
+        "yaw, pitch = self._hareket_sinirla(yaw, pitch)" in _k38
+        and _k38.index("self._hareket_sinirla(yaw, pitch)")
+            < _k38.index('command = {"action": "set_angles"'))
+kontrol("delta komut yalnizca sinir ACIKKEN dokunuluyor",
+        "if config.HAREKET_SINIRI_AKTIF:" in _k38
+        and _k38.index("if config.HAREKET_SINIRI_AKTIF:")
+            < _k38.index('command = {"action": "set_proportional_angles_delta"'))
+kontrol("Ayarlar butonu var ve pencereyi aciyor",
+        "self.ayarlar_button" in _k38 and "def ayarlari_ac" in _k38)
+kontrol("ayarlar penceresi HATA VERSE BILE sistem devam ediyor",
+        "except Exception as e:" in _k38.split("def ayarlari_ac")[1][:900])
+kontrol("atessiz bolge alanlari yeniden YARATILMADI (eski yollar bozulmadi)",
+        "self.no_fire_start_input = QLineEdit(self)" in _k38
+        and "def apply_no_fire_zone" in _k38)
+_k38c = io.open('camera_module.py', encoding='utf-8').read()
+kontrol("kamera sureci canli UVC komutunu tanıyor",
+        'cmd.get("action") == "UVC"' in _k38c)
+kontrol("UVC komutu cozunurluk/format/fps'e DOKUNMUYOR",
+        "CAP_PROP_FRAME_WIDTH" not in _k38c.split('cmd.get("action") == "UVC"')[1][:800])
+kontrol("metin komutlari (START/STOP/QUIT) once degerlendiriliyor",
+        _k38c.index('if cmd == "START"') < _k38c.index('cmd.get("action") == "UVC"'))
+_k38a = io.open('ayarlar_penceresi.py', encoding='utf-8').read()
+kontrol("ayarlar penceresi takip/ates mantigina dokunmuyor",
+        all(x not in _k38a for x in
+            ('process_tracking', 'ates_serbest_mi', 'kilit_adimi',
+             'send_proportional_move_command', 'fire_weapon')))
+
+# --- 39. AYARLARI config.py'YE KAYDETME ve TEKERLEK KILIDI (29.21) ---
+# Kullanici bildirdi: uzun ayar sayfasini fare tekerlegiyle kaydirirken
+# tekerlek kaydiricilarin uzerine gelince DEGERI degistiriyordu. Ayrica
+# bulunan degerin kalici olmasi icin config.py'ye yazma istendi.
+print()
+print("39. config.py'ye kaydetme ve fare tekerlegi kilidi")
+import os as _os
+import shutil as _sh
+import tempfile as _tf
+import config_yazici as _cy
+
+kontrol("kaydiricilar tekerlegi YOK SAYIYOR (sayfa kaysin, deger degismesin)",
+        "class _TekerleksizSlider" in _k38a and "class _TekerleksizKutu" in _k38a
+        and _k38a.count("olay.ignore()") >= 2)
+kontrol("kaydirici ve sayi kutusu bu siniflardan uretiliyor",
+        "_TekerleksizSlider(Qt.Horizontal)" in _k38a
+        and "self.kutu = _TekerleksizKutu()" in _k38a)
+kontrol("her sekmede Kaydet dugmesi var",
+        _k38a.count('QPushButton("config.py\'ye Kaydet")') >= 3)
+kontrol("Kaydet'e ragmen 'Acilistaki Degerlere Don' duruyor",
+        _k38a.count('QPushButton("Açılıştaki Değerlere Dön")') >= 2)
+kontrol("geri donus dosyaya DOKUNMUYOR (oturum yedeginden okur)",
+        "_parametre_yedegi" in _k38a and "config_yazici" not in
+        _k38a.split("def _parametre_varsayilana")[1][:400])
+
+# --- Yazici: gercek config.py'nin KOPYASI uzerinde ---
+_gecici = _tf.mkdtemp(prefix='cfgtest_')
+_kopya = _os.path.join(_gecici, 'config.py')
+_sh.copy2('config.py', _kopya)
+_once = io.open(_kopya, encoding='utf-8').read()
+
+_y, _bul, _eksik = _cy.sabitleri_degistir(_once, {'CONF_THRESHOLD': 0.55})
+kontrol("sabit satiri bulunup degistiriliyor",
+        'CONF_THRESHOLD' in _bul and 'CONF_THRESHOLD = 0.55' in _y)
+kontrol("degistirilen satir disinda dosya AYNEN kaliyor",
+        sum(1 for a, b in zip(_once.split('\n'), _y.split('\n')) if a != b) == 1)
+_yorumlu = "AIM_HOLD_FRAMES = 2     # bu yorum korunmali\n"
+_y2, _b2, _ = _cy.sabitleri_degistir(_yorumlu, {'AIM_HOLD_FRAMES': 4})
+kontrol("satir sonundaki yorum korunuyor",
+        "AIM_HOLD_FRAMES = 4     # bu yorum korunmali" in _y2, _y2.strip())
+_y3, _n3 = _cy.kamera_degerlerini_degistir(_once, {'hunter': {'gain': 200}})
+kontrol("kamera sozlugunde yalnizca ISTENEN kameranin anahtari degisiyor",
+        _n3 == 1 and '"gain": 200,' in _y3
+        and _y3.count('"gain": 200,') == 1)
+kontrol("degistirilmis kaynak DERLENIYOR", bool(compile(_y3, 'config.py', 'exec')))
+
+_ok, _mesaj = _cy.kaydet(sabitler={'CONF_THRESHOLD': 0.55, 'KP_YAW': 0.65},
+                         kamera={'hunter': {'gain': 199}}, yol=_kopya)
+kontrol("kaydet basarili ve ayri surecte DOGRULANIYOR", _ok, _mesaj)
+kontrol("yedek dosyasi olusturuluyor", _os.path.exists(_kopya + '.yedek'))
+_sonra = io.open(_kopya, encoding='utf-8').read()
+kontrol("kaydedilen degerler dosyada",
+        'CONF_THRESHOLD = 0.55' in _sonra and 'KP_YAW = 0.65' in _sonra
+        and '"gain": 199,' in _sonra)
+kontrol("kaydedilmeyen satirlara dokunulmuyor",
+        sum(1 for a, b in zip(_once.split('\n'), _sonra.split('\n')) if a != b) == 3)
+_ok2, _m2 = _cy.kaydet(sabitler={'BOYLE_BIR_SABIT_YOK': 1}, yol=_kopya)
+kontrol("bilinmeyen sabit dosyayi DEGISTIRMIYOR",
+        _ok2 and io.open(_kopya, encoding='utf-8').read() == _sonra, _m2)
+kontrol("deger metni dogru bicimleniyor",
+        (_cy.deger_metni(None) == 'None' and _cy.deger_metni(True) == 'True'
+         and _cy.deger_metni(4) == '4' and _cy.deger_metni(0.5) == '0.5'
+         and _cy.deger_metni(12.0) == '12.0'))
+_sh.rmtree(_gecici, ignore_errors=True)
+kontrol("gercek config.py bu testlerde HIC yazilmadi",
+        io.open('config.py', encoding='utf-8').read() == _once)
+
+# --- 40. ATESTE YON KARARLILIGI (29.23) ---
+# Sahada olculdu (aşama2son9.mp4, kilit icinde atistan onceki pencere):
+#   Fuze 1  ISKA   ort 0.78 derece/sn, YON DEGISIMI 4
+#   Helikopter     ISABET ort 1.75 derece/sn, yon degisimi 0
+#   Drone          ISABET ort 1.11 derece/sn, yon degisimi 0
+#   Fuze 2         ISABET ort 1.18 derece/sn, yon degisimi 0
+# Belirleyici olan HIZ DEGIL YON DEGISTIRME: Helikopter, iskalayan hedefin
+# IKI KATI hizda giderken tek atista vuruldu.
+print()
+print("40. Ateste yon kararliligi — hizli hedef sorun degil, DONUS ani sorun")
+_m40 = engagement.AngajmanMakinesi()
+_m40.basla('task2')
+_m40.dogrulanan_sinif = 'dusman-Fuze'
+_m40._gec(engagement.ATES)
+_c40 = _cift_at('dusman-Fuze')
+_o40 = dict(cift=_c40, makine=_m40, balon_gorundu=True, nisan_tamam=True,
+            yaw=0.0, no_fire_start=0.0, no_fire_end=0.0)
+_i, _g = engagement.ates_serbest_mi(**_o40, hedef_hizi=1.75, hata_hizi=5.0,
+                                    yon_kararli=True)
+kontrol("HIZLI ama duzgun giden hedefte ates SERBEST (Helikopter durumu)", _i, _g)
+_i, _g = engagement.ates_serbest_mi(**_o40, hedef_hizi=0.78, hata_hizi=5.0,
+                                    yon_kararli=False)
+kontrol("YAVAS ama yon degistiren hedefte ates ENGELLI (Fuze 1 durumu)",
+        not _i and 'yon degistiriyor' in _g, _g)
+_i, _g = engagement.ates_serbest_mi(**_o40, hedef_hizi=1.2, hata_hizi=5.0)
+kontrol("bayrak verilmezse eski davranis (varsayilan serbest)", _i, _g)
+kontrol("yon kapisi kayma kapisindan SONRA (kayma daha temel)",
+        io.open('engagement.py', encoding='utf-8').read().index("nisan kayiyor")
+        < io.open('engagement.py', encoding='utf-8').read().index("yon degistiriyor"))
+kontrol("config: yon kapisi acik, esikler makul",
+        config.FIRE_REQUIRE_STABLE_DIRECTION is True
+        and 2 <= config.FIRE_DIRECTION_STABLE_FRAMES <= 12
+        and 0.1 <= config.FIRE_DIRECTION_MIN_RATE_DEG_S <= 1.5
+        and 0.3 <= config.FIRE_DIRECTION_WAIT_MAX_SEC <= 3.0)
+kontrol("yavas hedef esigi olculen gurultu tabani civarinda (EMA std 0.49)",
+        0.3 <= config.FIRE_DIRECTION_MIN_RATE_DEG_S <= 0.8,
+        f"{config.FIRE_DIRECTION_MIN_RATE_DEG_S} derece/sn")
+kontrol("kararlilik penceresi olculen donus suresinden kisa (yarim periyot ~1.2 sn)",
+        config.FIRE_DIRECTION_STABLE_FRAMES / 15.0 < 1.0,
+        f"{config.FIRE_DIRECTION_STABLE_FRAMES/15.0:.2f} sn")
+_k40 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("yon sayaci hiz gurultu tabaninin ALTINDA dondurulyor (sifirlanmiyor)",
+        "if abs(self.target_world_yaw_rate) >= _alt:" in _k40)
+kontrol("bekleme suresi sinirli (sonsuz bekleme yok)",
+        "FIRE_DIRECTION_WAIT_MAX_SEC" in _k40 and "return True          # bekleme siniri" in _k40)
+kontrol("ozellik kapatilabilir",
+        "if not getattr(config, 'FIRE_REQUIRE_STABLE_DIRECTION', False):" in _k40)
+kontrol("hedef degisiminde yon durumu sifirlaniyor",
+        "self._yon_ardisik = 0" in _k40.split("def reset_pid_state")[1][:700])
+
+# --- 41. KAMERA KAYIT ARACI (etiketleme verisi) ---
+print()
+print("41. Kamera kayit araci — boru hattiyla AYNI ayarlar")
+import kamera_kayit as _kk
+import camera_module as _cm
+import numpy as _np2
+_k41 = io.open('kamera_kayit.py', encoding='utf-8').read()
+kontrol("UVC ayarlarini boru hattinin KENDI fonksiyonuyla uyguluyor (kopya yok)",
+        "camera_module._uvc_uygula(capture, kamera_adi)" in _k41)
+kontrol("model kirpmasini boru hattinin KENDI fonksiyonuyla yapiyor",
+        "camera_module._model_oranina_kirp(kare, kamera_adi)" in _k41)
+kontrol("cozunurluk/format/fps config'ten okunuyor (sabit deger yok)",
+        'config.KAMERA_AYARLARI[kamera_adi]' in _k41
+        and 'ayar["width"]' in _k41 and 'ayar.get("fps")' in _k41)
+kontrol("FOURCC cozunurlukten ONCE, UVC en SONDA (boru hattiyla ayni sira)",
+        _k41.index('CAP_PROP_FOURCC') < _k41.index('CAP_PROP_FRAME_WIDTH')
+        < _k41.index('camera_module._uvc_uygula(capture,'))
+kontrol("BOSLUK tusu kaydi durdurup devam ettiriyor",
+        "if tus == ord(' '):" in _k41 and "kayitta = not kayitta" in _k41)
+kontrol("duraklamada kare YAZILMIYOR", "if kayitta:" in _k41
+        and _k41.index("if kayitta:") < _k41.index("yazici.write(kare)"))
+kontrol("durum yazisi yalnizca ONIZLEME kopyasina ciziliyor (kayit temiz)",
+        "gosterim = kare.copy()" in _k41
+        and "_bilgi_ciz(gosterim," in _k41)
+# Kirpma boru hattiyla birebir ayni mi
+_ham41 = _np2.full((config.HUNTER_HEIGHT, config.HUNTER_WIDTH, 3), 40, _np2.uint8)
+_kirp41 = _cm._model_oranina_kirp(_ham41, 'hunter')
+kontrol("kirpilmis boyut config.hunter_etkin_kare() ile AYNI",
+        (_kirp41.shape[1], _kirp41.shape[0]) == config.hunter_etkin_kare(),
+        f"{_kirp41.shape[1]}x{_kirp41.shape[0]} vs {config.hunter_etkin_kare()}")
+_cift41 = _kk._cift_boyuta_kirp(_kirp41)
+kontrol("MJPG icin cift boyuta kirpma BIZ yapiyoruz (kodek sessizce yapmasin)",
+        _cift41.shape[0] % 2 == 0 and _cift41.shape[1] % 2 == 0
+        and _kirp41.shape[0] - _cift41.shape[0] <= 1,
+        f"{_kirp41.shape[1]}x{_kirp41.shape[0]} -> {_cift41.shape[1]}x{_cift41.shape[0]}")
+kontrol("zaten cift olan kare DEGISMIYOR",
+        _kk._cift_boyuta_kirp(_np2.zeros((100, 200, 3), _np2.uint8)).shape[:2] == (100, 200))
+# Yazma + geri okuma dogrulamasi
+_gec41 = _tf.mkdtemp(prefix='kayittest_')
+_yol41 = _os.path.join(_gec41, 'deneme.avi')
+_yz = _kk._yazici_ac(_yol41, 15.0, (_cift41.shape[1], _cift41.shape[0]))
+kontrol("yazici aciliyor", _yz is not None)
+for _i41 in range(12):
+    _yz.write(_cift41)
+_yz.release()
+_ok41, _ay41 = _kk._dosyayi_dogrula(_yol41, (_cift41.shape[1], _cift41.shape[0]), 12)
+kontrol("kayit bitince dosya GERI OKUNUP dogrulaniyor", _ok41, _ay41)
+_ok42, _ay42 = _kk._dosyayi_dogrula(_yol41, (_cift41.shape[1], _cift41.shape[0] + 1), 12)
+kontrol("boyut uyusmazligi YAKALANIYOR (kodek sessizce degistirirse)",
+        not _ok42 and 'BOYUT UYUSMUYOR' in _ay42, _ay42)
+_sh.rmtree(_gec41, ignore_errors=True)
+kontrol("balon grace sayaci tutuluyor ve kapiya veriliyor",
+        "self._balon_kayip_kare += 1" in _k31
+        and "balon_yakin=self._balon_yakin_zamanda()" in _k31)
+kontrol("durum cubugu kayma miktarini gosteriyor (operator sebebi gorsun)",
+        "kayma {self.hata_degisim_hizi * config.FIRE_SHOT_LATENCY_SEC:.0f}" in _k31)
+
+print()
+print("=" * 70)
+print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
+print("=" * 70)
+sys.exit(1 if hata else 0)
