@@ -20,11 +20,34 @@ Sekmeler:
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QCheckBox, QDialog, QDoubleSpinBox, QFrame, QGridLayout, QGroupBox,
+    QCheckBox, QDialog, QDoubleSpinBox, QFrame, QGroupBox,
     QHBoxLayout, QLabel, QPushButton, QScrollArea, QSlider, QTabWidget,
     QVBoxLayout, QWidget)
 
 import config
+import config_yazici
+
+
+class _TekerleksizSlider(QSlider):
+    """
+    Fare tekerlegini YOK SAYAN kaydirici (2026-09-24, 29.21).
+
+    Ayar sekmeleri uzun ve kaydirilabilir. Varsayilan QSlider, uzerinden
+    gecerken tekerlek olayini yakalayip DEGERI degistiriyordu: kullanici
+    sayfayi asagi kaydirmak isterken farkinda olmadan ayarlari bozuyordu.
+    `ignore()` demek olayi ebeveyne birakir, yani kaydirma alanina gider
+    ve sayfa normal sekilde kayar.
+    """
+
+    def wheelEvent(self, olay):
+        olay.ignore()
+
+
+class _TekerleksizKutu(QDoubleSpinBox):
+    """Fare tekerlegini yok sayan sayi kutusu (ayni gerekce)."""
+
+    def wheelEvent(self, olay):
+        olay.ignore()
 
 # Logitech arayuzundeki gibi koyu tema.
 _ARKA = "#1c1c1e"
@@ -63,6 +86,8 @@ QPushButton {{
 QPushButton:hover {{ background: #0a6fd8; }}
 QPushButton#ikincil {{ background: #48484c; }}
 QPushButton#ikincil:hover {{ background: #5a5a5e; }}
+QPushButton#kaydet {{ background: #30a14e; }}
+QPushButton#kaydet:hover {{ background: #278442; }}
 QScrollArea {{ border: none; }}
 """
 
@@ -113,13 +138,13 @@ class _KaydiriciSatir(QWidget):
         duzen.addLayout(ust)
 
         alt = QHBoxLayout()
-        self.kaydirici = QSlider(Qt.Horizontal)
+        self.kaydirici = _TekerleksizSlider(Qt.Horizontal)
         self.kaydirici.setMinimum(0)
         self.kaydirici.setMaximum(max(1, int(round((en_cok - en_az) / self._adim))))
         self.kaydirici.valueChanged.connect(self._kaydiriciDegisti)
         alt.addWidget(self.kaydirici, 1)
 
-        self.kutu = QDoubleSpinBox()
+        self.kutu = _TekerleksizKutu()
         self.kutu.setDecimals(int(ondalik))
         self.kutu.setMinimum(float(en_az))
         self.kutu.setMaximum(float(en_cok))
@@ -269,14 +294,28 @@ class AyarlarPenceresi(QDialog):
         yeniden = QPushButton("Kameraya Yeniden Uygula")
         yeniden.clicked.connect(lambda: self._kamerayi_gonder(kamera_adi))
         dugmeler.addWidget(yeniden)
-        geri = QPushButton("Dosyadaki Değerlere Dön")
+        kaydet = QPushButton("config.py'ye Kaydet")
+        kaydet.setObjectName("kaydet")
+        kaydet.setToolTip("Bu kameranın denetimlerini config.py'ye yazar; "
+                          "bir sonraki açılışta bu değerlerle başlanır.")
+        kaydet.clicked.connect(lambda: self._kamerayi_kaydet(kamera_adi))
+        dugmeler.addWidget(kaydet)
+        geri = QPushButton("Açılıştaki Değerlere Dön")
         geri.setObjectName("ikincil")
+        geri.setToolTip("Bu oturum açıldığındaki değerlere döner. "
+                        "Kaydetmiş olsanız bile çalışır.")
         geri.clicked.connect(lambda: self._kamera_varsayilana(kamera_adi))
         dugmeler.addWidget(geri)
         dugmeler.addStretch()
         duzen.addLayout(dugmeler)
         duzen.addStretch()
         return _kaydirilabilir(ic)
+
+    def _kamerayi_kaydet(self, kamera_adi):
+        degerler = {ad: s.deger()
+                    for ad, s in self._kamera_satirlari[kamera_adi].items()}
+        ok, mesaj = config_yazici.kaydet(kamera={kamera_adi: degerler})
+        self._bildir(("Kaydedildi — " if ok else "KAYDEDİLEMEDİ — ") + mesaj)
 
     def _kamerayi_gonder(self, kamera_adi):
         degerler = {ad: s.deger()
@@ -296,11 +335,14 @@ class AyarlarPenceresi(QDialog):
             self._bildir(f"{kamera_adi}: gönderilemedi ({e}).")
 
     def _kamera_varsayilana(self, kamera_adi):
-        import importlib
-        taze = importlib.import_module('config')
-        # Dosyadaki degeri yeniden okumak icin modulu yeniden yuklemiyoruz
-        # (bu calisan sistemi bozardi); bunun yerine acilistaki kopyayi
-        # kullaniyoruz.
+        """
+        Bu OTURUM acildigindaki degerlere doner.
+
+        `config` modulu yeniden YUKLENMEZ: calisan sistem config nesnelerine
+        referans tutuyor, yeniden yukleme onlari kopariridi. Bunun yerine ana
+        pencerenin aciliста aldigi kopya kullanilir. Bu sayede "kaydettim
+        ama yine de onceki degere donmek istiyorum" mumkun olur.
+        """
         kaynak = getattr(self.arayuz, '_kamera_kontrol_yedegi', {}).get(kamera_adi)
         if not kaynak:
             self._bildir("Açılıştaki değerler bulunamadı.")
@@ -308,7 +350,6 @@ class AyarlarPenceresi(QDialog):
         for ad, satir in self._kamera_satirlari[kamera_adi].items():
             satir.degeri_yaz(kaynak.get(ad))
         self._kamerayi_gonder(kamera_adi)
-        _ = taze
 
     # ------------------------------------------------------------------
     # Ates / kisitli bolge / hareket sekmeleri
@@ -419,9 +460,26 @@ class AyarlarPenceresi(QDialog):
                   self.hareket_pitch_min, self.hareket_pitch_max):
             s.geri_cagir_ayarla(lambda _d: self._hareket_uygula())
             k.addWidget(s)
+        d = QHBoxLayout()
+        kaydet = QPushButton("config.py'ye Kaydet")
+        kaydet.setObjectName("kaydet")
+        kaydet.clicked.connect(self._hareket_kaydet)
+        d.addWidget(kaydet)
+        d.addStretch()
+        k.addLayout(d)
         duzen.addWidget(kutu)
         duzen.addStretch()
         return _kaydirilabilir(ic)
+
+    def _hareket_kaydet(self):
+        ok, mesaj = config_yazici.kaydet(sabitler={
+            'HAREKET_SINIRI_AKTIF': bool(self.hareket_aktif.isChecked()),
+            'HAREKET_YAW_MIN': float(self.hareket_yaw_min.deger()),
+            'HAREKET_YAW_MAX': float(self.hareket_yaw_max.deger()),
+            'HAREKET_PITCH_MIN': float(self.hareket_pitch_min.deger()),
+            'HAREKET_PITCH_MAX': float(self.hareket_pitch_max.deger()),
+        })
+        self._bildir(("Kaydedildi — " if ok else "KAYDEDİLEMEDİ — ") + mesaj)
 
     def _hareket_uygula(self):
         config.HAREKET_SINIRI_AKTIF = bool(self.hareket_aktif.isChecked())
@@ -465,14 +523,36 @@ class AyarlarPenceresi(QDialog):
             self._param_satirlari[ad] = s
             aktif_duzen.addWidget(s)
         d = QHBoxLayout()
+        kaydet = QPushButton("config.py'ye Kaydet")
+        kaydet.setObjectName("kaydet")
+        kaydet.setToolTip(
+            "Ekrandaki tüm parametreleri config.py'ye yazar; bir sonraki "
+            "açılışta bu değerlerle başlanır. Dosya yazılmadan önce "
+            "derlenip doğrulanır, config.py.yedek olarak yedeklenir.")
+        kaydet.clicked.connect(self._parametreleri_kaydet)
+        d.addWidget(kaydet)
         geri = QPushButton("Açılıştaki Değerlere Dön")
         geri.setObjectName("ikincil")
+        geri.setToolTip("Bu oturum açıldığındaki değerlere döner. "
+                        "Kaydetmiş olsanız bile çalışır (dosya değişmez).")
         geri.clicked.connect(self._parametre_varsayilana)
         d.addWidget(geri)
         d.addStretch()
         duzen.addLayout(d)
         duzen.addStretch()
         return _kaydirilabilir(ic)
+
+    def _parametreleri_kaydet(self):
+        sabitler = {}
+        for ad, s in self._param_satirlari.items():
+            deger = s.deger()
+            for _a, _e, _mn, _mx, _ad, ondalik, _ac in config.AYARLANABILIR_PARAMETRELER:
+                if _a == ad:
+                    deger = int(round(deger)) if ondalik == 0 else float(deger)
+                    break
+            sabitler[ad] = deger
+        ok, mesaj = config_yazici.kaydet(sabitler=sabitler)
+        self._bildir(("Kaydedildi — " if ok else "KAYDEDİLEMEDİ — ") + mesaj)
 
     def _parametre_yaz(self, ad, deger):
         for _a, _e, _mn, _mx, _ad, ondalik, _ac in config.AYARLANABILIR_PARAMETRELER:

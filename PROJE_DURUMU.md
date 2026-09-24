@@ -4698,3 +4698,75 @@ acilmadigi dogrulandi.
 Ayarlar dosyaya yazilmiyor. Sahada iyi bir kombinasyon bulununca degerler
 elle `config.py`'ye islenmeli. Kalici kayit istenirse ayri bir istek
 olarak eklenebilir (JSON profil); simdilik kapsam disinda tutuldu.
+
+
+### 29.21 Ayarlar sekmesi: tekerlek kilidi ve config.py'ye kaydetme (2026-09-24)
+
+Kullanici geri bildirimi: (1) uzun ayar sayfasini fare tekerlegiyle
+kaydirirken imlec bir kaydiricinin uzerine geldiginde tekerlek DEGERI
+degistiriyordu; (2) sahada bulunan degeri kalici yapabilmek icin
+`config.py`'ye yazan bir "Kaydet" dugmesi, ama "Açılıştaki Değerlere Dön"
+dugmesi de kalsin — kaydettikten sonra bile oturum basi degerine
+donulebilsin.
+
+#### 29.21.1 Tekerlek kilidi
+
+`QSlider` ve `QDoubleSpinBox` tekerlek olayini varsayilan olarak KABUL
+eder; kaydirma alanindaki uzun sayfada bu, "sayfayi kaydirayim derken
+ayari bozmak" demekti. Iki kucuk alt sinif eklendi
+(`_TekerleksizSlider`, `_TekerleksizKutu`): `wheelEvent` icinde
+`olay.ignore()`. Yok sayilan olay Qt tarafindan EBEVEYNE aktarilir, yani
+kaydirma alanina gider ve sayfa normal kayar.
+
+Davranis testi: kaydirici ve kutuya `QWheelEvent` gonderildi; deger
+degismedi (0.3 -> 0.3) ve olay `isAccepted() == False` dondu — yani
+sayfaya aktarildi.
+
+#### 29.21.2 `config_yazici.py` — dosyaya geri yazma
+
+YENI DOSYA. Calisan bir yarisma sisteminin ayar dosyasini tek bir hatali
+regex ile kaybetmemek icin bes adimli:
+
+1. Yalnizca modul seviyesi `AD = deger` satirlari ve `KAMERA_KONTROLLERI`
+   icindeki `"anahtar": deger` satirlari degisir.
+2. Girinti ve **satir sonundaki yorum harfi harfine korunur**
+   (`AIM_HOLD_FRAMES = 2     # yorum` -> `AIM_HOLD_FRAMES = 4     # yorum`).
+3. Yazmadan once yeni metin `compile()` edilir; derlenmezse HICBIR SEY
+   yazilmaz.
+4. `config.py.yedek` olusturulur.
+5. Yazildiktan sonra dosya **ayri bir surecte import edilip** degerlerin
+   gercekten okundugu dogrulanir; dogrulanmazsa yedekten geri alinir.
+
+Olculdu (gercek `config.py`'nin kopyasi uzerinde): uc deger kaydedildiginde
+dosyada **tam 3 satir** degisti, geri kalani bayt bayt ayni kaldi.
+
+#### 29.21.3 Arayuz
+
+Her sekmeye yesil **"config.py'ye Kaydet"** dugmesi eklendi (avci kamera,
+gozcu kamera, harekete yasak alan, parametreler). Yanlarinda
+**"Açılıştaki Değerlere Dön"** duruyor ve **dosyaya dokunmuyor** — oturum
+acilisinda alinan kopyadan okur. Yani:
+
+| eylem | `config` (bellek) | `config.py` (dosya) |
+|---|---|---|
+| kaydirici oynat | degisir (aninda etkili) | degismez |
+| Kaydet | degismez | **degisir** (sonraki acilisin varsayilani) |
+| Açılıştaki Değerlere Dön | oturum basina doner | degismez |
+
+Kullanicinin istedigi akis birebir bu: kaydettikten sonra bile onceki
+degere donulebiliyor; bir sonraki aciliste ise zaten kaydedilen deger
+"acilistaki deger" oluyor.
+
+Uctan uca dogrulandi: `CONF_THRESHOLD` 0.30 -> 0.50 kaydirildi, Kaydet
+basildi, `config.py`'de `CONF_THRESHOLD = 0.5` olustu; ardindan
+"Açılıştaki Değerlere Dön" bellekteki degeri 0.30'a dondurdu ve dosya
+0.5'te kaldi. Test sonrasi `git checkout config.py` ile geri alindi.
+
+#### 29.21.4 Notlar
+
+- Kaydedilen degerler bir sonraki aciliste yururluge girer; commit etmek
+  ayri bir adim (kullanici istediginde yapilir).
+- `config.py.yedek` depoya girmemeli; her kaydette uzerine yazilir.
+- 39. bolum testleri yaziciyi GERCEK `config.py`'nin gecici bir kopyasi
+  uzerinde calistirir ve sonunda "gercek config.py hic yazilmadi"
+  kontrolu yapar.

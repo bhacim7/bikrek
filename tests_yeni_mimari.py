@@ -2228,6 +2228,73 @@ kontrol("ayarlar penceresi takip/ates mantigina dokunmuyor",
         all(x not in _k38a for x in
             ('process_tracking', 'ates_serbest_mi', 'kilit_adimi',
              'send_proportional_move_command', 'fire_weapon')))
+
+# --- 39. AYARLARI config.py'YE KAYDETME ve TEKERLEK KILIDI (29.21) ---
+# Kullanici bildirdi: uzun ayar sayfasini fare tekerlegiyle kaydirirken
+# tekerlek kaydiricilarin uzerine gelince DEGERI degistiriyordu. Ayrica
+# bulunan degerin kalici olmasi icin config.py'ye yazma istendi.
+print()
+print("39. config.py'ye kaydetme ve fare tekerlegi kilidi")
+import os as _os
+import shutil as _sh
+import tempfile as _tf
+import config_yazici as _cy
+
+kontrol("kaydiricilar tekerlegi YOK SAYIYOR (sayfa kaysin, deger degismesin)",
+        "class _TekerleksizSlider" in _k38a and "class _TekerleksizKutu" in _k38a
+        and _k38a.count("olay.ignore()") >= 2)
+kontrol("kaydirici ve sayi kutusu bu siniflardan uretiliyor",
+        "_TekerleksizSlider(Qt.Horizontal)" in _k38a
+        and "self.kutu = _TekerleksizKutu()" in _k38a)
+kontrol("her sekmede Kaydet dugmesi var",
+        _k38a.count('QPushButton("config.py\'ye Kaydet")') >= 3)
+kontrol("Kaydet'e ragmen 'Acilistaki Degerlere Don' duruyor",
+        _k38a.count('QPushButton("Açılıştaki Değerlere Dön")') >= 2)
+kontrol("geri donus dosyaya DOKUNMUYOR (oturum yedeginden okur)",
+        "_parametre_yedegi" in _k38a and "config_yazici" not in
+        _k38a.split("def _parametre_varsayilana")[1][:400])
+
+# --- Yazici: gercek config.py'nin KOPYASI uzerinde ---
+_gecici = _tf.mkdtemp(prefix='cfgtest_')
+_kopya = _os.path.join(_gecici, 'config.py')
+_sh.copy2('config.py', _kopya)
+_once = io.open(_kopya, encoding='utf-8').read()
+
+_y, _bul, _eksik = _cy.sabitleri_degistir(_once, {'CONF_THRESHOLD': 0.55})
+kontrol("sabit satiri bulunup degistiriliyor",
+        'CONF_THRESHOLD' in _bul and 'CONF_THRESHOLD = 0.55' in _y)
+kontrol("degistirilen satir disinda dosya AYNEN kaliyor",
+        sum(1 for a, b in zip(_once.split('\n'), _y.split('\n')) if a != b) == 1)
+_yorumlu = "AIM_HOLD_FRAMES = 2     # bu yorum korunmali\n"
+_y2, _b2, _ = _cy.sabitleri_degistir(_yorumlu, {'AIM_HOLD_FRAMES': 4})
+kontrol("satir sonundaki yorum korunuyor",
+        "AIM_HOLD_FRAMES = 4     # bu yorum korunmali" in _y2, _y2.strip())
+_y3, _n3 = _cy.kamera_degerlerini_degistir(_once, {'hunter': {'gain': 200}})
+kontrol("kamera sozlugunde yalnizca ISTENEN kameranin anahtari degisiyor",
+        _n3 == 1 and '"gain": 200,' in _y3
+        and _y3.count('"gain": 200,') == 1)
+kontrol("degistirilmis kaynak DERLENIYOR", bool(compile(_y3, 'config.py', 'exec')))
+
+_ok, _mesaj = _cy.kaydet(sabitler={'CONF_THRESHOLD': 0.55, 'KP_YAW': 0.65},
+                         kamera={'hunter': {'gain': 199}}, yol=_kopya)
+kontrol("kaydet basarili ve ayri surecte DOGRULANIYOR", _ok, _mesaj)
+kontrol("yedek dosyasi olusturuluyor", _os.path.exists(_kopya + '.yedek'))
+_sonra = io.open(_kopya, encoding='utf-8').read()
+kontrol("kaydedilen degerler dosyada",
+        'CONF_THRESHOLD = 0.55' in _sonra and 'KP_YAW = 0.65' in _sonra
+        and '"gain": 199,' in _sonra)
+kontrol("kaydedilmeyen satirlara dokunulmuyor",
+        sum(1 for a, b in zip(_once.split('\n'), _sonra.split('\n')) if a != b) == 3)
+_ok2, _m2 = _cy.kaydet(sabitler={'BOYLE_BIR_SABIT_YOK': 1}, yol=_kopya)
+kontrol("bilinmeyen sabit dosyayi DEGISTIRMIYOR",
+        _ok2 and io.open(_kopya, encoding='utf-8').read() == _sonra, _m2)
+kontrol("deger metni dogru bicimleniyor",
+        (_cy.deger_metni(None) == 'None' and _cy.deger_metni(True) == 'True'
+         and _cy.deger_metni(4) == '4' and _cy.deger_metni(0.5) == '0.5'
+         and _cy.deger_metni(12.0) == '12.0'))
+_sh.rmtree(_gecici, ignore_errors=True)
+kontrol("gercek config.py bu testlerde HIC yazilmadi",
+        io.open('config.py', encoding='utf-8').read() == _once)
 kontrol("balon grace sayaci tutuluyor ve kapiya veriliyor",
         "self._balon_kayip_kare += 1" in _k31
         and "balon_yakin=self._balon_yakin_zamanda()" in _k31)
