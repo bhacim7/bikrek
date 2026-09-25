@@ -5111,3 +5111,209 @@ Test: 470 kontrol, hepsi geciyor (onceki 453).
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.** Bu paketteki her sey bilgisayarda
 calisan gozcu boru hattinda.
+
+
+### 29.25 aşama2son10 analizi + şarjör takibi (2026-09-25)
+
+Kaynak: `aşama2son10.mp4` (633 kare, 21.07 sn, 30 fps) ve ayni kosumun
+enkoder kaydi `enkoder_kayit/enkoder_20260925_161805.csv` (50 Hz, 4100
+ornek). Video 43 noktadan enkodere capraz korelasyonla hizalandi:
+**video t = enkoder t0 + 29.874 sn**, ortalama uyum hatasi **0.017 derece**
+(orneklerin cogunda 0.005 derece). Asagidaki her sayi bu hizalamayla
+olculdu.
+
+Kosum, 29.24'ten sonra kullanicinin kendi ayarladigi kazanclarla yapildi:
+`KP_YAW 0.7 -> 0.9`, `FEEDFORWARD_GAIN 1.0 -> 0.8` (29.24.6'daki oneri),
+ayrica `PID_DEADBAND_PIXELS 5.0 -> 2.5`, `MIN_OUTPUT_PIXELS 2.5 -> 1.5`,
+`AIM_TOLERANCE_MIN_PIXELS 12 -> 8`, `AIM_HOLD_FRAMES 2 -> 3`,
+`FIRE_MAX_ATTEMPTS 3 -> 5`, `CONF_THRESHOLD 0.4 -> 0.3`.
+
+#### 29.25.1 Kosumun tamami
+
+3 imha / 8 atis. Tetik anlari durum cubugundaki "Atesleme basarili"
+ifadesinin sablon eslestirmesiyle kare kare bulundu:
+
+| hedef | angajman | atislar (sn) | atis sayisi |
+|---|---|---|---|
+| Helikopter (orta) | 2.5 - 8.8 | 4.33, 5.87, 7.47 | 3 |
+| Fuze (sag) | 8.9 - 12.1 | 10.77 | **1** |
+| Drone (sol) | 12.5 - 19.5 | 14.07, 15.40, 16.77, 18.07 | 4 |
+
+19.5 sn'de sistem imha edilmis Helikopter'i yeniden hedefledi
+("Avci hedefi zaten goruyor (dusman-Helikopter)"); kullanici 20.0'da
+durdurdu. Helikopter 8.8'de imha edilmisti, yani kara listeden
+**10.7 saniye** sonra cikti — `BLACKLIST_TTL_SEC` 10'a dusurulmustu.
+Kosum orada bittigi icin maliyeti olmadi ama uzun bir gorevde olurdu.
+
+#### 29.25.2 B63 — "Ilk nisanda hedefi asip geri geliyor": sebep KP degil
+
+Kullanicinin sorusu "KP'yi artirdik, ilk hedeflemede salinima sebep
+oluyor mu" idi. Uc edinim de 50 Hz enkoderden ayri ayri olculdu:
+
+| edinim | tepe hiz | **asim** | yerlesme | yon degisimi |
+|---|---|---|---|---|
+| 1 Helikopter | 32 derece/sn | 0.15 derece = **10 px** | 0.60 sn | 8 |
+| 2 Fuze | 55 derece/sn | 1.07 derece = **76 px** | **1.64 sn** | 7 |
+| 3 Drone | 46 derece/sn | 0.20 derece = **14 px** | — | 4 |
+
+1. ve 3. edinim temiz. Yalnizca 2. edinim bozuk, ve orada olan sey
+oransal kazanc asimi DEGIL: taret 1.0 -> 4.0 dereceye gidiyor, sonra
+**1.4 dereceye geri doneuyor**, sonra 6.6'ya ciiyor. Saf bir P
+denetleyici, HATA isaret degistirmeden geri donemez.
+
+Hata gercekten isaret degistirdi. Durum cubugundan kare kare:
+
+| video t | hata (yaw px) | durum |
+|---|---|---|
+| 8.93 | +403 | DOGRULAMA — 3 cift goruluyor |
+| 9.00 | +403 | DOGRULAMA — 3 cift |
+| 9.07 | **-584** | DOGRULAMA — **1 cift** |
+| 9.13 | **-719** | DOGRULAMA — 1 cift |
+| 9.20 | +179 | DOGRULAMA — 1 cift |
+| 9.27 | +307 | Hedef kaybedildi, tahminle takip |
+| 9.33 | +354 | KILIT — dusman-Fuze |
+
+Bir karede **987 piksel = 13.9 derece** sicrama. Hedef 67 ms'de 14
+derece gitmez; SECILEN HEDEF degisti. Gorulen cift sayisi 3'ten 1'e
+dustu ve kalan tek cift ekranin ters tarafindaki Drone'du.
+
+**Neden tespit coktu: HAREKET BULANIKLIGI.** `k272` (9.07 sn) karesi
+gozle bakildiginda tamamen yayilmis; Helikopter ve Fuze tespit
+edilemiyor, yalnizca Drone kutulanmis. Arayuzun cizdigi kutular hic
+bulanmadigi icin kare-genelinde keskinlik olcumu bunu gizliyor; olcum
+arayuz cizimi OLMAYAN tavan bandinda yapilinca ortaya cikti (en parlak
+kenarin egimi):
+
+| durum | kenar egimi |
+|---|---|
+| taret yerlesikken | 530 - 600 |
+| slew sirasinda (9.07-9.30) | **72 - 240** |
+
+Tum kosumda kenar egimi 250'nin altina dusen 21 kare var ve **hepsi**
+hizli slewlerle ortusuyor:
+
+| pencere | kare | o andaki tepe hiz |
+|---|---|---|
+| 9.07 - 9.30 | 7 | 55 derece/sn |
+| 12.73 - 12.83 | 4 | 46 derece/sn |
+| 19.77 - 20.20 | 8 | 38 - 45 derece/sn |
+
+**Buyukluk hesabi dogruluyor.** Avci pozlamasi `exposure = -5`, yani
+2^-5 = **31.25 ms**. O surede goruntunun kaydigi mesafe:
+
+| taret hizi | exp -5 (simdiki) | exp -6 | exp -7 |
+|---|---|---|---|
+| 15 derece/sn | 33 px | 17 px | 8 px |
+| 46 derece/sn | **102 px** | 51 px | 25 px |
+| 55 derece/sn | **122 px** | 61 px | 30 px |
+
+15 metrede balonun CAPI 38 piksel. 46 derece/sn'de leke 102 piksel,
+yani balonun iki buçuk kati — balon tamamen siliniyor. Dikkat: 15
+derece/sn gibi siradan bir takip hizinda bile leke 33 piksel, yani
+balon capi kadar.
+
+Yani "ilk nisanda asip geri gelme" bir denetleyici ayari sorunu degil,
+**taret hizlandikca avcinin kor kalmasi** sorunu. Genel korelasyon
+zayif (r = -0.04) cunku taban keskinlik sahnenin neresine bakildigina
+gore degisiyor; ama olaylarin kendisi kesin ve gozle dogrulanabilir.
+
+#### 29.25.3 B64 — Silahin sifir ofseti: 8 atistan kestirim
+
+Sekiz tetik aninin her birinde nisangahin (yesil arti) kilitli balon
+kutusuna gore konumu tam cozunurlukte olculdu:
+
+| atis | d_yaw | d_pitch | yaricap | sonuc |
+|---|---|---|---|---|
+| H1-a1 | +22.0 | +4.7 | 20.1 | iska |
+| H1-a2 | -36.3 | +2.8 | 21.8 | iska |
+| H1-a3 | +5.7 | -1.9 | 22.9 | **ISABET** |
+| H2-a1 | +12.6 | -3.8 | 19.6 | **ISABET** |
+| H3-a1 | +8.5 | -3.2 | 15.1 | iska |
+| H3-a2 | -10.4 | -5.7 | 25.7 | iska |
+| H3-a3 | -9.8 | -1.0 | 25.7 | iska |
+| H3-a4 | +5.7 | -2.2 | 29.1 | **ISABET** |
+
+Drone'un uc iskasinda nisan hatasi 9-12 piksel, yani balon yaricapinin
+(26 px) yarisindan az. Nisan dogruydu ama mermi gitmedi. Bu, hatanin
+NISANDA degil SIFIRDA oldugunu soyluyor.
+
+Model: carpma noktasi = nisangah - Z. Z icin izgara aramasi:
+
+**Z = (+14.5, -20.0) piksel sekiz atisin SEKIZINI de dogru acikliyor**
+(en dar marj 2.7 px). 8/8 veren aralik: Z_yaw 9..24, Z_pitch -23..-15.
+
+15 metrede fiziksel karsiligi: mermi nisangahin **5.4 cm soluna ve
+7.4 cm altina** gidiyor.
+
+Dusey bilesen, koda 29.x'te yazilmis olan mekanik olcumle ortusuyor:
+`engagement._nisan_yuksekligi` docstring'i "avci kamera namlunun 5.5 cm
+USTUNDE, eksenler paralel" diyor ve tam da merminin 5.5 cm ALTA
+gitmesini ongoruyor. Bagimsiz iki yoldan ayni sonuc.
+
+**Uyarilar, dürüstçe:** n=8 ve yalnizca 3 isabet var; isabet/iska
+etiketleri sistemin kendi imha dogrulamasindan geliyor, merminin
+gozlenmesinden degil; iki serbest parametreyle 8 ikili gozlemi
+aciklamak genis bir aile birakiyor (yukaridaki aralik). Bu yuzden bu
+bir KESTIRIM, olcum degil. Ama yonu ve buyuklugu bagimsiz mekanik
+olcumle uyustugu icin dogrudan olcumu yapmak artik oncelikli.
+
+`AIM_POINT_HEIGHT_RATIO` hala 0.5 (telafi KAPALI). Yatay eksen icin
+kodda karsilik yok — gerekirse eklenmeli.
+
+#### 29.25.4 Kullanicinin ayarlarindan gelen iki test hatasi
+
+`PID_DEADBAND_PIXELS` 5.0'dan 2.5'e cekilmis. Bir yaw adimi
+1/26.667 derece = **2.7 piksel**, yani olu bant artik motorun
+cozunurlugunden KUCUK:
+
+- "olu bant bir motor adimindan buyuk" testi kaliyor (2.5 < 2.7)
+- "pitch: olu bandin hemen ustundeki 2.6 px hata 8 kare icinde komut
+  uretiyor" testi kaliyor
+
+Etkisi kucuk (2.6 px = 0.037 derece, balon yaricapinin %14'u) ama
+2.5-2.7 px araligi artik bir olu bolge. `3.0` bir adimin ustunde kalir
+ve 8 px'lik toleransin hala cok altindadir. DEGISTIRILMEDI — bu
+kullanicinin sahada ayarladigi bir deger.
+
+`AIM_TOLERANCE_MIN_PIXELS` testi ise GUNCELLENDI: eski olcut
+"12 px = 4.4 cm" VARSAYIMINA dayaniyordu, oysa silahin sacilmasi artik
+olculdu (15 m'de 3x3 cm = 8.1 px cap, sigma ~2 px). Yeni bant fizikten
+cikiyor: ust sinir tolerans + 3sigma < balon yaricapi (18.9 px), alt
+sinir takip RMS'inin (5-6 px) ustu. 8 px bu bandin icinde.
+
+#### 29.25.5 Sarjor takibi (istenen ozellik)
+
+Ayarlar dugmesinin altindaki bos alana "SARJOR" kutusu eklendi.
+
+**Sayac neden Pi'nin ates ONAYINDA dusuruluyor, komut gonderilirken
+degil:** ates kapisi, atessiz bolge ya da baglanti hatasi komutu
+engellemis olabilir; o durumda mermi harcanmamistir. Tek guvenilir
+isaret Pi'nin "calistirdim" yanitidir. Kodda uc ayri yerden ates komutu
+gonderiliyor (otonom, manuel modlar, asama2/3 dugmesi) ve ucu de ayni
+yanit yolundan gectigi icin tek bir dusurme noktasi yetiyor.
+
+**Sayac atesi ENGELLEMIYOR.** Bilerek: sayac bir gosterge ve elle
+degistirilebiliyor. Yanlis ayarlanmis bir sayacin gorevi durdurmasi,
+gostergenin yanlis olmasindan daha buyuk bir risk.
+
+Elle duzenlenebilir (sahada sarjor yarim takilabiliyor), fare tekerlegi
+degeri degistirmiyor (29.21'de Ayarlar sekmesinde ayni sorun yasanmisti),
+kalan mermiye gore renk degistiriyor (10 alti sari, 5 alti kirmizi),
+"Sifirla" `config.SARJOR_KAPASITE` degerini geri yukluyor.
+
+#### 29.25.6 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `config.py` | YENI `SARJOR_KAPASITE=30`, `SARJOR_AZ_UYARI=10`, `SARJOR_KRITIK_UYARI=5` | sarjor takibi |
+| `bukrek_main.py` | `QSpinBox` ithali | sayac kutusu |
+| `bukrek_main.py` | Ayarlar dugmesi altina "SARJOR" grup kutusu | istenen ozellik |
+| `bukrek_main.py` | `sarjoru_sifirla`, `sarjor_kalan`, `_sarjor_azalt`, `_sarjor_gorunumu_guncelle` | sayac mantigi |
+| `bukrek_main.py` | `_process_rpi_response` ates onayinda `_sarjor_azalt()` | engellenen ates mermi yemesin |
+| `tests_yeni_mimari.py` | 43. bolum (17 kontrol) | sayac mantigi sahte arayuzle GERCEKTEN calistiriliyor |
+| `tests_yeni_mimari.py` | nisan tolerans testinin dayanagi olculen sacilmaya cevrildi | eski olcut varsayima dayaniyordu |
+
+Test: 488 kontrol (486 gecti); 2'si kullanicinin `PID_DEADBAND_PIXELS=2.5` ayarindan
+kaliyor (29.25.4).
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**

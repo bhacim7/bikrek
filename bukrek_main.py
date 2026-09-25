@@ -2,7 +2,7 @@ import sys
 import cv2
 import PyQt5
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QSizePolicy, \
-    QSpacerItem, QGroupBox, QLineEdit, QMessageBox, QRadioButton
+    QSpacerItem, QGroupBox, QLineEdit, QMessageBox, QRadioButton, QSpinBox
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QFont
 from PyQt5.QtCore import QTimer, Qt, QCoreApplication, QThread, pyqtSignal
 
@@ -568,6 +568,42 @@ class HavaSavunmaArayuz(QWidget):
             "yasak alan ve takip/ateş parametreleri")
         self.ayarlar_button.clicked.connect(self.ayarlari_ac)
         right_layout.addWidget(self.ayarlar_button)
+
+        # --- SARJOR TAKIBI (2026-09-25, 29.25) ---
+        # Ayarlar butonunun altindaki bos alana konuldu. Sayac ELLE
+        # degistirilebilir (QSpinBox): sahada sarjor yarim takilabiliyor ve
+        # o zaman otomatik sayac yanlis olur; operatorun duzeltebilmesi sart.
+        # "Sifirla" config.SARJOR_KAPASITE degerini geri yukler.
+        self.sarjor_kutusu_grup = QGroupBox("ŞARJÖR")
+        self.sarjor_kutusu_grup.setStyleSheet(self.grup_stili())
+        _sarjor_satir = QHBoxLayout()
+        _sarjor_satir.setSpacing(10)
+        _sarjor_etiket = QLabel("Kalan mermi:")
+        _sarjor_etiket.setStyleSheet("color: white; font-size: 14px;")
+        _sarjor_satir.addWidget(_sarjor_etiket)
+
+        self.sarjor_kutusu = QSpinBox(self)
+        self.sarjor_kutusu.setRange(0, 999)
+        self.sarjor_kutusu.setValue(int(getattr(config, 'SARJOR_KAPASITE', 30)))
+        self.sarjor_kutusu.setAlignment(Qt.AlignCenter)
+        # Fare tekerlegi sayfayi kaydirirken degeri DEGISTIRMESIN --
+        # Ayarlar sekmesinde ayni sorun 29.21'de yasanmisti.
+        self.sarjor_kutusu.wheelEvent = lambda olay: olay.ignore()
+        self.sarjor_kutusu.valueChanged.connect(self._sarjor_gorunumu_guncelle)
+        _sarjor_satir.addWidget(self.sarjor_kutusu, 1)
+
+        self.sarjor_sifirla_butonu = QPushButton(
+            "Sıfırla (%d)" % int(getattr(config, 'SARJOR_KAPASITE', 30)), self)
+        self.apply_button_style(self.sarjor_sifirla_butonu, font_size=14, padding=9,
+                                bg_color="#17a2b8", hover_color="#138496",
+                                pressed_color="#117a8b")
+        self.sarjor_sifirla_butonu.clicked.connect(self.sarjoru_sifirla)
+        _sarjor_satir.addWidget(self.sarjor_sifirla_butonu)
+
+        self.sarjor_kutusu_grup.setLayout(_sarjor_satir)
+        right_layout.addWidget(self.sarjor_kutusu_grup)
+        self._sarjor_gorunumu_guncelle()
+
         self._ayarlar_penceresi = None
         # Acilistaki degerlerin yedegi: "varsayilana don" bunu kullanir.
         self._kamera_kontrol_yedegi = {
@@ -1677,6 +1713,11 @@ class HavaSavunmaArayuz(QWidget):
         if response_data.get("status") == "ok":
             if response_data.get("action") == "fire":
                 print("Ateşleme Başarılı!")
+                # SARJOR (29.25): mermi BURADA dusuruluyor, komut
+                # gonderilirken degil. Ates kapisi, atessiz bolge ya da
+                # baglanti hatasi komutu engellediyse mermi harcanmamistir;
+                # tek guvenilir isaret Pi'nin "calistirdim" yanitidir.
+                self._sarjor_azalt()
                 # OTONOM MODLARDA `target_destroyed` BURADA SET EDİLMEZ.
                 # Pi'nin "ateş komutu çalıştı" yanıtı, balonun patladığı
                 # anlamına gelmiyor — o kararı imha doğrulama penceresi
@@ -2281,6 +2322,59 @@ class HavaSavunmaArayuz(QWidget):
         command = {"action": "set_angles", "yaw": yaw, "pitch": pitch}
         self.last_angle_command_send_time = current_time
         return self.send_command_to_rpi(command)
+
+    # ------------------------------------------------------------------
+    #  SARJOR TAKIBI (2026-09-25, 29.25)
+    # ------------------------------------------------------------------
+    def sarjoru_sifirla(self):
+        """Sayaci config.SARJOR_KAPASITE degerine dondurur."""
+        if not hasattr(self, 'sarjor_kutusu'):
+            return
+        kap = int(getattr(config, 'SARJOR_KAPASITE', 30))
+        self.sarjor_kutusu.setValue(kap)
+        self._update_status_label("Durum: Şarjör %d mermiye sıfırlandı." % kap)
+
+    def sarjor_kalan(self):
+        """Kalan mermi (arayuz yoksa kapasite)."""
+        if not hasattr(self, 'sarjor_kutusu'):
+            return int(getattr(config, 'SARJOR_KAPASITE', 30))
+        return int(self.sarjor_kutusu.value())
+
+    def _sarjor_azalt(self):
+        """
+        Bir mermi dusur. Pi'nin ates ONAYINDA cagriliyor.
+
+        SIFIRIN ALTINA INMEZ: sayac operatorun elle girdigi bir degerden
+        baslayabiliyor ve yanlissa eksiye dusmesi bilgi degil gurultu olur.
+        Ates ENGELLENMEZ -- sayac bir GOSTERGE; gercek mermi bittiginde
+        yazilimin ates etmeyi reddetmesi, sayac yanlis ayarlandiginda
+        gorevi durdurur ki bu daha buyuk bir risk.
+        """
+        if not hasattr(self, 'sarjor_kutusu'):
+            return
+        kalan = int(self.sarjor_kutusu.value())
+        if kalan > 0:
+            self.sarjor_kutusu.setValue(kalan - 1)
+        else:
+            print("SARJOR: sayac zaten 0, ates yine de gonderildi "
+                  "(sayac gosterge amaclidir, ates engellenmez).")
+
+    def _sarjor_gorunumu_guncelle(self):
+        """Kalan mermiye gore renk: normal / az / kritik."""
+        if not hasattr(self, 'sarjor_kutusu'):
+            return
+        kalan = int(self.sarjor_kutusu.value())
+        az = int(getattr(config, 'SARJOR_AZ_UYARI', 10))
+        kritik = int(getattr(config, 'SARJOR_KRITIK_UYARI', 5))
+        if kalan <= kritik:
+            renk, zemin = "#ffffff", "#c82333"
+        elif kalan <= az:
+            renk, zemin = "#1a1a1a", "#ffc107"
+        else:
+            renk, zemin = "#1a1a1a", "#ffffff"
+        self.sarjor_kutusu.setStyleSheet(
+            "QSpinBox { color: %s; background-color: %s; font-size: 22px; "
+            "font-weight: bold; padding: 4px; }" % (renk, zemin))
 
     def fire_weapon(self):
         if not self.rpi_thread.is_connected:

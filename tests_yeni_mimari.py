@@ -1813,9 +1813,25 @@ kontrol("sabit hatada kayma sifir",
         abs(engagement.nisan_kayma_hizi([(k * _dt, 7.0, -3.0) for k in range(8)])) < 1e-9)
 kontrol("duz kaymada egim tam dogru",
         abs(engagement.nisan_kayma_hizi([(k * _dt, 20.0 * k * _dt, 0.0) for k in range(8)]) - 20.0) < 1e-6)
-kontrol("nisan toleransi silah hassasiyetiyle tutarli (12 px = 4.4 cm @ 15 m)",
-        11.0 <= config.AIM_TOLERANCE_MIN_PIXELS <= 14.0,
-        f"{config.AIM_TOLERANCE_MIN_PIXELS} px")
+# NISAN TOLERANSININ DAYANAGI GUNCELLENDI (2026-09-25, 29.25).
+# Eski olcut "12 px = 4.4 cm" VARSAYIMINA dayaniyordu. Artik silahin
+# sacilmasi SAHADA OLCULDU: 15 metrede ayni noktaya atilan mermiler
+# 3x3 cm'lik bir kareye dusuyor, yani cap 8.1 px, sigma ~2 px.
+# Dogru bant iki taraftan da fizikten cikiyor:
+#   ust sinir: tolerans + sacilma (3 sigma = 6 px) balon YARICAPINI
+#              (15 m'de 18.9 px) asmamali -> tolerans < 12.9 px
+#   alt sinir: takip hatasinin RMS'i (olculen 5-6 px) altina inerse kapi
+#              neredeyse hic acilmaz ve hedef basina atis butcesi biter
+#              (sahada FIRE_MAX_ATTEMPTS 3'ten 5'e cikarilmak zorunda
+#              kalinmisti) -> tolerans > 6 px
+_yaricap_px = 7.0 / 100.0 / 15.0 * (180.0 / 3.14159265) / abs(config.HUNTER_DPP_YAW)
+kontrol("nisan toleransi OLCULEN silah sacilmasiyla tutarli",
+        6.0 <= config.AIM_TOLERANCE_MIN_PIXELS <= 13.0,
+        f"{config.AIM_TOLERANCE_MIN_PIXELS} px (balon yaricapi {_yaricap_px:.1f} px, "
+        f"sacilma 3sigma 6 px)")
+kontrol("tolerans + sacilma balon yaricapini asmiyor",
+        config.AIM_TOLERANCE_MIN_PIXELS + 6.0 < _yaricap_px,
+        f"{config.AIM_TOLERANCE_MIN_PIXELS}+6 < {_yaricap_px:.1f}")
 
 # --- 33. ATESLEME TAKIBI DURDURMAMALI (29.15 B49) ---
 # Sahada olculdu (aşama2son3.mp4 + enkoder kaydi): HER atisin hemen
@@ -2507,6 +2523,124 @@ kontrol("gozcu CANLI UVC komutunu isliyor (sessizce dusurmuyor)",
         and 'config.KAMERA_KONTROLLERI.setdefault("spotter", {}).update(yeni)' in _k42)
 kontrol("UVC avciyla AYNI fonksiyondan uygulaniyor (ikinci kopya yok)",
         'def _uvc_uygula' not in _k42)
+
+print()
+print("=" * 70)
+print("43. SARJOR TAKIBI (29.25)")
+print("=" * 70)
+# Qt bu ortamda kurulu olmayabilir. Kaynak metnini "iceriyor mu" diye
+# yoklamak yetmez -- MANTIK sinanmali. Bu yuzden dort sarjor metodu
+# `ast` ile kaynaktan cikarilip SAHTE bir arayuz nesnesine baglaniyor;
+# boylece calisan gercek kod test ediliyor.
+import ast as _ast43
+import textwrap as _tw43
+
+_k43 = io.open('bukrek_main.py', encoding='utf-8').read()
+
+kontrol("config: kapasite ve uyari esikleri tanimli",
+        config.SARJOR_KAPASITE == 30 and config.SARJOR_AZ_UYARI == 10
+        and config.SARJOR_KRITIK_UYARI == 5,
+        "%s/%s/%s" % (config.SARJOR_KAPASITE, config.SARJOR_AZ_UYARI,
+                      config.SARJOR_KRITIK_UYARI))
+
+_i_yanit = _k43.index('response_data.get("action") == "fire"')
+_i_azalt = _k43.index('self._sarjor_azalt()')
+kontrol("mermi Pi'nin ATES ONAYINDA dusuruluyor (komut gonderilirken DEGIL)",
+        _i_azalt > _i_yanit and _i_azalt - _i_yanit < 700)
+kontrol("ates GONDERIM yerlerinde sayac dusurulmuyor (engellenen ates mermi yemez)",
+        _k43.count('self._sarjor_azalt()') == 1,
+        "%d yerde" % _k43.count('self._sarjor_azalt()'))
+kontrol("ates komutu UC ayri yerden gonderiliyor, hepsi ayni yanittan geciyor",
+        _k43.count('{"action": "fire"}') == 3,
+        "%d gonderim" % _k43.count('{"action": "fire"}'))
+kontrol("fare tekerlegi sayaci degistirmiyor",
+        'self.sarjor_kutusu.wheelEvent = lambda olay: olay.ignore()' in _k43)
+kontrol("sayac ELLE duzenlenebilir (QSpinBox)",
+        'self.sarjor_kutusu = QSpinBox(self)' in _k43)
+kontrol("Sifirla dugmesi bagli",
+        'self.sarjor_sifirla_butonu.clicked.connect(self.sarjoru_sifirla)' in _k43)
+
+# --- METOTLARI KAYNAKTAN CIKAR ---
+_agac43 = _ast43.parse(_k43)
+_istenen43 = ('sarjoru_sifirla', 'sarjor_kalan', '_sarjor_azalt',
+              '_sarjor_gorunumu_guncelle')
+_parca43 = []
+for _d in _ast43.walk(_agac43):
+    if isinstance(_d, _ast43.FunctionDef) and _d.name in _istenen43:
+        _parca43.append(_tw43.dedent(_ast43.get_source_segment(_k43, _d)))
+_ns43 = {'config': config}
+exec("\n\n".join(_parca43), _ns43)
+kontrol("dort sarjor metodu da kaynaktan cikarilip calistirilabildi",
+        all(a in _ns43 for a in _istenen43), "%d metot" % len(_parca43))
+
+
+class _SahteKutu43(object):
+    def __init__(self, v):
+        self._v = v
+        self.stil = ''
+
+    def value(self):
+        return self._v
+
+    def setValue(self, v):
+        self._v = v
+
+    def setStyleSheet(self, s):
+        self.stil = s
+
+
+class _SahteArayuz43(object):
+    def __init__(self, baslangic):
+        self.sarjor_kutusu = _SahteKutu43(baslangic)
+        self.durum = []
+
+    def _update_status_label(self, m):
+        self.durum.append(m)
+
+
+_a43 = _SahteArayuz43(30)
+for _ in range(3):
+    _ns43['_sarjor_azalt'](_a43)
+kontrol("her ateste BIR azaliyor", _ns43['sarjor_kalan'](_a43) == 27,
+        str(_ns43['sarjor_kalan'](_a43)))
+
+_a43.sarjor_kutusu.setValue(0)
+_ns43['_sarjor_azalt'](_a43)
+kontrol("SIFIRIN ALTINA inmiyor", _ns43['sarjor_kalan'](_a43) == 0,
+        str(_ns43['sarjor_kalan'](_a43)))
+
+_a43.sarjor_kutusu.setValue(17)
+kontrol("elle girilen deger korunuyor (yarim sarjor takilabilir)",
+        _ns43['sarjor_kalan'](_a43) == 17)
+_ns43['_sarjor_azalt'](_a43)
+kontrol("elle girilen degerden de normal azaliyor",
+        _ns43['sarjor_kalan'](_a43) == 16)
+
+_ns43['sarjoru_sifirla'](_a43)
+kontrol("Sifirla kapasiteyi geri yukluyor",
+        _ns43['sarjor_kalan'](_a43) == config.SARJOR_KAPASITE,
+        str(_ns43['sarjor_kalan'](_a43)))
+kontrol("Sifirla durum cubuguna yaziyor",
+        any('arj' in m for m in _a43.durum), str(_a43.durum))
+
+_a43.sarjor_kutusu.setValue(4)
+_ns43['_sarjor_gorunumu_guncelle'](_a43)
+_kritik43 = _a43.sarjor_kutusu.stil
+_a43.sarjor_kutusu.setValue(8)
+_ns43['_sarjor_gorunumu_guncelle'](_a43)
+_az43 = _a43.sarjor_kutusu.stil
+_a43.sarjor_kutusu.setValue(25)
+_ns43['_sarjor_gorunumu_guncelle'](_a43)
+_nor43 = _a43.sarjor_kutusu.stil
+kontrol("kritik / az / normal seviyeler FARKLI renk veriyor",
+        _kritik43 != _az43 and _az43 != _nor43 and _kritik43 != _nor43)
+kontrol("kritik seviye kirmizi zeminli", '#c82333' in _kritik43)
+
+# Sayac bir GOSTERGE: ates yolunda hicbir sarjor kosulu olmamali.
+_gov43 = _k43[_k43.index('def fire_weapon(self):'):]
+_gov43 = _gov43[:_gov43.index('# --- Derece/piksel')]
+kontrol("sayac atesi ENGELLEMIYOR (0'da bile komut gider)",
+        'sarjor' not in _gov43.lower())
 
 print()
 print("=" * 70)

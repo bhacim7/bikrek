@@ -35,7 +35,7 @@ YOLO_MODEL_PATH = os.path.join(_BURASI, "v26L1056.engine")
 # eslestirme (yalniz maket veya yalniz balon angaje edilemez),
 # LOCK_CONFIRM_FRAMES zamansal onayi ve VERIFY_MIN_CONFIDENCE. Dataset egik/
 # bulanik orneklerle guclendikten sonra 0.4'e geri donulebilir.
-CONF_THRESHOLD = 0.4
+CONF_THRESHOLD = 0.3
 NMS_THRESHOLD = 0.4
 
 # data.yaml ile BİREBİR aynı sıra olmalı — sınıf indeksleri buradan çözülüyor.
@@ -596,7 +596,7 @@ SPOTTER_PITCH_OFFSET = 0.0
 
 # PID oransal kazançları. DERECE uzayında çalışırlar (komut = KP x hata_derece),
 # yani zoomdan bağımsızdırlar — 3x zoomlu avcıda da aynı değerler geçerli.
-KP_YAW = 0.7
+KP_YAW = 0.9
 KP_PITCH = 0.6
 
 # --- İleri besleme (feedforward) ---
@@ -630,7 +630,7 @@ KP_PITCH = 0.6
 #     feedforward = hedef_hizi x delta_time x FEEDFORWARD_GAIN
 # GAIN = 1.0 tam hiz eslemesi. Taret hedefin gerisinde kaliyorsa 1.1-1.2,
 # asip oniune geciyorsa 0.8 denenir.
-FEEDFORWARD_GAIN = 1.0
+FEEDFORWARD_GAIN = 0.8
 
 # Duyarga gecikmesi (saniye): kamera + çıkarım + açı raporu + motor tepkisi.
 # EKRAN KAYDINDAN ÖLÇÜLDÜ: hedef sabit hızla giderken kalan piksel hatası
@@ -812,7 +812,7 @@ PREDICTION_MAX_RATE_DEG_S = 1.0
 # beslemesi (B38) artik hizi kendi tasidigi icin olu bandin tek isi sabit
 # hedefte avlanmayi kesmek; 5 px = 0.071 derece bunun icin yeterli.
 # Kilitte 2-4 Hz titreme geri gelirse 7.0'a donun.
-PID_DEADBAND_PIXELS = 5.0
+PID_DEADBAND_PIXELS = 2.5
 # Olu bantta ARDISIK bu kadar kare kalinirsa "hedef gercekten durdu" sayilir
 # ve cikis suzgecinin hafizasi sifirlanir (artimli komutun kuyrugu kesilir,
 # 29.6). Daha kisa dipler hafizayi SILMEZ: eskiden tek karelik bir dip bile
@@ -827,7 +827,7 @@ PID_DEADBAND_SETTLE_FRAMES = 3
 # (`set_proportional_angles_delta` hedefi HER KAREDE mevcut acidan yeniden
 # kurdugu icin adim artigi atiliyor) tamamen kayboluyordu; kare hizi
 # arttikca kare basina dusen komut kuculdugu icin bu kayip buyuyor.
-MIN_OUTPUT_PIXELS = 2.5
+MIN_OUTPUT_PIXELS = 1.5
 
 # --- REZONANS SONUMLEME (PID cikis suzgeci) ---
 #
@@ -1085,6 +1085,17 @@ PAIR_REQUIRE_NEAREST_MAKET = True
 # Nişan noktası = maket_merkezi + (0, bu_kat x maket_genisligi)
 PAIR_FALLBACK_AIM_OFFSET = 0.75
 
+# --- SARJOR TAKIBI (2026-09-25, 29.25) ---
+# Operatorun kac mermi kaldigini ekrandan gorebilmesi icin. Sayac SAHADA
+# guvenilir olsun diye Pi'nin "ates komutu calisti" YANITINDA dusuruluyor,
+# komut gonderilirken degil: ates kapisi ya da atessiz bolge komutu
+# engellediyse mermi de harcanmamistir.
+# Arayuzdeki kutudan elle degistirilebilir (sarjor yarim takildiysa) ve
+# "Sifirla" bu degeri geri yukler.
+SARJOR_KAPASITE = 30
+SARJOR_AZ_UYARI = 10      # bu sayinin altinda sari
+SARJOR_KRITIK_UYARI = 5   # bu sayinin altinda kirmizi
+
 # --- NISAN NOKTASI: balon kutusunun NERESINE nisan alinacak ---
 # Kutunun ALTINDAN olculen yukseklik orani. 0.5 = merkez, 1.0 = ust kenar.
 #
@@ -1218,7 +1229,7 @@ AIM_TOLERANCE_RATIO = 0.4
 # yere sikiydi ve nisan penceresini kapatiyordu: sahada taret balonun
 # uzerinde ilerlerken bile ates aclmiyordu. Daha buyuk yapmayin —
 # 14 px + 2 cm silah sapmasi balonun kenarina dayaniyor.
-AIM_TOLERANCE_MIN_PIXELS = 12
+AIM_TOLERANCE_MIN_PIXELS = 8
 
 # --- ATES KAPISI: TARET NE KADAR YAVASKEN ATES SERBEST ---
 # Namlu, ates komutundan sonra servo cekisi (FIRE_SERVO_LEG_SEC = 0.20 sn)
@@ -1296,7 +1307,7 @@ FIRE_SHOT_LATENCY_SEC = 0.25
 # sonra esik de gercek gurultu seviyesine gore secildi: egim kestiricisinin
 # p90 gurultusu 0.6 sn'lik pencerede ~11 px, salinyan taretinki 15+ px.
 # 14 px ikisini ayiriyor. Balon yaricapi 15 metrede ~15 px.
-FIRE_MAX_ERROR_DRIFT_PIXELS = 14
+FIRE_MAX_ERROR_DRIFT_PIXELS = 12
 # Kaymayi olcmek icin kullanilan pencere (saniye). Nisan hatasina EKSEN
 # BASINA en kucuk kareler dogrusu uydurulup EGIMI alinir.
 # BU KESTIRICI BILEREK BOYLE: ilk surum ardisik karelerin farkinin
@@ -1347,7 +1358,7 @@ FIRE_BALLOON_GRACE_FRAMES = 3
 # yani 3 kare 0.10 sn degil 0.20 sn demekti. Ustelik tespit surekliligi
 # kirildiginda (B1) 3 ardisik kare hic toplanamiyor. 2 kare @15fps = 0.13 sn,
 # eski 3 kare @30fps'e yakin. Tek karelik gurultuye karsi koruma korunuyor.
-AIM_HOLD_FRAMES = 2
+AIM_HOLD_FRAMES = 3
 
 # --- IMHA DOGRULAMA ---
 # Sahada olculdu (asama2-3-hedefTakip.mp4): Asama 3'te ates 4.07 saniyede
@@ -1366,7 +1377,7 @@ AIM_HOLD_FRAMES = 2
 # diye pencerede balonun kac karede goruldugu sayiliyor.
 FIRE_CONFIRM_SEC = 0.7        # pencere suresi: balon kaybolmasi icin beklenen
 FIRE_CONFIRM_MAX_SEEN = 4     # pencerede bu kadar karede gorulurse "hala orada"
-FIRE_MAX_ATTEMPTS = 3         # ayni hedefe ardisik en fazla kac ates
+FIRE_MAX_ATTEMPTS = 5         # ayni hedefe ardisik en fazla kac ates
 
 # --- IMHA KANITI ICIN TABAN ORAN (2026-09-23 gece, 29.16 B50) ---
 # "Ates sonrasi balon gorunmuyor" ancak balon ATESTEN ONCE guvenilir
@@ -1432,7 +1443,7 @@ TRACK_REACQUIRE_PIXELS = 150.0
 # Gövde çerçevesinde MUTLAK açı olarak tutulur (piksel uzayında tutmak
 # anlamsız, taret döndükçe referans kayar).
 BLACKLIST_RADIUS_DEG = 4.0
-BLACKLIST_TTL_SEC = 12          # imha edilenler için
+BLACKLIST_TTL_SEC = 10          # imha edilenler için
 # IMHA/VAZGECME KAYDININ YARICAPI (2026-09-23 gece, 29.18 B54).
 # Varsayilan 4.0 derece 15 metrede 1.05 metre yanal bolge kapatir; kara
 # liste artik angajmanin HER asamasinda uygulandigi icin bu genislik
@@ -1441,7 +1452,7 @@ BLACKLIST_TTL_SEC = 12          # imha edilenler için
 # karkasini kapatir, 1 metre otedeki hedefi serbest birakir.
 # Hedef yaklastikca acisi kaydigi icin dar yaricap bazen yetmeyebilir;
 # o durumu LOCK_NO_BALLOON_GIVEUP_SEC 1.2 saniyede kesiyor.
-BLACKLIST_KILL_RADIUS_DEG = 2.5
+BLACKLIST_KILL_RADIUS_DEG = 2.0
 # Atis butcesi dolan (vurulamayan) hedef icin (2026-09-23 gece, 29.16).
 # Eskiden BLACKLIST_VERIFY_TTL_SEC (1.5 sn) kullaniliyordu; sistem siradaki
 # hedefe yonelip donmeye bile firsat bulamadan ayni hedefe geri donuyordu.
