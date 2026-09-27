@@ -5817,3 +5817,89 @@ Test: 521 kontrol, 520 geciyor. Kalan 1 hata kullanicinin
 bilesiminden (29.26.4).
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.30 son16: kazanc dusurmenin bedeli GECIKME — ileri beslemeyle kapatildi (2026-09-28)
+
+Kaynak: `aşama2son16.mp4` (834 kare, 27.77 sn) + `enkoder_20260928_001541.csv`.
+Hizalama: **video t = enkoder t0 + 41.276 sn**, ortalama uyum hatasi
+**0.0075 derece**. Kosum 29.29'daki kazanclarla (KP 0.35 / 0.30).
+
+3 atis degil **7 atis**, 2 imha. Sag fuzenin hareket sistemi bozulup sabit
+kaldigi icin bir imha oradan geldi (kullanicinin notu). Drone BES atis
+aldi (`FIRE_MAX_ATTEMPTS` doldu) ve imha edilemedi.
+
+#### 29.30.1 B70 — Salinim gitti, yerine GECIKME geldi
+
+Kullanicinin gozlemi ("hedef asma yok gibi ama bu sefer geride kaliyor")
+dogrudan olculdu. Goruntuden nisangah-balon ISARETLI sapmasi cikarilip
+hedefin dunya acisi kuruldu, sonra taret acisiyla capraz korelasyon:
+
+| kosum | KP | taret hedefin gerisinde | bedeli |
+|---|---|---|---|
+| son15 | 0.97 | 0.04 sn | 6 piksel |
+| **son16** | **0.35** | **0.18 sn** | **18 piksel** |
+
+Nisan toleransi 7 piksel. **18 pikselllik KALICI gecikme tek basina ates
+kapisini kapali tutuyor** — nisan hicbir zaman oturmuyor. 29.29'da
+salinimi durdurmak dogruydu ama bedeli odenmemisti.
+
+**Cozum kazanci geri yukseltmek DEGIL** — o, 29.29'da olculen limit
+cevrimini geri getirir. Gecikme ILERI BESLEME ile kapatilir; ileri besleme
+hedefin olculen acisal hizindan turetilir, taretin kendi acisindan degil,
+yani GERI BESLEME DONGUSUNE GIRMEZ ve kararlilik payini degistirmez.
+Takibi ileri besleme, kararliligi geri besleme tasir.
+
+Gecikmenin ayrismasi:
+
+| kalem | buyuklugu | duzeltme |
+|---|---|---|
+| ileri besleme kazanci 1.0 degil | `(1-g)/Kv = 0.2/5.25` = 0.038 sn | `FEEDFORWARD_GAIN 0.8 -> 1.0` |
+| telafi edilmemis olu zaman | ~0.14 sn | `TARGET_LEAD_TIME_SEC 0.10 -> 0.22` |
+
+`TARGET_LEAD_MAX_DEG` 0.6 -> 1.2: ondeleme 0.22 sn'ye cikinca 3 derece/sn
+ustu hedeflerde eski sinir baglayici oluyor ve ondeleme tam da en cok
+gerektigi yerde kirpiliyordu.
+
+Beklenen kalan gecikme `0.18 - 0.038 - 0.12 = 0.022 sn` = 1.4 derece/sn
+hedefte **2 piksel**. **KP DEGISMEDI**, yani 29.29'daki kararlilik payi
+(dongu kazanci 0.84) aynen duruyor.
+
+Bedeli: hiz kestirimi gurultusu (EMA sonrasi std 0.49 derece/sn)
+ondelemeyle carpiliyor: 0.49 x 0.22 = 8 piksel ek nisan gurultusu --
+silinen 18 pikselllik kalici gecikmeden kucuk. Hedef yon degistirdigi anda
+ondeleme ters tarafa bakar; ates icin bunu `FIRE_REQUIRE_STABLE_DIRECTION`
+(29.23) zaten koruyor.
+
+#### 29.30.2 Patlamis balona kilit
+
+Kullanicinin bildirdigi durum bu kayitta da goruldu. Kare 780 (26.0 sn):
+drone KILITLI (turuncu kutu) ama altinda balon kutusu YOK -- balon
+patlamis. Sistem balonsuz hedefe atmaya devam etti (bes atis) ve imha
+sayaci 2'de kaldi.
+
+`LOCK_NO_BALLOON_GIVEUP_SEC` (1.2 sn) emniyet agi mevcut ve kosumun
+sonuna denk geldigi icin devreye girecek zaman bulamadi. Ancak sorunun
+tekrar ettigi acik; olcum icin bir sonraki kayitta balonun kayboldugu
+kare ile kilidin birakildigi kare arasi sayilmali.
+
+Not: `BLACKLIST_KILL_RADIUS_DEG` 2.0'da duruyor; hedeflerin olculen
+salinim genligi +-1.3 derece oldugu icin imha aninda kaydedilen kara
+liste merkezi ile hedefin sonraki acisi 2.6 dereceye kadar ayrisabiliyor.
+2.5-3.0 bu salinimi kapsar (29.27.4'te de onerilmisti, uygulanmadi).
+
+#### 29.30.3 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `config.py` | `FEEDFORWARD_GAIN 0.8 -> 1.0` | kalici hiz hatasini sifirlar |
+| `config.py` | `TARGET_LEAD_TIME_SEC 0.10 -> 0.22` | olculen 0.14 sn olu zamani kapatir |
+| `config.py` | `TARGET_LEAD_MAX_DEG 0.6 -> 1.2` | ondeleme hizli hedefte kirpilmasin |
+| `tests_yeni_mimari.py` | 47. bolum (8 kontrol) | gecikme butcesi ve kararliligin KORUNDUGU teste kondu |
+
+Kazanclara DOKUNULMADI.
+
+Test: 529 kontrol, 528 geciyor. Kalan 1 hata kullanicinin
+`AIM_TOLERANCE_MIN_PIXELS=7` / `FIRE_MAX_ERROR_DRIFT_PIXELS=12`
+bilesiminden (29.26.4).
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**

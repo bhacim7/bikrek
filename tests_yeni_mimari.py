@@ -2876,6 +2876,60 @@ kontrol("KP'ler Ayarlar sekmesinden canli denenebiliyor (merdiven icin)",
 
 print()
 print("=" * 70)
+print("47. TAKIP GECIKMESI: ileri besleme ile kapatiliyor (29.30 B70)")
+print("=" * 70)
+# Sahada OLCULDU (goruntu ile enkoderin capraz korelasyonu):
+#   son15 (KP 0.97): taret hedefin 0.04 sn gerisinde =  6 piksel
+#   son16 (KP 0.35): taret hedefin 0.18 sn gerisinde = 18 piksel
+# 29.29'da salinimi durdurmak icin kazanc dusurulmustu; bedeli gecikme oldu.
+# Cozum KAZANCI GERI YUKSELTMEK DEGIL -- o limit cevrimini geri getirir --
+# ileri besleme terimlerini duzeltmek. Ileri besleme geri besleme
+# dongusune GIRMEZ, kararlilik payini degistirmez.
+_FPS70 = 15.0
+_Kv70 = config.KP_YAW * _FPS70
+
+kontrol("ileri besleme kazanci TAM (hedefin hareketinin tamamini tasiyor)",
+        abs(config.FEEDFORWARD_GAIN - 1.0) < 1e-9,
+        str(config.FEEDFORWARD_GAIN))
+# Kalici hiz hatasi = (1-g)/Kv saniye
+_kalici70 = (1.0 - config.FEEDFORWARD_GAIN) / _Kv70
+kontrol("kalici hiz hatasi (1-g)/Kv sifirlandi",
+        _kalici70 < 0.005, f"{_kalici70:.4f} sn")
+
+kontrol("hedef ondelemesi olculen olu zamani kapatacak buyuklukte",
+        0.15 <= config.TARGET_LEAD_TIME_SEC <= 0.30,
+        f"{config.TARGET_LEAD_TIME_SEC} sn")
+kontrol("ondeleme ust siniri 3 derece/sn'de BAGLAYICI DEGIL",
+        config.TARGET_LEAD_MAX_DEG >= 3.0 * config.TARGET_LEAD_TIME_SEC,
+        f"{config.TARGET_LEAD_MAX_DEG} >= {3.0*config.TARGET_LEAD_TIME_SEC:.2f}")
+
+# En onemlisi: KARARLILIK BOZULMADI. Ileri besleme dongu kazancina girmez.
+_W70 = 2.0 * _math.pi * 1.0
+kontrol("KAZANC DEGISMEDI -- 29.29'daki kararlilik payi korunuyor",
+        _Kv70 / _W70 < 1.0, f"dongu kazanci {_Kv70/_W70:.2f}")
+
+# Beklenen kalan gecikme
+_olculen70 = 0.18
+_kalan70 = _olculen70 - 0.038 - (config.TARGET_LEAD_TIME_SEC - 0.10)
+kontrol("beklenen kalan gecikme nisan toleransinin altinda",
+        abs(_kalan70) * 1.4 / abs(config.HUNTER_DPP_YAW)
+        < config.AIM_TOLERANCE_MIN_PIXELS,
+        f"{_kalan70:.3f} sn = "
+        f"{abs(_kalan70)*1.4/abs(config.HUNTER_DPP_YAW):.0f} px "
+        f"< {config.AIM_TOLERANCE_MIN_PIXELS} px")
+
+# Ondeleme gurultusu abartilmamali
+_gurultu70 = 0.49 * config.TARGET_LEAD_TIME_SEC / abs(config.HUNTER_DPP_YAW)
+kontrol("ondelemenin gurultu bedeli, sildigi gecikmeden KUCUK",
+        _gurultu70 < 18.0, f"{_gurultu70:.0f} px < 18 px")
+
+kontrol("ikisi de Ayarlar sekmesinden canli denenebiliyor",
+        all(any(t[0] == a for t in config.AYARLANABILIR_PARAMETRELER
+                if t[1] is not None)
+            for a in ('FEEDFORWARD_GAIN', 'TARGET_LEAD_TIME_SEC')))
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)

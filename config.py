@@ -660,7 +660,20 @@ KP_PITCH = 0.30
 #     feedforward = hedef_hizi x delta_time x FEEDFORWARD_GAIN
 # GAIN = 1.0 tam hiz eslemesi. Taret hedefin gerisinde kaliyorsa 1.1-1.2,
 # asip oniune geciyorsa 0.8 denenir.
-FEEDFORWARD_GAIN = 0.8
+# 0.8 -> 1.0 (2026-09-28, 29.30 B70).
+#
+# ILERI BESLEME GERI BESLEME DONGUSUNE GIRMEZ: hedefin olculen acisal
+# hizindan turetilir, taretin kendi acisindan DEGIL. Bu yuzden 29.29'da
+# bulunan limit cevrimini GERI GETIREMEZ -- kararlilik payi kazancla
+# belirlenir, ileri beslemeyle degil. Takibi ileri besleme, kararliligi
+# geri besleme tasir; dogru ayrim budur.
+#
+# 0.8 demek "hedefin hareketinin %80'ini ileri besleme tasisin, kalan
+# %20'yi oransal terim kapatsin" demek. Oransal kazanc yuksekken (KP 0.97)
+# o %20'nin bedeli kucuktu; KP 0.35'e inince ayni %20 kalici gecikmeye
+# donustu:  gecikme = (1-g)/Kv = 0.2/5.25 = 0.038 sn.
+# 1.0 ile bu terim TAMAMEN sifirlaniyor.
+FEEDFORWARD_GAIN = 1.0
 
 # Duyarga gecikmesi (saniye): kamera + çıkarım + açı raporu + motor tepkisi.
 # EKRAN KAYDINDAN ÖLÇÜLDÜ: hedef sabit hızla giderken kalan piksel hatası
@@ -783,7 +796,30 @@ FEEDFORWARD_MAX_STEP_DEGREE = 0.10
 # dogrudan hataya tasiyor (0.49 derece/sn x 0.15 = 5 px). Bosluk rolesi
 # kapatildiktan sonra asil kararsizlik kaynagi kalmadi ama ondelemeyi de
 # temkinli tutmak marj birakiyor. Taret geride kaliyorsa 0.15'e geri.
-TARGET_LEAD_TIME_SEC = 0.1
+# 0.10 -> 0.22 (2026-09-28, 29.30 B70). SAHADA OLCULDU.
+#
+# Taretin hedefin KAC SANIYE gerisinde kaldigi, goruntu ile enkoderin
+# capraz korelasyonuyla olculdu (nisangah-balon isaretli sapmasindan
+# hedefin dunya acisi kurulup taret acisiyla karsilastirildi):
+#     son15 (KP 0.97): gecikme 0.04 sn =  6 piksel
+#     son16 (KP 0.35): gecikme 0.18 sn = 18 piksel
+# Yani 29.29'da salinimi durdurmak icin kazanci dusurmek, gecikmeyi 4.5
+# katina cikardi. Nisan toleransi 7 piksel; 18 piksellik kalici gecikme
+# tek basina kapiyi kapali tutuyor.
+#
+# Gecikmenin ayrismasi: 0.038 sn'si ileri besleme kazancinin 1.0 olmamasi
+# (yukarida duzeltildi), kalan ~0.14 sn'si telafi edilmemis OLU ZAMAN.
+# Ondeleme bu olu zamani kapatir ve -- ileri besleme gibi -- geri besleme
+# dongusune girmez, cunku hedefin DUNYA acisinin turevinden gelir.
+# 0.10 + 0.12 = 0.22 secildi; beklenen kalan gecikme ~0.02 sn (2 piksel).
+#
+# BEDELI: hiz kestirimi gurultusu (EMA sonrasi std 0.49 derece/sn)
+# ondelemeyle carpilir: 0.49 x 0.22 = 0.11 derece = 8 piksel ek nisan
+# gurultusu. 18 pikselllik kalici gecikmeyi silmenin karsiliginda kabul
+# edilebilir. Ayrica hedef YON DEGISTIRDIGI anda ondeleme ters tarafa
+# bakar; ates icin bunu `FIRE_REQUIRE_STABLE_DIRECTION` (29.23) zaten
+# koruyor.
+TARGET_LEAD_TIME_SEC = 0.22
 
 # --- NISAN NOKTASI YUMUSATMA (2026-09-23 gece, 29.19 B58) ---
 # Sahada olculdu (aşama2son7.mp4, kilit oturduktan sonraki 98 ornek):
@@ -802,7 +838,10 @@ TARGET_LEAD_TIME_SEC = 0.1
 # 0 = kapali (eski davranis).
 AIM_POINT_SMOOTHING = 0.45
 AIM_POINT_SNAP_DEG = 1.0      # bu kadar buyuk sicramada suzgec atlanir
-TARGET_LEAD_MAX_DEG = 0.6      # ondelemenin ust siniri (gurultuye karsi)
+# 0.6 -> 1.2 (29.30): ondeleme 0.22 sn'ye cikinca 3 derece/sn'den hizli
+# hedeflerde eski sinir baglayici oluyordu (0.22 x 3 = 0.66 > 0.6) ve
+# ondeleme tam da en cok gerektigi yerde kirpiliyordu.
+TARGET_LEAD_MAX_DEG = 1.2      # ondelemenin ust siniri (gurultuye karsi)
 
 # Hedefin dünya açısal hızı için üst sınır (derece/sn). Gerçek hedefler
 # 0.5-2.6 derece/sn; bu sınır hesap hatalarına karşı emniyet. Elle test
