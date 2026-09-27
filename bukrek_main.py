@@ -177,6 +177,7 @@ class HavaSavunmaArayuz(QWidget):
         # Hayalet tespitleri birkaç kare sürüyor; gerçek hedef sürekli görünür.
         self._aday_ardisik = 0
         self._aday_konum = None
+        self._aday_dunya = None
         # Bu iki eşik AÇISAL olguları korur, dolayısıyla derece/piksel
         # değişince yeniden ölçeklenmeleri gerekir. 3x zoomlu Logitech'te
         # (0.01783 d/px) 120 px = 2.14 derece, 250 px = 4.46 derece idi;
@@ -1419,6 +1420,36 @@ class HavaSavunmaArayuz(QWidget):
 
         return None
 
+    def _aday_ayni_yerde_mi(self, cx, cy, zaman):
+        """
+        Aday tespit bir onceki karedekiyle AYNI YERDE mi? (29.28 B68)
+
+        Karsilastirma DUNYA ACISINDA yapilir, piksel uzayinda DEGIL.
+        Sahada olculdu (aşama2son14.mp4, 22.5-25.0 sn): sistem "Aday hedef
+        dogrulaniyor (1/3)" ile "Hedef kaybedildi" arasinda 2.5 saniye gidip
+        geldi ve hicbir zaman kilitlenemedi. Sebep: taret o sirada donuyordu
+        ve DONEN TARETTE SABIT BIR HEDEFIN PIKSEL KONUMU HER KARE DEGISIR.
+        46 derece/sn'de bir kare (67 ms) 3.1 derece = 218 piksel eder; 150
+        pikselllik tolerans asilir ve sayac her karede 1'e doner. Yani hedef
+        kusursuz gorunse bile onay hicbir zaman tamamlanmaz.
+
+        Ayni tuzak yeniden edinme aramasinda 29.x'te zaten duzeltilmisti
+        ("piksel uzayinda yapilirsa taretin kendi hareketi hedefin hareketi
+        sanilir"); bu iki onay noktasi atlanmisti.
+
+        Tolerans piksel cinsinden verilmis olani korur: dereceye cevrilir,
+        boylece mevcut ayarin anlami degismez.
+        """
+        dy, dp = self._piksel_to_dunya(cx, cy, zaman)
+        onceki = self._aday_dunya
+        self._aday_dunya = (dy, dp)
+        if onceki is None:
+            return False
+        tol_yaw = self.LOCK_CONFIRM_TOL_PX * abs(self.DEGREES_PER_PIXEL_YAW)
+        tol_pitch = self.LOCK_CONFIRM_TOL_PX * abs(self.DEGREES_PER_PIXEL_PITCH)
+        return (abs((dy - onceki[0] + 180) % 360 - 180) <= tol_yaw
+                and abs(dp - onceki[1]) <= tol_pitch)
+
     def _otonom_hedefi_benimse(self, sanal, kare_zamani):
         """
         Durum makinesinin seçtiği sanal hedefi PID'in takip hedefi yapar.
@@ -1452,9 +1483,9 @@ class HavaSavunmaArayuz(QWidget):
             # İlk kilit: hayalet tespite karşı zamansal onay. Sahada tavandaki
             # hayalet (0.66) gerçek balondan (0.44) yüksek güvenle çıkmıştı ve
             # yalnızca 2 kare sürmüştü.
-            if (self._aday_konum is not None
-                    and abs(cx - self._aday_konum[0]) <= self.LOCK_CONFIRM_TOL_PX
-                    and abs(cy - self._aday_konum[1]) <= self.LOCK_CONFIRM_TOL_PX):
+            # KARSILASTIRMA DUNYA ACISINDA (29.28 B68): donen tarette
+            # sabit bir hedefin piksel konumu her kare degisir.
+            if self._aday_ayni_yerde_mi(cx, cy, kare_zamani):
                 self._aday_ardisik += 1
             else:
                 self._aday_ardisik = 1
@@ -1466,6 +1497,7 @@ class HavaSavunmaArayuz(QWidget):
                 return None
             self._aday_ardisik = 0
             self._aday_konum = None
+            self._aday_dunya = None
             self.reset_pid_state()
             self.last_target_velocity_x = 0.0
             self.last_target_velocity_y = 0.0
@@ -1474,6 +1506,7 @@ class HavaSavunmaArayuz(QWidget):
             # hafizasi yine de sifirlanmali (eski hedefin hizi sizmasin).
             self._aday_ardisik = 0
             self._aday_konum = None
+            self._aday_dunya = None
             self.reset_pid_state()
             self.last_target_velocity_x = 0.0
             self.last_target_velocity_y = 0.0
@@ -2835,6 +2868,7 @@ class HavaSavunmaArayuz(QWidget):
                     self.missing_frames = 0
                     self._aday_ardisik = 0
                     self._aday_konum = None
+                    self._aday_dunya = None
 
             elif self.is_target_active and self.active_task == 'takip':
                 # HEDEF TAKİP: angajman makinesi yok ama hedef seçimi yine de
@@ -3009,6 +3043,7 @@ class HavaSavunmaArayuz(QWidget):
                         # (TARAMA / YÖNELME, veya çift görünmüyor).
                         self._aday_ardisik = 0
                         self._aday_konum = None
+                        self._aday_dunya = None
                         current_target_bbox_for_pid = None
                         self.current_tracked_target_class = None
                         self.current_tracked_target_bbox = None
@@ -3054,9 +3089,8 @@ class HavaSavunmaArayuz(QWidget):
                     if candidate_target:
                         cx = candidate_target['bbox'][0] + candidate_target['bbox'][2] // 2
                         cy = candidate_target['bbox'][1] + candidate_target['bbox'][3] // 2
-                        if (self._aday_konum is not None
-                                and abs(cx - self._aday_konum[0]) <= self.LOCK_CONFIRM_TOL_PX
-                                and abs(cy - self._aday_konum[1]) <= self.LOCK_CONFIRM_TOL_PX):
+                        # KARSILASTIRMA DUNYA ACISINDA (29.28 B68).
+                        if self._aday_ayni_yerde_mi(cx, cy, current_frame_time):
                             self._aday_ardisik += 1
                         else:
                             self._aday_ardisik = 1
@@ -3071,10 +3105,12 @@ class HavaSavunmaArayuz(QWidget):
                     else:
                         self._aday_ardisik = 0
                         self._aday_konum = None
+                        self._aday_dunya = None
 
                     if candidate_target:
                         self._aday_ardisik = 0
                         self._aday_konum = None
+                        self._aday_dunya = None
                         self.current_tracked_target_class = candidate_target['class_name']
                         self.current_tracked_target_bbox = candidate_target['bbox']
                         self.target_destroyed = False

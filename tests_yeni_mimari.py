@@ -2780,6 +2780,41 @@ kontrol("karar degerleri is_aimed_at_target ile AYNI yerde uretiliyor",
 
 print()
 print("=" * 70)
+print("45. ADAY ONAYI DUNYA ACISINDA (29.28 B68)")
+print("=" * 70)
+# Saha: aşama2son14.mp4, 22.5-25.0 sn. Sistem "Aday hedef dogrulaniyor
+# (1/3)" ile "Hedef kaybedildi" arasinda 2.5 saniye gidip geldi ve
+# kilitlenemedi. Onay PIKSEL uzayinda yapiliyordu; donen tarette sabit
+# bir hedefin piksel konumu her kare degisir.
+_k68 = io.open('bukrek_main.py', encoding='utf-8').read()
+
+kontrol("aday onayi icin dunya-acisi yardimcisi var",
+        'def _aday_ayni_yerde_mi(self, cx, cy, zaman):' in _k68)
+kontrol("yardimci _piksel_to_dunya kullaniyor (taret hareketi suzuluyor)",
+        '_piksel_to_dunya(cx, cy, zaman)' in _k68)
+kontrol("HER IKI onay noktasi da yardimciya bagli",
+        _k68.count('self._aday_ayni_yerde_mi(') == 2,
+        "%d cagri" % _k68.count('self._aday_ayni_yerde_mi('))
+kontrol("eski PIKSEL karsilastirmasi hic kalmadi",
+        'abs(cx - self._aday_konum[0]) <= self.LOCK_CONFIRM_TOL_PX' not in _k68)
+kontrol("_aday_dunya her sifirlama noktasinda temizleniyor",
+        _k68.count('self._aday_dunya = None') == _k68.count('self._aday_konum = None'),
+        "%d / %d" % (_k68.count('self._aday_dunya = None'),
+                     _k68.count('self._aday_konum = None')))
+kontrol("tolerans PIKSEL ayarindan turetiliyor (mevcut ayarin anlami korunuyor)",
+        'self.LOCK_CONFIRM_TOL_PX * abs(self.DEGREES_PER_PIXEL_YAW)' in _k68)
+
+# Sayisal: 46 derece/sn'de bir karede taretin gotUrdugu piksel, eski
+# toleransi asiyor mu?
+_dps68 = 46.0 / 15.0                       # bir karede derece (15 fps)
+_px68 = _dps68 / abs(config.HUNTER_DPP_YAW)
+kontrol("hizli slewde taretin kendi hareketi eski toleransi ASIYOR "
+        "(hatanin sayisal kaniti)",
+        _px68 > 150,
+        "%.0f px > 150 px" % _px68)
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)

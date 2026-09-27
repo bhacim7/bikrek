@@ -5630,3 +5630,97 @@ Test: 505 kontrol, 504 geciyor. Kalan 1 hata kullanicinin
 bilesiminden (29.26.4).
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.28 son13 + son14: A/B testi ve ilk kilit kusuru (2026-09-27)
+
+Kullanici iki kosum gonderdi: **son13 `AIM_HOLD_WINDOW_FRAMES = 0` ile**
+(yani 29.26 duzeltmesi ETKISIZ, birebir eski kod yolu), **son14 klasordeki
+haliyle** (pencere 6). `git diff config.py` icerik farki YOK; iki kosum da
+commitli ayarlarla yapildi.
+
+#### 29.28.1 A/B sonucu: duzeltme suclu degil
+
+Atislar sarjor sayacindan, imhalar durum cubugundan sayildi:
+
+| kosum | pencere | atis | imha | isabet |
+|---|---|---|---|---|
+| son10 | yok (eski kod) | 8 | **3** | %38 |
+| son11 | yok (eski kod) | 6 | **3** | %50 |
+| son12 | 6 | 4 | 2 | %50 |
+| **son13** | **0 = eski davranis** | **7** | **2** | **%29** |
+| son14 | 6 | 5 | 2 | %40 |
+
+**son13 eski davranisla kosuldu, en cok atisi yapti (7) ve yine 2 imha
+aldi.** Duzeltmeyi kapatmak 3 imhayi GERI GETIRMEDI. Bes kosumun
+toplami: 30 atis, 12 imha, %40.
+
+Takibin kesikligi de olculdu (50 Hz enkoder, kosum penceresi icinde
+taretin HIC kimildamadigi ardisik ornekler):
+
+| kosum | hareket% | >=0.2 sn duraklama /sn | ort hiz |
+|---|---|---|---|
+| son10 | 54% | 0.62 | 3.98 derece/sn |
+| son11 | 58% | 0.50 | 4.60 |
+| son12 | 55% | 0.40 | 4.02 |
+| son13 | 52% | 0.59 | 4.78 |
+| son14 | 52% | 0.64 | 4.60 |
+
+**Duraksama beş kosumda da AYNI.** Taret son10'da da karelerin ~%46'sinda
+duruyordu; bu yeni bir bozulma degil, komutun kare basina delta
+gonderilmesinin ve olu bandin yapisal sonucu.
+
+Goruntuden olculen takip hatasi (nisangahin kilitli balona uzakligi /
+balon yaricapi, medyan): son10 1.12, son11 0.79, son12 1.16,
+son13 1.12, **son14 1.65**. son13 taban seviyesinde; yalnizca son14
+sapiyor ve son14 daha AZ atis yapti, yani pencere kurali sebep olamaz.
+Bulaniklik da aciklamiyor (bulanik kare orani son10 %39, son14 %33).
+
+#### 29.28.2 B68 — Ilk kilit onayi PIKSEL uzayinda yapiliyordu
+
+son14'un son 8.5 saniyesi (20.5 - 29.0) kare kare okundu: sistem
+"Aday hedef dogrulaniyor (1/3)" -> "Hedef kaybedildi" -> "KILIT - BALON
+YOK" arasinda dondu durdu ve hicbir zaman kilitlenemedi. Sayac 2/3'e
+ciktigi tek bir an disinda hep 1/3'te kaldi.
+
+Sebep bulundu: `_otonom_hedefi_benimse` ve manuel yoldaki ikiz blok,
+adayin "ayni yerde" olup olmadigini **PIKSEL** olarak karsilastiriyordu
+(`LOCK_CONFIRM_TOL_PX = 150`). Donen tarette SABIT bir hedefin piksel
+konumu her kare degisir:
+
+    46 derece/sn / 15 fps = 3.1 derece/kare = **217 piksel** > 150
+
+Yani taret hizliyken sayac hedefin kusursuz gorundugu karelerde bile
+her karede 1'e doner ve onay ASLA tamamlanmaz.
+
+Ayni tuzak yeniden edinme aramasinda zaten duzeltilmisti ("piksel
+uzayinda yapilirsa taretin kendi hareketi hedefin hareketi sanilir");
+bu iki onay noktasi atlanmis.
+
+Duzeltme: karsilastirma `_piksel_to_dunya` ile DUNYA ACISINA tasindi
+(yeni `_aday_ayni_yerde_mi`). Tolerans mevcut piksel ayarindan
+turetiliyor, yani ayarin anlami degismiyor.
+
+#### 29.28.3 Etiket
+
+Kullanicinin istegi uzerine son10 sonrasi kod hali etiketlendi:
+
+    git checkout son10-sonrasi-3imha        # = 29b439b (Paket 13 / 29.25)
+
+Kamera ayarlari (33572a1) ve gozcu duzeltmeleri (af36a0b) bu etikete
+DAHIL. 29.26/29.27 degisiklikleri dahil DEGIL. Koda dokunmadan ayni
+davranis icin: Ayarlar > `AIM_HOLD_WINDOW_FRAMES = 0`.
+
+#### 29.28.4 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `bukrek_main.py` | YENI `_aday_ayni_yerde_mi` | onay dunya acisinda |
+| `bukrek_main.py` | iki onay noktasi da yardimciya baglandi | B68 |
+| `bukrek_main.py` | `_aday_dunya` (7 sifirlama noktasi) | pencere durumu |
+| `tests_yeni_mimari.py` | 45. bolum (7 kontrol) | 217 px > 150 px sayisal kaniti dahil |
+
+Test: 512 kontrol, 511 geciyor. Kalan 1 hata kullanicinin
+`AIM_TOLERANCE_MIN_PIXELS=7` / `FIRE_MAX_ERROR_DRIFT_PIXELS=12`
+bilesiminden (29.26.4).
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**
