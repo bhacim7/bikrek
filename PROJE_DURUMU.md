@@ -5903,3 +5903,81 @@ Test: 529 kontrol, 528 geciyor. Kalan 1 hata kullanicinin
 bilesiminden (29.26.4).
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.31 son17 + son18: gecikme kapandi, darbogaz artik TOLERANS (2026-09-28)
+
+Iki kosum da 29.30'daki kodla yapildi (`git diff` yalnizca `0.30`->`0.3`
+bicim farki). Hizalama: son17 +44.704 sn (uyum 0.0116 derece),
+son18 +195.404 sn (uyum 0.0134 derece).
+
+**Ikisinde de 3 IMHA.** Sureler 17.6 ve 20.4 saniye (son15/son16: 2 imha,
+28-29 saniye).
+
+#### 29.31.1 29.30 duzeltmesi tuttu
+
+Ayni capraz korelasyon olcumu:
+
+| kosum | KP | ileri besleme | taret hedefin gerisinde |
+|---|---|---|---|
+| son15 | 0.97 | 0.8 | 0.04 sn (6 px) |
+| son16 | 0.35 | 0.8 | **0.18 sn (18 px)** |
+| **son17** | **0.35** | **1.0 + ondeleme 0.22** | **0.00 sn (0 px)** |
+| **son18** | **0.35** | **1.0 + ondeleme 0.22** | **0.00 sn (0 px)** |
+
+Kalan salinim da dustu (2.5 sn pencere, egilim cikarilmis, medyan RMS):
+son15 1.46 derece -> son16 0.45 -> **son17 0.57, son18 0.40**.
+
+Kullanicinin kendi denemesi bu tabloyu bagimsiz olarak dogruluyor:
+KP'yi 0.5 ve 0.45'e CIKARDIGINDA imha 3'ten 1'e dustu. 29.29'daki
+kararlilik analizinin yonu dogru.
+
+#### 29.31.2 B71 — Kalan darbogaz: nisan toleransi
+
+Kilit -> ates sureleri olculdu:
+
+| kosum | hedef 1 | hedef 2 | hedef 3 |
+|---|---|---|---|
+| son17 | 0.8 sn | 0.8 sn | **2.8 sn** |
+| son18 | 1.7 sn | **3.5 sn** | **2.6 sn** |
+
+Kullanicinin "bir tik yavas kilitleniyor" dedigi sey bu 2.6-3.5 saniyelik
+kuyruk.
+
+Gecikme sifir oldugu icin geriye tek sinir kaliyor: nisanin toleransa
+GIRME olasiligi. Kalan salinim 28-41 piksel RMS iken
+
+| tolerans | bir karenin bandda olma olasiligi |
+|---|---|
+| 7 px (eski) | ~%20 |
+| 12 px | ~%33 |
+
+Kapi "son 6 karede 3 kare" istedigi icin bu oran dogrudan sureye yansiyor.
+
+**7 sayisinin dayanagi yoktu:**
+- Silahin OLCULEN sacilmasi (29.25): 15 m'de 3x3 cm grup, sigma ~2 piksel.
+- Balon yaricapi bu kosumlarda 25-38 piksel.
+- En onemlisi 29.27'de 12 atis tek tek olculmustu: nisangah balonun
+  ICINDEYKEN 10 atisin 5'i isabet etti ve **iskalayanlarin ortalama
+  sapmasi 8.3 px, ISABET edenlerin 9.1 px**. Yani balonun icinde
+  kaldiktan sonra sapma miktari sonucu HIC aciklamiyor.
+
+Toleransi balon yaricapinin cok altina cekmek isabet kazandirmiyor,
+yalnizca kapiyi geciktiriyor. **`AIM_TOLERANCE_MIN_PIXELS` 7 -> 12.**
+
+12, oran kapisiyla birlikte hala yaricapin yarisinin altinda (25 px
+yaricapta %48, 38 px'te %32). Ayrica `FIRE_MAX_ERROR_DRIFT_PIXELS` (12)
+ile ayni mertebeye geldigi icin **29.26.4'ten beri acik duran test de
+kapandi** -- suite ilk kez tam yesil.
+
+#### 29.31.3 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `config.py` | `AIM_TOLERANCE_MIN_PIXELS 7 -> 12` | kilit-ates suresinin tek kalan darbogazi |
+| `tests_yeni_mimari.py` | 48. bolum (7 kontrol) | tolerans butcesi + 29.29/29.30 kazanimlarinin korundugu |
+
+Kazanclara, ileri beslemeye ve ondelemeye DOKUNULMADI.
+
+Test: **537 kontrol, 537'si de geciyor.**
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**

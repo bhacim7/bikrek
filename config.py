@@ -627,7 +627,7 @@ SPOTTER_PITCH_OFFSET = 0.0
 # Sisirse yavas gelirse merdiven: 0.35 -> 0.45 -> 0.50. Ayarlar
 # sekmesinden canli denenebilir.
 KP_YAW = 0.35
-KP_PITCH = 0.30
+KP_PITCH = 0.3
 
 # --- İleri besleme (feedforward) ---
 # Saf oransal denetim hareketli hedefte kalıcı olarak geride kalır. Bu terim
@@ -1298,7 +1298,32 @@ AIM_TOLERANCE_RATIO = 0.3
 # yere sikiydi ve nisan penceresini kapatiyordu: sahada taret balonun
 # uzerinde ilerlerken bile ates aclmiyordu. Daha buyuk yapmayin —
 # 14 px + 2 cm silah sapmasi balonun kenarina dayaniyor.
-AIM_TOLERANCE_MIN_PIXELS = 7
+# 7 -> 12 (2026-09-28, 29.31 B71). KILIT -> ATES SURESINI BU SINIRLIYORDU.
+#
+# 29.30'daki ileri besleme duzeltmesinden sonra takip gecikmesi SIFIRA indi
+# (son17 ve son18'de capraz korelasyonla olculdu: 0.00 sn). Geriye kalan
+# tek darbogaz, nisanin toleransa GIRME olasiligi:
+#     kalan taret salinimi  : 0.40-0.57 derece = 28-41 piksel RMS
+#     tolerans              : 7 piksel
+# 28 piksel RMS'te 7 pikselllik bandin icinde olma olasiligi ~%20; 12
+# pikselllik bandda ~%33. Kapi "son 6 karede 3 kare" istedigi icin bu oran
+# dogrudan kilit-ates suresine yansiyor (olculen: 0.8 - 3.5 saniye).
+#
+# 7 SAYISININ DAYANAGI YOKTU:
+#   - Silahin OLCULEN sacilmasi (29.25): 15 m'de 3x3 cm grup, sigma ~2 px.
+#   - Balon yaricapi bu kosumlarda 25-38 piksel.
+#   - En onemlisi, 29.27'de 12 atis tek tek olculdu: nisangah balonun
+#     ICINDEYKEN 10 atisin 5'i isabet etti ve ISKALAYANLARIN ortalama
+#     sapmasi 8.3 px, ISABET EDENLERIN 9.1 px cikti. Yani balonun icinde
+#     kaldiktan sonra sapma miktari sonucu HIC aciklamiyor.
+# Toleransi balon yaricapinin cok altina cekmek isabet kazandirmiyor,
+# yalnizca kapiyi geciktiriyor.
+#
+# 12, oran kapisiyla (AIM_TOLERANCE_RATIO 0.30) birlikte hala yaricapin
+# yarisinin altinda kaliyor (25 px yaricapta %48, 38 px'te %32).
+# Kayma siniri FIRE_MAX_ERROR_DRIFT_PIXELS (12) ile de artik ayni
+# mertebede -- 29.26.4'te kopan bag boylece kapaniyor.
+AIM_TOLERANCE_MIN_PIXELS = 12
 
 # --- ATES KAPISI: TARET NE KADAR YAVASKEN ATES SERBEST ---
 # Namlu, ates komutundan sonra servo cekisi (FIRE_SERVO_LEG_SEC = 0.20 sn)

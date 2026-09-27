@@ -2930,6 +2930,42 @@ kontrol("ikisi de Ayarlar sekmesinden canli denenebiliyor",
 
 print()
 print("=" * 70)
+print("48. NISAN TOLERANSI: kilit-ates suresinin darbogazi (29.31 B71)")
+print("=" * 70)
+# 29.30 sonrasi takip gecikmesi SIFIR (son17/son18'de olculdu). Geriye
+# kalan darbogaz nisanin toleransa girme olasiligi.
+_SAL71 = 28.0        # olculen kalan salinim RMS (piksel), son18
+
+def _olasilik71(tol):
+    return _math.erf(tol / (_SAL71 * _math.sqrt(2.0)))
+
+kontrol("tolerans olculen silah sacilmasindan (sigma 2 px) belirgin BUYUK",
+        config.AIM_TOLERANCE_MIN_PIXELS >= 3 * 2.0,
+        f"{config.AIM_TOLERANCE_MIN_PIXELS} px >= 6 px")
+kontrol("tolerans balon yaricapinin YARISININ altinda (en kucuk balonda bile)",
+        config.AIM_TOLERANCE_MIN_PIXELS < 0.5 * 25.0,
+        f"{config.AIM_TOLERANCE_MIN_PIXELS} < 12.5 (yaricap 25 px)")
+kontrol("kapiya girme olasiligi 7 px'e gore belirgin arttI",
+        _olasilik71(config.AIM_TOLERANCE_MIN_PIXELS) > 1.4 * _olasilik71(7.0),
+        f"%{100*_olasilik71(config.AIM_TOLERANCE_MIN_PIXELS):.0f} vs "
+        f"%{100*_olasilik71(7.0):.0f}")
+kontrol("kayma siniri ile tolerans artik AYNI MERTEBEDE (29.26.4 bagi)",
+        config.FIRE_MAX_ERROR_DRIFT_PIXELS <= config.AIM_TOLERANCE_MIN_PIXELS * 1.5,
+        f"{config.FIRE_MAX_ERROR_DRIFT_PIXELS} <= "
+        f"{config.AIM_TOLERANCE_MIN_PIXELS * 1.5:.0f}")
+kontrol("olu bant hala toleransin altinda",
+        config.PID_DEADBAND_PIXELS < config.AIM_TOLERANCE_MIN_PIXELS,
+        f"{config.PID_DEADBAND_PIXELS} < {config.AIM_TOLERANCE_MIN_PIXELS}")
+# 29.30'un kazanimi korunmali
+kontrol("ileri besleme ve ondeleme 29.30'daki gibi duruyor",
+        abs(config.FEEDFORWARD_GAIN - 1.0) < 1e-9
+        and config.TARGET_LEAD_TIME_SEC >= 0.15)
+kontrol("kazanc 29.29'daki kararlilik payinda duruyor",
+        config.KP_YAW * 15.0 / (2 * _math.pi) < 1.0,
+        f"dongu kazanci {config.KP_YAW*15.0/(2*_math.pi):.2f}")
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)
