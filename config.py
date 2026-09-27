@@ -596,7 +596,7 @@ SPOTTER_PITCH_OFFSET = 0.0
 
 # PID oransal kazançları. DERECE uzayında çalışırlar (komut = KP x hata_derece),
 # yani zoomdan bağımsızdırlar — 3x zoomlu avcıda da aynı değerler geçerli.
-KP_YAW = 0.9
+KP_YAW = 0.97
 KP_PITCH = 0.6
 
 # --- İleri besleme (feedforward) ---
@@ -812,7 +812,7 @@ PREDICTION_MAX_RATE_DEG_S = 1.0
 # beslemesi (B38) artik hizi kendi tasidigi icin olu bandin tek isi sabit
 # hedefte avlanmayi kesmek; 5 px = 0.071 derece bunun icin yeterli.
 # Kilitte 2-4 Hz titreme geri gelirse 7.0'a donun.
-PID_DEADBAND_PIXELS = 2.5
+PID_DEADBAND_PIXELS = 3.0
 # Olu bantta ARDISIK bu kadar kare kalinirsa "hedef gercekten durdu" sayilir
 # ve cikis suzgecinin hafizasi sifirlanir (artimli komutun kuyrugu kesilir,
 # 29.6). Daha kisa dipler hafizayi SILMEZ: eskiden tek karelik bir dip bile
@@ -1204,7 +1204,7 @@ VERIFY_WINDOW_FRAMES = 6
 # kare bu bantta tutulamadi: 55 saniyelik kosumda "nisan TAMAM" yalnizca 2
 # ornek karede goruldu, ates 0. 0.6 x yaricap hala BALONUN ICINDE kaliyor
 # (9 m'de 19 px = 4.2 cm, 15 m'de 11 px = 4.3 cm; ikisi de 7.5 cm'nin altinda).
-AIM_TOLERANCE_RATIO = 0.4
+AIM_TOLERANCE_RATIO = 0.3
 
 # Nişan toleransı ayrıca bu mutlak piksel değerinin altına inmek zorunda
 # değil — tespit gürültüsünün altında bir hassasiyet istememek için alt sınır.
@@ -1229,7 +1229,7 @@ AIM_TOLERANCE_RATIO = 0.4
 # yere sikiydi ve nisan penceresini kapatiyordu: sahada taret balonun
 # uzerinde ilerlerken bile ates aclmiyordu. Daha buyuk yapmayin —
 # 14 px + 2 cm silah sapmasi balonun kenarina dayaniyor.
-AIM_TOLERANCE_MIN_PIXELS = 8
+AIM_TOLERANCE_MIN_PIXELS = 7
 
 # --- ATES KAPISI: TARET NE KADAR YAVASKEN ATES SERBEST ---
 # Namlu, ates komutundan sonra servo cekisi (FIRE_SERVO_LEG_SEC = 0.20 sn)
@@ -1359,6 +1359,36 @@ FIRE_BALLOON_GRACE_FRAMES = 3
 # kirildiginda (B1) 3 ardisik kare hic toplanamiyor. 2 kare @15fps = 0.13 sn,
 # eski 3 kare @30fps'e yakin. Tek karelik gurultuye karsi koruma korunuyor.
 AIM_HOLD_FRAMES = 3
+
+# ARDISIK DEGIL, "SON M KAREDE N" (2026-09-25 -> 2026-09-27, 29.26 B65).
+#
+# Sahada olculdu (aşama2son11.mp4, drone kilidi 7.63-11.63 sn): kilit tam
+# ENGAGE_LOCK_TIMEOUT (4.0 sn) boyunca surdu ve HIC ATES EDILMEDI. Durum
+# cubugundan kare kare okundu -- `nisan TAMAM` su kamera karelerinde
+# gorundu: 5931, 5933, 5939, 5944, 5947, 5950, 5971, 5972. Yani nisan
+# tutuyordu ama hep TEK KARELIK adacıklar halinde; 5939'dan sonra
+# T,b,b,T,b,T,b,T diye neredeyse bir kare atlayarak. UC ARDISIK kare
+# hicbir zaman olusmadi, kilit zaman asimina ugradi, hedef kara listeye
+# alindi ve sistem 9.9 saniye boyunca hic ates edemedi.
+#
+# Sebep gurultu degil GEOMETRI: tolerans bandinin genisligi 2 x 7 = 14 px.
+# Nisan hatasi bandi 3 kare (15 fps'te 0.20 sn) boyunca gecmeyecekse bagil
+# hata hizi 70 px/sn = 0.99 derece/sn altinda kalmali. Olculen 0.2 sn'lik
+# pencerelerin yalnizca %46-52'si bu sarti sagliyor -- yani kapi HER
+# angajmanda kil payi aciliyor, drone kilidinde ise hic acilmadi.
+#
+# ARDISIK sart etmenin bedeli asimetrik: tek bir karelik sapma (tespit
+# gurultusu ya da step motorun bir hamlesi) o ana kadar biriken butun
+# kaniti siliyor. Son M karede N kare istemek ayni kaniti topluyor ama
+# tek kareye bu yikici gucu vermiyor.
+#
+# GUVENLIK: pencere kurali tek basina "eski bir an"a dayanarak ates
+# ettirmesin diye, MEVCUT karenin de tolerans icinde olmasi ayrica sart
+# kosuluyor (bkz. `kilit_adimi`). Yani sistem asla acikca nisan disindayken
+# ates etmiyor; yalnizca arada gelen tek karelik sapmalar kaniti silmiyor.
+#
+# 0 ya da AIM_HOLD_FRAMES'e esit verilirse davranis ESKISI GIBI (ardisik).
+AIM_HOLD_WINDOW_FRAMES = 6
 
 # --- IMHA DOGRULAMA ---
 # Sahada olculdu (asama2-3-hedefTakip.mp4): Asama 3'te ates 4.07 saniyede

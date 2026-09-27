@@ -5317,3 +5317,164 @@ Test: 488 kontrol (486 gecti); 2'si kullanicinin `PID_DEADBAND_PIXELS=2.5` ayari
 kaliyor (29.25.4).
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+
+### 29.26 aşama2son11 analizi: ateş edilmeden bırakılan drone (2026-09-27)
+
+Kaynak: `aşama2son11.mp4` (811 kare, 27.02 sn) ve ayni kosumun enkoder
+kaydi `enkoder_kayit/enkoder_20260927_211756.csv` (48 Hz, 23200 ornek,
+480 sn -- kosum kaydin 385-409. saniyeleri arasinda). Video 54 noktadan
+hizalandi: **video t = enkoder t0 + 383.506 sn**, ortalama uyum hatasi
+**0.026 derece**; uymayan 6 nokta da hizli slewlerin ortasinda, yani
+ara deger hatasindan.
+
+Kosum, kullanicinin 29.25'ten sonra kendi ayarladigi degerlerle yapildi:
+`KP_YAW 0.9 -> 0.97`, `PID_DEADBAND_PIXELS 2.5 -> 3.0` (29.25.4'teki
+oneri), `AIM_TOLERANCE_RATIO 0.4 -> 0.3`, `AIM_TOLERANCE_MIN_PIXELS
+8 -> 7`. Pozlama DEGISMEDI (`exposure = -5`).
+
+#### 29.26.1 Kosumun tamami
+
+Atis ve imha anlari durum cubugundaki ifadelerin sablon eslestirmesiyle
+kare kare bulundu. **6 atis / 3 imha:**
+
+| an | olay |
+|---|---|
+| 2.67 / 4.00 / 5.90 | Hedef A: 3 atis |
+| **7.20** | **IMHA 1** |
+| 7.63 - 11.63 | **DRONE 1 kilidi -- HIC ATES YOK** |
+| 12.0 - 14.0 | olu pencere: KILIT, "hedef bu karede yok" |
+| 17.13 | Fuze: 1 atis |
+| **18.47** | **IMHA 2** |
+| 20.93 / 22.97 | Drone 2: 2 atis |
+| **24.37** | **IMHA 3** |
+
+**Kayip zaman: 7.20 (1. imha) ile 17.13 (sonraki atis) arasinda 9.9
+saniye boyunca tek bir mermi atilmadi.** Bunun 4.0 saniyesi terk edilen
+drone kilidi, 2.4 saniyesi onu izleyen arama, 2.7 saniyesi Fuze'nin
+kilitten atise gecmesi.
+
+#### 29.26.2 B65 — Drone neden ates edilmeden birakildi
+
+Kilit 7.63'te basladi, 11.63'te birakildi: **tam 4.00 saniye**, yani
+`ENGAGE_LOCK_TIMEOUT`. `kilit_adimi` zaman asiminda hedefi dar yaricapla
+kara listeye alip TARAMA'ya donuyor -- oyle de oldu.
+
+Peki neden ates edilemedi? Durum cubugu kare kare okundu. `nisan TAMAM`
+su KAMERA karelerinde gorundu:
+
+> 5931, 5933, 5939, 5944, 5947, 5950, 5971, 5972
+
+Yani nisan tutuyordu -- ama hep **tek karelik adacıklar** halinde.
+5939'dan sonrasi T, b, b, T, b, T, b, T diye neredeyse bir kare
+atlayarak gidiyor. `AIM_HOLD_FRAMES = 3` **UC ARDISIK** kare istiyor;
+bu dizide uc ardisik hicbir zaman olusmadi.
+
+**Sebep gurultu degil, geometri.** Tolerans bandinin genisligi
+2 x 7 = 14 piksel. Nisan hatasi bu bandi 3 kare (15 fps'te 0.20 sn)
+boyunca gecmeyecekse bagil hata hizi
+`14 px / 0.20 sn = 70 px/sn = 0.99 derece/sn` altinda kalmali.
+Enkoderden olculen 0.2 saniyelik pencerelerin ne kadari bu sarti
+sagliyor:
+
+| angajman | sonuc | 0.2 sn pencere medyan hiz | sarti saglayan pencere |
+|---|---|---|---|
+| Hedef A | 2 sn'de ates | 0.16 derece/sn | **%94** |
+| Fuze | 2.8 sn'de ates | 0.97 derece/sn | %52 |
+| Drone 2 | 1.2 sn'de ates | 1.12 derece/sn | %47 |
+| **Drone 1** | **ates yok** | **1.08 derece/sn** | **%46** |
+
+Drone 1 digerlerinden daha zor degildi (%46'ya karsi %47 ve %52). Kapi
+zaten HER angajmanda kil payi aciliyor; Drone 1'de 4 saniyelik butce
+icinde sansi donmedi. Yani bu tek seferlik bir aksilik degil, sistemin
+calisma noktasinin kapinin esiginde olmasi.
+
+**Duzeltme: ardisik degil, "son M karede N".** Ardisik sart etmenin
+bedeli asimetrik -- tek bir karelik sapma (tespit gurultusu ya da step
+motorun bir hamlesi) o ana kadar biriken butun kaniti siliyor. Pencere
+kurali ayni kaniti (N kare) topluyor ama tek kareye bu yikici gucu
+vermiyor. `AIM_HOLD_WINDOW_FRAMES = 6` eklendi.
+
+**Guvenlik siniri:** pencere kuralinin "gecmiste iyiydi" diyerek nisan
+acikca disaridayken ates ettirmemesi icin MEVCUT karenin de tolerans
+icinde olmasi ayrica sart kosuluyor. Ayrica `AIM_HOLD_WINDOW_FRAMES`
+0 ya da `AIM_HOLD_FRAMES`'e esit verilirse davranis birebir ESKISI
+gibi olur (geri donus yolu acik).
+
+Sahadan okunan dizi teste konuldu: **eski kural o dizide ates acmiyor
+(hatanin kendisi yeniden uretiliyor), yeni kural 13. karede aciyor** --
+yani 4 saniyelik kilit bitmeden, yaklasik 0.9 saniyede.
+
+#### 29.26.3 B66 — Ekrandaki hata, kararin kullandigi hata DEGILDI
+
+Analiz sirasinda ortaya cikti ve tek basina bir kusur. Durum cubugu
+`error_yaw_pixel` / `error_pitch_pixel` yaziyordu; bunlar karenin
+CEKILDIGI andaki ham piksel hatasi. Nisan karari ise olu zaman telafili
+hatadan (`error_*_degree`) veriliyor -- kodda bunun neden sart oldugunu
+anlatan uzun bir "BAYAT NISAN" notu da var -- ama gosterim hic
+guncellenmemisti.
+
+Taret hareketliyken ikisi cok ayrisiyor. Olculdu:
+
+| kamera karesi | ekranda yazan hata | karar |
+|---|---|---|
+| 5941 | 3 px | nisan **bekliyor** |
+| 5944 | 20 px | nisan **TAMAM** |
+
+Telafi terimi `taret_hizi x olu_zaman` mertebesinde: 5 derece/sn ve
+0.185 sn ile 0.93 derece = 66 piksel. Step motor hamleler halinde
+ilerledigi icin bu terim kare kare ziplar.
+
+Sonuc: operator "neden ates etmiyor" sorusunu ekrandan yanitlayamiyordu
+-- ekranda 3 px yazarken kapi kapali, 20 px yazarken acik. Durum cubugu
+artik KARARIN dayandigi hatayi, TOLERANSI ve parantez icinde ham
+degerleri birlikte yaziyor.
+
+**Bu, 29.25.3'teki okumalari da etkiliyor:** orada tetik anlarindaki
+"Hata" degerleri ham piksel hatasiydi. 29.25'in silah sifir ofseti
+kestirimi ise goruntuden DOGRUDAN olculmustu (nisangah ile balon
+kutusunun konumu), o yuzden etkilenmiyor.
+
+#### 29.26.4 Digerleri
+
+**Olu pencere 12.0-14.0 (1.5 sn).** Sistem KILIT'te ama "hedef bu karede
+yok". Karelere bakildiginda merkezdeki Fuze'nin altinda balon yok -- 7.20'de
+imha edilen hedef. `LOCK_NO_BALLOON_GIVEUP_SEC` (1.2 sn) sonunda kilidi
+birakti, yani emniyet agi calisti; ama 1.5 saniye yine de kayip.
+
+**Hareket bulanikligi duruyor.** `exposure` hala -5 (31.25 ms). 12.0,
+12.5 ve 14.0 saniyelerdeki kareler gozle bakildiginda agir yayilmis.
+29.25.2'deki olcum gecerliligini koruyor.
+
+**Adim sayaci - enkoder farki buyudu.** Drone 1 kilidi boyunca fark
+-3.83 ile +1.21 derece arasinda gidip geldi (5 derecelik salinim).
+Delta komutlar cerceveden bagimsiz oldugu icin takibi bozmuyor, ama
+mutlak komut kullanan yollarda (tiklama, gozcu yonelmesi) onemli.
+
+**Kullanicinin ayarindan gelen test hatasi.** `AIM_TOLERANCE_MIN_PIXELS`
+8'den 7'ye cekilirken `FIRE_MAX_ERROR_DRIFT_PIXELS` 12'de kaldi. Test
+ikisinin ayni mertebede olmasini bekliyor (kayma siniri <= 1.5 x
+tolerans = 10.5). Anlami: tetikte 7 px hata + ucus boyunca 12 px kayma =
+19 px, balon yaricapi ise ~19 px. Kil payi. DEGISTIRILMEDI -- kullanicinin
+sahada ayarladigi deger. Ayrica toleransi 8'den 7'ye cekmek kapinin
+acilmasini zorlastirdi ve B65'e KATKI verdi: bant 16 px'ten 14 px'e
+indi, gereken hiz siniri 1.13'ten 0.99 derece/sn'ye dustu.
+
+#### 29.26.5 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `config.py` | YENI `AIM_HOLD_WINDOW_FRAMES = 6` | ardisik sartin tek karelik sapmayla silinmesi |
+| `engagement.py` | `from collections import deque` | pencere icin |
+| `engagement.py` | `AngajmanMakinesi.__init__`: `_nisan_gecmisi` | pencere tamponu |
+| `engagement.py` | `_gec`: TARAMA/YONELME'de pencereyi temizle | yeni hedefe gecerken eski kanit tasinmasin |
+| `engagement.py` | `kilit_adimi`: "son M karede N" + mevcut kare sarti | B65 |
+| `bukrek_main.py` | `_karar_hata_yaw_px/_pitch_px/_tolerans_px` | B66 |
+| `bukrek_main.py` | durum cubugu karar hatasini + toleransi + ham degeri yaziyor | B66 |
+| `tests_yeni_mimari.py` | 44. bolum (12 kontrol) | sahadan okunan dizi teste konuldu |
+
+Test: 501 kontrol, 500 geciyor. Kalan 1 hata kullanicinin
+`AIM_TOLERANCE_MIN_PIXELS=7` / `FIRE_MAX_ERROR_DRIFT_PIXELS=12`
+bileşiminden (29.26.4).
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**

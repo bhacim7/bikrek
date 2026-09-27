@@ -2644,6 +2644,128 @@ kontrol("sayac atesi ENGELLEMIYOR (0'da bile komut gider)",
 
 print()
 print("=" * 70)
+print("44. NISAN KANITI: ARDISIK DEGIL, SON M KAREDE N (29.26 B65)")
+print("=" * 70)
+# Saha dizisi (aşama2son11.mp4, drone kilidi 7.63-11.63 sn). Durum
+# cubugundan kare kare okundu; True = o karede `nisan TAMAM`.
+# Kilit tam ENGAGE_LOCK_TIMEOUT boyunca surdu ve HIC ates edilmedi.
+_SAHA65 = [False] * 8 + [True, True] + [False] * 3 + [True] \
+    + [False, False] + [True] + [False] + [True] + [False] + [True] \
+    + [False] * 12 + [True, True]
+
+kontrol("config: pencere tanimli ve N'den buyuk",
+        config.AIM_HOLD_WINDOW_FRAMES > config.AIM_HOLD_FRAMES,
+        f"{config.AIM_HOLD_FRAMES} / {config.AIM_HOLD_WINDOW_FRAMES}")
+
+
+def _kapi_ne_zaman(dizi, n, m):
+    """Ates hangi karede acilirdi? (yoksa None). `kilit_adimi` ile ayni mantik."""
+    from collections import deque as _dq
+    gec = _dq(maxlen=64)
+    ard = 0
+    for i, u in enumerate(dizi):
+        ard = ard + 1 if u else 0
+        gec.append(u)
+        if m > n:
+            while len(gec) > m:
+                gec.popleft()
+            if u and sum(gec) >= n:
+                return i
+        elif ard >= n:
+            return i
+    return None
+
+
+_eski65 = _kapi_ne_zaman(_SAHA65, config.AIM_HOLD_FRAMES, 0)
+_yeni65 = _kapi_ne_zaman(_SAHA65, config.AIM_HOLD_FRAMES,
+                         config.AIM_HOLD_WINDOW_FRAMES)
+kontrol("SAHA DIZISI: eski ardisik kural ates ACMIYOR (hatanin kendisi)",
+        _eski65 is None, str(_eski65))
+kontrol("SAHA DIZISI: pencere kurali ates ACIYOR",
+        _yeni65 is not None, f"kare {_yeni65}")
+kontrol("pencere kurali atesi 4 saniyelik kilit BITMEDEN aciyor",
+        _yeni65 is not None and _yeni65 < 30, str(_yeni65))
+
+# --- GERCEK `kilit_adimi` UZERINDE ---
+def _makine65():
+    m = engagement.AngajmanMakinesi()
+    m.durum = engagement.KILIT
+    m.durum_zamani = time.time()
+    m.hedef_yaw, m.hedef_pitch = 0.0, 0.0
+    return m
+
+
+_m65 = _makine65()
+_ates_kare = None
+for _i, _u in enumerate(_SAHA65):
+    # hata toleransin icinde/disinda; balon HER karede goruluyor
+    _hata = 1.0 if _u else 999.0
+    if _m65.kilit_adimi(_hata, 20.0, True):
+        _ates_kare = _i
+        break
+kontrol("gercek kilit_adimi saha dizisinde ATES'e geciyor",
+        _ates_kare is not None and _m65.durum == engagement.ATES,
+        f"kare {_ates_kare}, durum {_m65.durum}")
+
+# Pencere KAPALIYKEN eski davranis birebir korunuyor mu?
+_yedek65 = config.AIM_HOLD_WINDOW_FRAMES
+config.AIM_HOLD_WINDOW_FRAMES = 0
+_m65b = _makine65()
+_ates_b = None
+for _i, _u in enumerate(_SAHA65):
+    if _m65b.kilit_adimi(1.0 if _u else 999.0, 20.0, True):
+        _ates_b = _i
+        break
+kontrol("pencere KAPALIYKEN eski (ardisik) davranis aynen geri geliyor",
+        _ates_b is None, str(_ates_b))
+config.AIM_HOLD_WINDOW_FRAMES = _yedek65
+
+# MEVCUT kare tolerans disindayken pencere dolu olsa bile ATES YOK.
+_m65c = _makine65()
+for _ in range(config.AIM_HOLD_FRAMES):
+    _m65c.kilit_adimi(1.0, 20.0, True)          # pencereyi doldur
+_m65c = _makine65()
+_sonuc65 = []
+for _u in [True] * config.AIM_HOLD_FRAMES + [False]:
+    _sonuc65.append(_m65c.kilit_adimi(1.0 if _u else 999.0, 20.0, True))
+    if _m65c.durum == engagement.ATES:
+        _m65c.durum = engagement.KILIT                      # ates ettiyse geri al, siradakini sina
+        _m65c.durum_zamani = time.time()
+kontrol("MEVCUT kare tolerans DISINDAYKEN ates acilmiyor (pencere dolu olsa bile)",
+        _sonuc65[-1] is False, str(_sonuc65))
+
+# Balon gorunmeyen kare kanit SAYILMIYOR.
+_m65d = _makine65()
+_b65 = [_m65d.kilit_adimi(1.0, 20.0, False) for _ in range(10)]
+kontrol("balon hic gorunmezse kanit birikmiyor (ates yok)",
+        not any(_b65))
+
+# Tek karelik sapma butun kaniti SILMIYOR (duzeltmenin ozu).
+_m65e = _makine65()
+_dizi65 = [True, True, False, True]
+_son65 = None
+for _u in _dizi65:
+    if _m65e.kilit_adimi(1.0 if _u else 999.0, 20.0, True):
+        _son65 = True
+        break
+kontrol("T,T,b,T dizisinde ates aciliyor (tek sapma kaniti silmiyor)",
+        _son65 is True)
+
+# --- DURUM CUBUGU KARARIN HATASINI YAZIYOR MU (B66) ---
+_k66 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("durum cubugu KARARIN dayandigi hatayi yaziyor",
+        '_karar_hata_yaw_px' in _k66
+        and 'Hata: Yaw {self._karar_hata_yaw_px' in _k66)
+kontrol("ham piksel hatasi da gosteriliyor (ikisi karsilastirilabilsin)",
+        'ham {error_yaw_pixel}' in _k66)
+kontrol("tolerans da yaziliyor (operator esigi gorsun)",
+        '_karar_tolerans_px' in _k66)
+kontrol("karar degerleri is_aimed_at_target ile AYNI yerde uretiliyor",
+        _k66.index('self._karar_hata_yaw_px = _hata_yaw_px')
+        - _k66.index('self.is_aimed_at_target = (abs(_hata_yaw_px)') < 900)
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)

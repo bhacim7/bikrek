@@ -14,6 +14,7 @@ maket (kim) + balon (nereye nişan alınacak).
 
 import math
 import time
+from collections import deque
 
 import config
 
@@ -353,6 +354,7 @@ class AngajmanMakinesi:
         self._sinif_gecmisi = []       # doğrulama için ardışık sınıflar
         self._dogrulama_balon = 0      # doğrulamada balon kaç karede görüldü
         self._nisan_ardisik = 0
+        self._nisan_gecmisi = deque(maxlen=32)
         self.dogrulanan_sinif = None
         self.imha_sayisi = 0
 
@@ -383,6 +385,7 @@ class AngajmanMakinesi:
                 self._sinif_gecmisi = []
                 self._dogrulama_balon = 0
                 self._nisan_ardisik = 0
+                self._nisan_gecmisi.clear()
                 self.dogrulanan_sinif = None
                 self.kilit_aci = None
                 self.kopru_kare = 0
@@ -826,12 +829,36 @@ class AngajmanMakinesi:
 
         tolerans = max(config.AIM_TOLERANCE_MIN_PIXELS,
                        nisan_yaricap_px * config.AIM_TOLERANCE_RATIO)
-        if nisan_hatasi_px <= tolerans and balon_gorundu:
-            self._nisan_ardisik += 1
-        else:
-            self._nisan_ardisik = 0
+        uygun = bool(nisan_hatasi_px <= tolerans and balon_gorundu)
 
-        if self._nisan_ardisik >= config.AIM_HOLD_FRAMES:
+        # NISAN KANITI: ARDISIK DEGIL, "SON M KAREDE N" (29.26 B65).
+        #
+        # Sahada olculdu (aşama2son11.mp4): drone kilidi tam
+        # ENGAGE_LOCK_TIMEOUT boyunca surdu, `nisan TAMAM` 5931, 5933,
+        # 5939, 5944, 5947, 5950, 5971, 5972 karelerinde -- hep TEK
+        # KARELIK adacıklar halinde -- gorundu ve UC ARDISIK kare hic
+        # olusmadi. Hedef ates edilmeden birakildi.
+        #
+        # Ardisik sart etmenin sorunu, tek bir karelik sapmanin o ana
+        # kadar biriken BUTUN kaniti silmesi. Pencere kurali ayni kaniti
+        # (N kare) topluyor ama tek kareye bu yikici gucu vermiyor.
+        #
+        # MEVCUT kare ayrica tolerans icinde olmali: boylece pencere
+        # kurali "gecmiste iyiydi" diyerek nisan acikca disaridayken ates
+        # ettiremez.
+        self._nisan_ardisik = self._nisan_ardisik + 1 if uygun else 0
+        self._nisan_gecmisi.append(uygun)
+        _pencere = int(getattr(config, 'AIM_HOLD_WINDOW_FRAMES', 0) or 0)
+        _gerek = config.AIM_HOLD_FRAMES
+        if _pencere > _gerek:
+            while len(self._nisan_gecmisi) > _pencere:
+                self._nisan_gecmisi.popleft()
+            yeterli = uygun and sum(self._nisan_gecmisi) >= _gerek
+        else:
+            # Pencere kapali (0 ya da <= N): ESKI davranis, tam ardisik.
+            yeterli = self._nisan_ardisik >= _gerek
+
+        if yeterli:
             self._gec(ATES)
             return True
         return False

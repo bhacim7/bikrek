@@ -160,6 +160,9 @@ class HavaSavunmaArayuz(QWidget):
         self.is_ready_to_engage_from_qr = False
 
         self.is_aimed_at_target = False
+        self._karar_hata_yaw_px = 0.0
+        self._karar_hata_pitch_px = 0.0
+        self._karar_tolerans_px = float(config.AIM_TOLERANCE_MIN_PIXELS)
         self.ates_nisan_tamam = False
         self.is_target_active = False
 
@@ -3493,6 +3496,17 @@ class HavaSavunmaArayuz(QWidget):
         _hata_pitch_px = error_pitch_degree / self.DEGREES_PER_PIXEL_PITCH
         self.is_aimed_at_target = (abs(_hata_yaw_px) <= _tolerans and
                                    abs(_hata_pitch_px) <= _tolerans)
+        # OPERATOR ICIN: KARARIN DAYANDIGI hata (29.26 B66).
+        # Durum cubugu bugune kadar `error_*_pixel`i yaziyordu; o, karenin
+        # CEKILDIGI andaki ham piksel hatasi. Nisan karari ise olu zaman
+        # telafili hatadan veriliyor ve ikisi taret hareketliyken cok
+        # ayrisiyor -- sahada olculdu (aşama2son11.mp4): kare 5941'de
+        # ekranda 3 px yazarken "nisan bekliyor", kare 5944'te 20 px
+        # yazarken "nisan TAMAM". Operator "neden ates etmiyor" sorusunu
+        # ekrandan yanitlayamaz hale geliyordu.
+        self._karar_hata_yaw_px = _hata_yaw_px
+        self._karar_hata_pitch_px = _hata_pitch_px
+        self._karar_tolerans_px = _tolerans
 
         # ATES KARARI ICIN AYRI NISAN BAYRAGI (29.15). Taret artik
         # ateslerken de takip ettigi icin tetik cekilene kadar nisan hedefin
@@ -3913,14 +3927,14 @@ class HavaSavunmaArayuz(QWidget):
             self.send_proportional_move_command(output_yaw, output_pitch)
         else:
             self.target_info_label.setText(
-                f"Hedef: Nişan Alındı. Hata: Yaw {error_yaw_pixel}px, Pitch {error_pitch_pixel}px")
+                f"Hedef: Nişan Alındı. Hata: Yaw {self._karar_hata_yaw_px:.0f}px, Pitch {self._karar_hata_pitch_px:.0f}px (tol {self._karar_tolerans_px:.0f}px | ham {error_yaw_pixel},{error_pitch_pixel})")
 
         self.last_target_x = target_x
         self.last_target_y = target_y
         self.last_frame_time = current_frame_time
 
         self.target_info_label.setText(
-            f"Hedef: Takip Ediliyor. Hata: Yaw {error_yaw_pixel}px, Pitch {error_pitch_pixel}px")
+            f"Hedef: Takip Ediliyor. Hata: Yaw {self._karar_hata_yaw_px:.0f}px, Pitch {self._karar_hata_pitch_px:.0f}px (tol {self._karar_tolerans_px:.0f}px | ham {error_yaw_pixel},{error_pitch_pixel})")
 
     def process_tracking_to_home_position(self):
         if not self.rpi_thread.is_connected or self.active_task == 'full_manual':
