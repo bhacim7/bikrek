@@ -5724,3 +5724,96 @@ Test: 512 kontrol, 511 geciyor. Kalan 1 hata kullanicinin
 bilesiminden (29.26.4).
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.29 son15: takibin kok nedeni bulundu — dongu LIMIT CEVRIMINDE (2026-09-28)
+
+Kaynak: `aşama2son15.mp4` (867 kare, 28.87 sn) + `enkoder_20260927_235016.csv`.
+Video 49 noktadan hizalandi: **video t = enkoder t0 + 121.340 sn**, ortalama
+uyum hatasi **0.021 derece**. Kosum commitli kodla (52eee08, B68 dahil).
+
+#### 29.29.1 Kosum
+
+3 atis (3.4 / 6.5 / 14.9 sn), **2 imha**. Drone IKI KEZ kilitlendi, iki
+seferde de **tam 4.0 saniye** sonra ates edilmeden birakildi:
+
+| kilit | sure | sonuc |
+|---|---|---|
+| Fuze 1 (2.5-7.8) | — | 2 atis, IMHA |
+| Fuze [capa] (8.6-12.6) | 4.0 sn | **ates yok**, kilit zaman asimi |
+| Fuze 2 (13.9-16.3) | — | 1 atis, IMHA |
+| **Drone 1. kilit (17.0-21.0)** | **4.0 sn** | **ates yok** |
+| **Drone 2. kilit (24.0-28.0)** | **4.0 sn** | **ates yok** |
+
+Kullanicinin "droneu cok hizli birakiyor" dedigi sey `ENGAGE_LOCK_TIMEOUT`.
+Ama sebep zaman asimi DEGIL; nisanin hicbir zaman oturmamasi.
+
+#### 29.29.2 B69 — Denetim dongusu LIMIT CEVRIMINDE
+
+Her kilit penceresinde taretin hareketinden dogrusal egilim (hedefin
+suruklenmesi) cikarilip kalan SALINIM olculdu:
+
+| kilit | salinim genligi | frekans | sonuc |
+|---|---|---|---|
+| Fuze 1 | 0.81 derece (58 px) | — | **IMHA** |
+| Fuze 2 | 0.36 derece (26 px) | 1.14 Hz | **IMHA** |
+| Fuze [capa] | 1.76 derece (125 px) | 0.73 Hz | ates yok |
+| Drone 1 | **2.94 derece (208 px)** | 0.63 Hz | ates yok |
+| Drone 2 | **2.54 derece (180 px)** | 0.93 Hz | ates yok |
+
+**Ayrim kusursuz.** Ates kapisi 13-18 pikselllik tolerans isterken taret
+180-208 piksel salindigi icin nisan oturamiyor, `AIM_HOLD_FRAMES` dolmuyor
+ve kilit zaman asimiyla dusuyor.
+
+**Bu hedefin hareketi DEGIL.** Alti kosumun hepsinde baskin salinim
+frekansi olculdu: 0.80 / 1.22 / 1.58 / 0.93 / 1.05 / 1.04 Hz — hep ~1 Hz.
+Hedeflerin sarkac frekansi 0.3-0.4 Hz. Yani salinim DONGUNUN KENDISINDEN
+geliyor.
+
+**Mekanizma.** Komut kare basina DELTA gonderiliyor, yani
+`taret hizi = KP x hata x fps`. Boyle bir dongu bir INTEGRATOR'dur;
+onune olu zaman konunca belirli bir kazancin ustunde kendiliginden salinir.
+1.0 Hz'de faz -180 olmasi etkin olu zamanin `L = pi/(2w) = 0.25 sn`
+oldugunu soyluyor. Kararlilik sarti `Kv = KP x fps < pi/(2L) = 6.28`:
+
+| KP | hiz kazanci Kv | kritik frekansta dongu kazanci |
+|---|---|---|
+| **0.97 (eskiden)** | 14.5 | **2.32 — sinirin 2.3 KATI** |
+| 0.70 (daha eski) | 10.5 | 1.67 — bu da kararsizdi |
+| 0.45 | 6.8 | 1.07 — tam sinir |
+| **0.35 (secildi)** | 5.2 | **0.84 — gercek pay** |
+
+Yani **salinim yeni bir bozulma degil; dongu bastan beri kararsizdi.**
+Kosumdan kosuma buyumesi de olculdu (2 sn'lik kayan pencerede medyan
+salinim RMS'i): son10 0.51, son11 0.55, son12 0.46, son13 0.62,
+son14 0.82, **son15 0.95 derece**. Kararsiz bir dongu, uyarilma
+siddetlendikce (hedefler yakinlasti: balon capi 56.6 -> 76.1 piksel)
+daha buyuk cevrime oturur.
+
+**Duzeltme:** `KP_YAW 0.97 -> 0.35`, `KP_PITCH 0.6 -> 0.30`.
+
+Bedeli kucuk: hedefin hareketini ILERI BESLEME tasiyor, oransal terim
+yalnizca ARTIK hatayi kapatiyor. Kapanma zaman sabiti `1/Kv = 0.19 sn`;
+8 derecelik edinim hatasinda taret hala 42 derece/sn donebiliyor.
+Yavas gelirse merdiven: 0.35 -> 0.45 -> 0.50, Ayarlar sekmesinden canli.
+
+#### 29.29.3 Test benzetimi duzeltildi
+
+Kazanc dusurulunce iki test kaldi ("olu bandin hemen ustundeki hata 8 kare
+icinde komut uretmiyor"). Incelendi: **kod dogru, TEST eskimis.** Gercek
+kodda `_min_kalan_yaw` biriktiricisi esik alti komutu ATMIYOR, saklayip
+esigi asinca gonderiyor; testin benzetimi bu biriktiriciyi icermiyordu ve
+gercekte olmayan bir olu bolge raporluyordu. Benzetime biriktirici eklendi.
+
+#### 29.29.4 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `config.py` | `KP_YAW 0.97 -> 0.35`, `KP_PITCH 0.6 -> 0.30` | olculen limit cevriminden cikan kararlilik siniri |
+| `tests_yeni_mimari.py` | 46. bolum (9 kontrol) | kararlilik olcutu teste kondu, eski KP'lerin kararsizligi dahil |
+| `tests_yeni_mimari.py` | `_zincir` benzetimine MIN_OUTPUT biriktiricisi | benzetim gercek kodla ayrisM1sti |
+
+Test: 521 kontrol, 520 geciyor. Kalan 1 hata kullanicinin
+`AIM_TOLERANCE_MIN_PIXELS=7` / `FIRE_MAX_ERROR_DRIFT_PIXELS=12`
+bilesiminden (29.26.4).
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**

@@ -596,8 +596,38 @@ SPOTTER_PITCH_OFFSET = 0.0
 
 # PID oransal kazançları. DERECE uzayında çalışırlar (komut = KP x hata_derece),
 # yani zoomdan bağımsızdırlar — 3x zoomlu avcıda da aynı değerler geçerli.
-KP_YAW = 0.97
-KP_PITCH = 0.6
+# KAZANC OLCULEREK DUSURULDU (2026-09-28, 29.29 B69).
+#
+# Komut kare basina DELTA gonderiliyor, yani taretin HIZI = KP x hata x fps.
+# Boyle bir dongu bir INTEGRATOR'dur; onune olu zaman konunca belirli bir
+# kazancin ustunde KENDILIGINDEN SALINIR.
+#
+# SAHADA OLCULDU (alti kosumun enkoder kaydi, 50 Hz, dogrusal egilim
+# cikarilarak): taret HER kosumda salindi ve baskin frekans hep ayni
+# yerde kumelendi -- medyan 0.80/1.22/1.58/0.93/1.05/1.04 Hz. Hedeflerin
+# sarkac hareketi 0.3-0.4 Hz; yani bu HEDEF DEGIL, DONGUNUN KENDISI.
+#
+# 1.0 Hz'de faz -180 demek, etkin olu zaman L = pi/(2w) = 0.25 sn demek.
+# Kararlilik sarti Kv = KP x fps < pi/(2L) = 6.28, yani KP < 0.42.
+#     KP 0.97 -> dongu kazanci 2.32  (sinirin 2.3 KATI)
+#     KP 0.70 -> 1.67   (eski deger de kararsizdi, sadece daha az siddetli)
+#     KP 0.45 -> 1.07   (tam sinir)
+#     KP 0.35 -> 0.84   (secildi: gercek pay var)
+#
+# Salinim genligi aşama2son15'te imhayi BELIRLEDI:
+#     imha alan iki angajman : 0.36 ve 0.81 derece salinim
+#     ates edilemeyen ucu    : 1.76, 2.54, 2.94 derece
+# Ates kapisi 13-18 pikselllik tolerans isterken taret 180-208 piksel
+# salindigi icin nisan hicbir zaman oturmadi ve kilit ENGAGE_LOCK_TIMEOUT
+# ile dustu (drone iki kez, her seferinde tam 4.0 saniye).
+#
+# BEDELI YOK denecek kadar kucuk: hedefin hareketini ILERI BESLEME
+# tasiyor (FEEDFORWARD_GAIN), oransal terim yalnizca ARTIK hatayi
+# kapatiyor. Kapanma zaman sabiti 1/Kv = 0.19 sn.
+# Sisirse yavas gelirse merdiven: 0.35 -> 0.45 -> 0.50. Ayarlar
+# sekmesinden canli denenebilir.
+KP_YAW = 0.35
+KP_PITCH = 0.30
 
 # --- İleri besleme (feedforward) ---
 # Saf oransal denetim hareketli hedefte kalıcı olarak geride kalır. Bu terim

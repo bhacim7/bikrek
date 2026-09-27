@@ -1295,14 +1295,25 @@ def _zincir(hata_derece, kp, dpp, kare=8):
     _a = config.PID_OUTPUT_SMOOTHING
     _min = config.MIN_OUTPUT_PIXELS * abs(config.HUNTER_DPP_YAW)
     _max = 2.0
+    # BENZETIME MIN_OUTPUT BIRIKTIRICISI EKLENDI (2026-09-28, 29.29).
+    # Gercek kodda (`_min_kalan_yaw`) esik alti komut ATILMIYOR, saklanip
+    # esigi asinca gonderiliyor; benzetim bunu icermedigi icin kazanc
+    # dusurulunce gercekte olmayan bir "olu bolge" raporluyordu.
     hafiza = 0.0
+    kalan = 0.0
     for _ in range(kare):
         u = kp * hata_derece
         y = _a * u + (1 - _a) * hafiza if _a > 0 else u
         hafiza = y                      # MIN_OUTPUT hafizayi BOZMAMALI
         if abs(y) > _max:
             hafiza = _max if y > 0 else -_max
-        gonderilen = 0.0 if abs(y) < _min else max(-_max, min(_max, y))
+        t = y + kalan
+        if abs(t) < _min:
+            kalan = t
+            gonderilen = 0.0
+        else:
+            kalan = 0.0
+            gonderilen = max(-_max, min(_max, t))
         if gonderilen != 0.0:
             return True
     return False
@@ -2812,6 +2823,56 @@ kontrol("hizli slewde taretin kendi hareketi eski toleransi ASIYOR "
         "(hatanin sayisal kaniti)",
         _px68 > 150,
         "%.0f px > 150 px" % _px68)
+
+print()
+print("=" * 70)
+print("46. DONGU KARARLILIGI: KP olculen limit cevrimine gore (29.29 B69)")
+print("=" * 70)
+# Komut kare basina DELTA: taret HIZI = KP x hata x fps, yani dongu bir
+# INTEGRATOR. Olu zamanli integrator belirli kazancin ustunde salinir.
+# Alti kosumun enkoder kaydinda baskin salinim frekansi olculdu:
+#   0.80 / 1.22 / 1.58 / 0.93 / 1.05 / 1.04 Hz  -> ~1.0 Hz
+# Hedeflerin sarkac frekansi 0.3-0.4 Hz oldugu icin bu HEDEF DEGIL.
+_F69 = 1.0                      # olculen limit cevrimi (Hz)
+_W69 = 2.0 * _math.pi * _F69
+_L69 = _math.pi / (2.0 * _W69)  # faz -180 -> etkin olu zaman
+_FPS69 = 15.0                   # sahada olculen kare hizi
+
+kontrol("olculen frekanstan cikan olu zaman makul (0.15-0.40 sn)",
+        0.15 <= _L69 <= 0.40, f"{_L69:.3f} sn")
+
+def _dongu_kazanci(kp):
+    return (kp * _FPS69) / _W69
+
+kontrol("ESKI KP 0.97 kararsizdi (hatanin sayisal kaniti)",
+        _dongu_kazanci(0.97) > 2.0, f"{_dongu_kazanci(0.97):.2f}")
+kontrol("daha eski KP 0.70 de kararsizdi (salinim yeni degil)",
+        _dongu_kazanci(0.70) > 1.0, f"{_dongu_kazanci(0.70):.2f}")
+kontrol("YENI KP_YAW kararlilik siniri ALTINDA",
+        _dongu_kazanci(config.KP_YAW) < 1.0,
+        f"KP {config.KP_YAW} -> kazanc {_dongu_kazanci(config.KP_YAW):.2f}")
+kontrol("YENI KP_PITCH kararlilik siniri ALTINDA",
+        _dongu_kazanci(config.KP_PITCH) < 1.0,
+        f"KP {config.KP_PITCH} -> kazanc {_dongu_kazanci(config.KP_PITCH):.2f}")
+kontrol("pay abartilmadi (kazanc 0.5'in ustunde, taret uyusuk kalmasin)",
+        _dongu_kazanci(config.KP_YAW) > 0.5,
+        f"{_dongu_kazanci(config.KP_YAW):.2f}")
+
+# Artik hatanin kapanma zaman sabiti kullanilabilir kalmali.
+_tau69 = 1.0 / (config.KP_YAW * _FPS69)
+kontrol("artik hatanin kapanma zaman sabiti 0.4 sn'den kisa",
+        _tau69 < 0.4, f"{_tau69:.2f} sn")
+
+# Buyuk edinim hatasinda taret hala hizli donebilmeli.
+_hiz69 = config.KP_YAW * _FPS69 * 8.0      # 8 derecelik hata
+kontrol("8 derecelik edinim hatasinda taret >30 derece/sn donebiliyor",
+        _hiz69 > 30.0, f"{_hiz69:.0f} derece/sn")
+
+kontrol("KP'ler Ayarlar sekmesinden canli denenebiliyor (merdiven icin)",
+        any(t[0] == 'KP_YAW' for t in config.AYARLANABILIR_PARAMETRELER
+            if t[1] is not None)
+        and any(t[0] == 'KP_PITCH' for t in config.AYARLANABILIR_PARAMETRELER
+                if t[1] is not None))
 
 print()
 print("=" * 70)
