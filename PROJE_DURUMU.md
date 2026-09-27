@@ -5478,3 +5478,155 @@ Test: 501 kontrol, 500 geciyor. Kalan 1 hata kullanicinin
 bileşiminden (29.26.4).
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+
+### 29.27 aşama2son12: "duzeltmeyi geri mi alsak" — hayir, dar bogaz baska (2026-09-27)
+
+Kaynak: `aşama2son12.mp4` (862 kare, 28.73 sn). Kosum, 29.26'daki
+degisiklikler COMMITLI haldeyken yapildi (`AIM_HOLD_WINDOW_FRAMES = 6`);
+`git diff config.py` bos, yani baska bir ayar oynanmamis.
+
+#### 29.27.1 Kosumun tamami
+
+Atislar SARJOR SAYACINDAN sayildi (29.25'te eklenen gosterge burada olcum
+araci olarak ise yaradi): 12 -> 8, yani **4 atis**. Imhalar durum
+cubugundan: **2 imha**.
+
+| an | olay |
+|---|---|
+| 2.5 - 5.8 | Hedef 1 (orta Fuze) kilidi |
+| 5.83 | atis 1 |
+| **7.17** | **IMHA 1** |
+| 8.0 - 10.9 | Hedef 2 (sol Fuze) kilidi |
+| 10.90 / 12.30 | atis 2, atis 3 -- **ikisi de iska** |
+| 12.4 - 16.0 | **3.8 saniye ATES durumunda TAKILI**, kapi acilmiyor |
+| 16.0 | vazgecildi (retry sayaci 35/35), hedef 2 kara listeye |
+| 17.5 - 20.2 | Hedef 3 (Drone) kilidi |
+| 20.20 | atis 4 |
+| **21.50** | **IMHA 2** |
+| 23.5 - 25.5 | Hedef 2 geri geldi (giveup TTL 5 sn doldu), kilit kuruldu |
+| 26.0 | tur bitti -- **hedef 2 hic vurulmadi** |
+
+#### 29.27.2 B67 — Nisangah balonun icindeyken bile atislarin YARISI iska
+
+Tetik anlarinda nisangahin (yesil arti) kilitli balon kutusuna gore
+konumu tam cozunurlukte olculdu. son10'daki 8 atisla birlestirince
+**12 olculmus atis**:
+
+| kosum | atis | sapma px | yaricap | ic/dis | sonuc |
+|---|---|---|---|---|---|
+| son10 | H1-a1 | 22.5 | 20.1 | DISARIDA | iska |
+| son10 | H1-a2 | 36.4 | 21.8 | DISARIDA | iska |
+| son10 | H1-a3 | 6.0 | 22.9 | iceride | **ISABET** |
+| son10 | H2-a1 | 13.1 | 19.6 | iceride | **ISABET** |
+| son10 | H3-a1 | 9.0 | 15.1 | iceride | iska |
+| son10 | H3-a2 | 11.9 | 25.7 | iceride | iska |
+| son10 | H3-a3 | 9.9 | 25.7 | iceride | iska |
+| son10 | H3-a4 | 6.1 | 29.1 | iceride | **ISABET** |
+| son12 | H1-a1 | 4.2 | 25.1 | iceride | **ISABET** |
+| son12 | H2-a1 | **2.9** | **29.1** | iceride | **iska** |
+| son12 | H2-a2 | 8.0 | 19.6 | iceride | iska |
+| son12 | H3-a1 | **16.3** | 38.6 | iceride | **ISABET** |
+
+> **Nisangah balonun ICINDEYKEN: 10 atis, 5 isabet — %50.**
+> **Nisangah DISINDAYKEN: 2 atis, 0 isabet — %0.**
+
+Ve belirleyici olan su: iceride ISKA edenlerin ortalama sapmasi
+**8.3 px**, iceride ISABET edenlerin ortalama sapmasi **9.1 px**.
+**Isabet edenler, iskalayanlardan daha UZAKTAN vurmus.** Yani nisangah
+balonun icine girdikten sonra sapma miktari sonucu HIC aciklamiyor;
+ikisini ayiran bir esik yok.
+
+En carpici ornek son12/H2-a1: nisangah 29 piksel yaricapli bir balonun
+merkezinden **2.9 piksel** uzaktaydi -- pratikte tam ortasi -- ve
+iskaladi. Ayni kosumda H3-a1 16.3 piksel sapmayla vurdu.
+
+Bu, 29.25.3'te 8 atistan kestirilen sabit sifir ofseti modelini de
+CURUTUYOR: o model (Z = +14.5, -20.0 px) son12'nin dort atisini dogru
+aciklayamiyor, mesafeye gore olceklenmis hali de aciklamiyor.
+
+**Sonuc: atisin kendisi ~%50 etkili ve bu, nisandan BAGIMSIZ.** Geriye
+kalan aday sebepler yazilimin disinda: besleme/tutukluk (sarjor sayaci
+Pi'nin "tetigi cektim" yanitinda dustugu icin mermi cikmasa da azalir),
+mermi hizi/dagilimi, ya da balonun siyirilip patlamamasi.
+
+#### 29.27.3 Duzeltme geri alinmali mi? Hayir.
+
+Kosum basina isabet orani:
+
+| kosum | atis | imha | oran | 29.26 duzeltmesi |
+|---|---|---|---|---|
+| son10 | 8 | 3 | %38 | YOK |
+| son11 | 6 | 3 | %50 | YOK |
+| son12 | 4 | 2 | %50 | VAR |
+
+Isabet orani DEGISMEDI (%38, %50, %50). Degisen sey ATIS SAYISI: 8, 6, 4.
+Atis basina ~%50 etkinlikle 3 imha icin ~6 atis gerekiyor; atis sayisini
+dusuren her sey dogrudan imha sayisini dusuruyor.
+
+Pencere kuralinin bunu yapmis olmasi MANTIKEN mumkun degil: "son M karede
+N" kurali KILIT -> ATES gecisini yalnizca ERKENE alabilir ya da ayni
+birakabilir, hicbir zaman GECIKTIREMEZ. Atis sayisini azaltamaz.
+
+Olculen destek:
+- Uc kilidin de ATES'e gecme suresi 2.9 - 3.3 saniye; son11'dekilerden
+  (1.2 - 2.8 sn) daha HIZLI degil. Yani pencere kurali bu kosumda baglayici
+  kisit olmamis.
+- Atilan dort atisin karar hatasi tetik aninda 2.9 - 8.0 piksel, hepsi
+  toleransin icinde. Yani pencere kurali "kotu nisanla" atis gecirmemis.
+
+**Atis sayisini dusuren sey baska: 12.4 - 16.0 arasindaki 3.8 saniye.**
+Sistem ATES durumundaydi ve kapi acilmadi; retry sayaci 1/35'ten 29/35'e
+ciktı ve `FIRE_RETRY_GIVEUP_FRAMES` dolunca hedef birakildi. Engelleme
+sebepleri durum cubugunda yaziyor ve yari yariya:
+
+| an | sebep |
+|---|---|
+| 12.23 | nisan tolerans disinda (1/35) |
+| 14.00 | **nisan kayiyor: atisa kadar 25 px** (6/35) |
+| 14.50 | nisan tolerans disinda (14/35) |
+| 15.00 | **nisan kayiyor: atisa kadar 22 px** (21/35) |
+| 15.50 | nisan tolerans disinda (29/35) |
+
+"atisa kadar X px" = `hata_degisim_hizi x FIRE_SHOT_LATENCY_SEC`, sinir
+`FIRE_MAX_ERROR_DRIFT_PIXELS` = 12. **`FIRE_SHOT_LATENCY_SEC = 0.25`
+hala OLCULMEDI** ve 29.23.1'de bu degerin muhtemelen iki kat fazla
+oldugu gosterilmisti (1.75 derece/sn giden helikopter tek atista
+vurulmustu; gercek gecikme 0.25 sn olsaydi hedef 31 piksel kayardi).
+Deger 0.12'ye inseydi "25 px" -> "12 px" olur ve o 3.8 saniyenin buyuk
+kismi acilirdi.
+
+Geri almak yerine, pencere kurali **arayuzden kapatilabilir yapildi**:
+`AIM_HOLD_WINDOW_FRAMES` Ayarlar sekmesine eklendi, `0` verildiginde
+davranis 29.26 oncesiyle BIREBIR ayni oluyor. Boylece tek bir kaydiriciyla
+A/B karsilastirmasi yapilabilir; koda dokunmaya gerek yok.
+
+#### 29.27.4 Kullanicinin kayit alamadigi diger kosum
+
+Bildirilen: bir balon patladiktan sonra kalan artik "balon" sanildi,
+sistem o hedefe kilitlenip birakmak arasinda gidip geldi ve asil balonu
+olan hedefe gidemeden tur bitti.
+
+Kayit olmadigi icin olculemedi, ama en olasi mekanizma
+`BLACKLIST_KILL_RADIUS_DEG = 2.0`. Hedefler sarkac gibi salindiginda
+genligi olculdu: **+-1.3 derece** (29.25.1). Imha aninda kaydedilen kara
+liste merkezi ile hedefin bir sure sonraki acisi arasinda 2.6 dereceye
+varan fark olusabiliyor; 2.0 derecelik yaricap bunu kapatmiyor ve imha
+edilmis hedef yeniden secilebiliyor. Deger 29.25'te 2.5'ten 2.0'a
+DUSURULMUSTU. 2.5 - 3.0 araligi salinim genligini kapsar.
+
+#### 29.27.5 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `config.py` | `AIM_HOLD_WINDOW_FRAMES` Ayarlar listesine eklendi (0-15) | 29.26 duzeltmesinin sahada A/B edilebilmesi; 0 = eski davranis |
+| `config.py` | `AIM_HOLD_FRAMES` aciklamasi guncellendi | artik "ardisik" degil, pencere icinde |
+| `tests_yeni_mimari.py` | 4 kontrol | parametre listede, aralik 0'i kapsiyor, canli degisiyor |
+
+Kod davranisi DEGISMEDI; yalnizca ayar yuzeyi acildi.
+
+Test: 505 kontrol, 504 geciyor. Kalan 1 hata kullanicinin
+`AIM_TOLERANCE_MIN_PIXELS=7` / `FIRE_MAX_ERROR_DRIFT_PIXELS=12`
+bilesiminden (29.26.4).
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**

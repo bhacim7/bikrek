@@ -1775,7 +1775,10 @@ AYARLANABILIR_PARAMETRELER = [
      0.1, 1.0, 0.05, 2,
      "Toleransin balon buyudukce genisleyen kismi; ikisinin BUYUGU kullanilir."),
     ("AIM_HOLD_FRAMES", "Nisan tutma (kare)", 1, 10, 1, 0,
-     "Ates icin toleransin kac ardisik karede korunmasi gerekir."),
+     "Ates icin tolerans kac karede korunmali (asagidaki pencere icinde)."),
+    ("AIM_HOLD_WINDOW_FRAMES", "Nisan tutma penceresi (kare)", 0, 15, 1, 0,
+     "Yukaridaki N kare SON kac kare icinde toplanabilir. 0 = ardisik sart "
+     "(29.26 oncesi davranis). A/B karsilastirmasi icin buradan degistirin."),
     ("FIRE_MAX_ERROR_DRIFT_PIXELS", "Izin verilen nisan kaymasi (px)",
      4, 40, 1, 0,
      "Mermi varana kadar nisanin kayacagi tahmini miktar. Durum cubugundaki "

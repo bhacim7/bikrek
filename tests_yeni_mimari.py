@@ -2753,6 +2753,20 @@ kontrol("T,T,b,T dizisinde ates aciliyor (tek sapma kaniti silmiyor)",
 
 # --- DURUM CUBUGU KARARIN HATASINI YAZIYOR MU (B66) ---
 _k66 = io.open('bukrek_main.py', encoding='utf-8').read()
+kontrol("nisan tutma penceresi ARAYUZDEN ayarlanabilir (canli A/B icin)",
+        any(t[0] == 'AIM_HOLD_WINDOW_FRAMES'
+            for t in config.AYARLANABILIR_PARAMETRELER if t[1] is not None))
+_ar45 = next(t for t in config.AYARLANABILIR_PARAMETRELER
+             if t[1] is not None and t[0] == 'AIM_HOLD_WINDOW_FRAMES')
+kontrol("pencere araligi 0'i (eski davranis) KAPSIYOR",
+        _ar45[2] == 0, str(_ar45[2:5]))
+_y45 = config.AIM_HOLD_WINDOW_FRAMES
+kontrol("ayar_uygula pencereyi canli degistirebiliyor",
+        config.ayar_uygula('AIM_HOLD_WINDOW_FRAMES', 0)
+        and config.AIM_HOLD_WINDOW_FRAMES == 0)
+config.ayar_uygula('AIM_HOLD_WINDOW_FRAMES', _y45)
+kontrol("geri yuklendi", config.AIM_HOLD_WINDOW_FRAMES == _y45)
+
 kontrol("durum cubugu KARARIN dayandigi hatayi yaziyor",
         '_karar_hata_yaw_px' in _k66
         and 'Hata: Yaw {self._karar_hata_yaw_px' in _k66)
