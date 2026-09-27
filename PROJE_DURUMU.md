@@ -6062,3 +6062,82 @@ Kazanc, ileri besleme ve tolerans DEGISMEDI.
 Test: **545 kontrol, hepsi geciyor.**
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.33 son20: 4-7 sn'deki hareketsizligin sebebi MEKANIK BOSLUK (2026-09-28)
+
+Kaynak: `aşama2son20.mp4` (503 kare, **16.75 sn**) +
+`enkoder_20260928_015031.csv`. Hizalama uyum hatasi 0.0296 derece.
+Kod 29.32'deki commitli hal. 4 atis.
+
+#### 29.33.1 29.32 duzeltmesi olculdu
+
+| olcut | son19 (once) | son20 (sonra) |
+|---|---|---|
+| yon degisimi toparlanmasi | 0.83 sn | **0.66 sn** |
+| tepe nisan hatasi | 114 px | 110 px |
+
+Toparlanma %20 kisaldi; tepe hata neredeyse ayni kaldi. Bu, ondelemenin
+ters itmesinin kalktigini ama BASKA bir terimin tepe hatayi belirledigini
+soyluyor. O terim asagida bulundu.
+
+#### 29.33.2 B73 — 4-7 sn: taret hareketsiz, cunku YAW TAHRIKINDE BOSLUK VAR
+
+Kullanicinin isaret ettigi pencere (5.50 - 6.97 sn) kare kare acildi:
+taret 4.0-4.1 derecede cakili dururken nisan hatasi +20 -> +44 -> +34 ->
++60 piksele cikiyor. Yani hata buyurken taret KIMILDAMIYOR.
+
+Enkoder kaydi 50 Hz'de, ADIM SAYACI ve ENKODER yan yana okundu:
+
+| video t | sayac | enkoder | fark |
+|---|---|---|---|
+| 4.66 | 4.400 | 4.471 | +0.07 |
+| 5.31 | 2.075 | 4.241 | +2.17 |
+| 5.68 | 0.575 | 4.010 | **+3.44** |
+| 6.25 | 1.437 | 3.955 | +2.52 |
+| 7.02 | 3.687 | 4.043 | +0.36 |
+
+**PC 3.8 derece asagi, sonra 3.0 derece yukari komut verdi; taret toplam
+0.92 derece hareket etti.**
+
+Enkoder saglam: `enk_ok` tum kayitta 1, ham sayim 7540 -> 7493 (47 sayim)
+duzgun degisiyor, cozunurluk 0.0196 derece/sayim. Yani enkoder "durdu"
+demiyor -- taret gercekten durdu.
+
+Boşluk dogrudan olculdu (sayac yon degistirdikten sonra ENKODER
+kimildayana kadar gecen SAYAC yolu):
+
+> **medyan 1.91 derece = 136 piksel**, kayip sure **0.45 sn**
+> (olculen iki olay: 1.16 derece / 0.12 sn ve 1.91 derece / 0.45 sn)
+
+Nisan toleransi 12 piksel. Yani her yon degisiminde taret, toleransin
+**on katindan fazla** bir olu bolgeden gecmek zorunda.
+
+**Kayip surenin formulu:** bosluk / (KP x hata x fps).
+1.9 derece / (0.35 x 0.8 derece x 15) = 0.45 sn -- olculen degerle birebir.
+
+`config.YAW_BACKLASH_DEG` = 0.0, yani yazilim telafisi KAPALI. (Paket
+4'te acik-dongu bir telafi denenmis ve donguyu kararsizlastirdigi icin
+kapatilmisti: 0.72-0.92 Hz'lik bimodal salinim.)
+
+#### 29.33.3 Ne yapilabilir
+
+**1. Mekanik (asil cozum).** 1.2-1.9 derecelik yaw boslugu buyuk. Kayis
+gerginligi / kasnak-mil baglantisi / redüktör boslugu bakilmali. Bu
+boşluk sifira yaklastikca yon degisimindeki bekleme de kendiliginden
+kalkar; hicbir yazilim ayari onun yerini tutmaz.
+
+**2. Yazilim (kismi, riskli).** Enkoderle KAPALI DONGU bir telafi
+mumkun: "komut yonu N karedir ayni + sayac o yonde ilerledi + enkoder
+kimildamadi" kosulu saglandiginda komuta ek bir miktar eklenir ve
+enkoder kimildar kimildamaz kesilir. Paket 4'teki denemeden farki, acik
+dongu degil enkoder onayli olmasi -- kendiliginden sonlanir.
+Beklenen kazanc: kayip sure 0.45 -> ~0.25 sn.
+**UYGULANMADI**: ayni fikrin onceki surumu donguyu kararsizlastirmisti ve
+su anki kosum zaten 16.75 saniyeye inmis durumda; riski kullanicinin
+karari olmali.
+
+#### 29.33.4 Degisiklik
+
+Kod degisikligi YOK; bu bolum olcum kaydidir.
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**
