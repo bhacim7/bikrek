@@ -3508,8 +3508,23 @@ class HavaSavunmaArayuz(QWidget):
         _ond = getattr(config, 'TARGET_LEAD_TIME_SEC', 0.0)
         if _ond > 0.0:
             _ond_max = getattr(config, 'TARGET_LEAD_MAX_DEG', 0.6)
-            _ond_yaw = max(-_ond_max, min(_ond_max, self.target_world_yaw_rate * _ond))
-            _ond_pitch = max(-_ond_max, min(_ond_max, self.target_world_pitch_rate * _ond))
+            # YON DEGISIMINDE ONDELEME KISILIR (29.32 B72).
+            # Ondeleme "hedef ayni yone devam edecek" varsayimina dayanir;
+            # hedef donduğu anda hiz kestirimi birkac kare eski isareti
+            # tasir ve ondeleme nisan noktasini TERS tarafa iter (olculdu:
+            # yon degisimlerinde tepe hata ortalama 114 piksel, toleransa
+            # donus 0.83 sn). `_yon_ardisik` 29.23'ten beri tutuluyor;
+            # yon degisiminde 1'e duser, ondeleme oraniyla birlikte kisilir
+            # ve yon oturunca birkac karede tam degerine geri cikar.
+            # Bir kare bayat (sayac asagida guncelleniyor) -- hizin kendisi
+            # de bir kare bayat oldugu icin tutarli.
+            _rampa = int(getattr(config, 'LEAD_DIRECTION_RAMP_FRAMES', 0) or 0)
+            _ond_kat = 1.0
+            if _rampa > 0:
+                _ond_kat = min(1.0, self._yon_ardisik / float(_rampa))
+            _ond_etkin = _ond * _ond_kat
+            _ond_yaw = max(-_ond_max, min(_ond_max, self.target_world_yaw_rate * _ond_etkin))
+            _ond_pitch = max(-_ond_max, min(_ond_max, self.target_world_pitch_rate * _ond_etkin))
         else:
             _ond_yaw = _ond_pitch = 0.0
 

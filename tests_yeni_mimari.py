@@ -2966,6 +2966,50 @@ kontrol("kazanc 29.29'daki kararlilik payinda duruyor",
 
 print()
 print("=" * 70)
+print("49. ONDELEME YON DEGISIMINDE KISILIYOR (29.32 B72)")
+print("=" * 70)
+# Saha: aşama2son19.mp4, hedefin 17 yon degisimi tek tek cikarildi.
+#   tepe nisan hatasi ortalama 114 piksel, toleransa donus ortalama 0.83 sn
+# Ondeleme yon degisiminde ters tarafa itiyor: 2.5 d/sn x 0.22 sn = 39 px.
+_k72 = io.open('bukrek_main.py', encoding='utf-8').read()
+
+kontrol("config: rampa tanimli",
+        getattr(config, 'LEAD_DIRECTION_RAMP_FRAMES', None) is not None,
+        str(config.LEAD_DIRECTION_RAMP_FRAMES))
+kontrol("rampa yon kapisinin kararlilik penceresinden KISA "
+        "(ondeleme atesten once tam degere ulassin)",
+        config.LEAD_DIRECTION_RAMP_FRAMES <= config.FIRE_DIRECTION_STABLE_FRAMES,
+        f"{config.LEAD_DIRECTION_RAMP_FRAMES} <= "
+        f"{config.FIRE_DIRECTION_STABLE_FRAMES}")
+kontrol("ondeleme carpani yon sayacindan turetiliyor",
+        "self._yon_ardisik / float(_rampa)" in _k72)
+kontrol("HER IKI eksen de etkin ondelemeyi kullaniyor",
+        _k72.count("* _ond_etkin") == 2,
+        "%d eksen" % _k72.count("* _ond_etkin"))
+kontrol("rampa 0 verilince eski davranis (carpan 1.0)",
+        "_ond_kat = 1.0" in _k72 and "if _rampa > 0:" in _k72)
+
+# Sayisal: yon degisiminde ondelemenin ters itmesi ne kadar azaliyor?
+_w72 = 2.5                                  # olculen tipik hedef hizi (d/sn)
+_tam = _w72 * config.TARGET_LEAD_TIME_SEC / abs(config.HUNTER_DPP_YAW)
+_ilk = _tam * (1.0 / config.LEAD_DIRECTION_RAMP_FRAMES)
+kontrol("yon degisiminin ILK karesinde ters itme belirgin kuculuyor",
+        _ilk < 0.4 * _tam,
+        f"{_ilk:.0f} px (eskiden {_tam:.0f} px)")
+# ...ama yon oturunca tam degere donmeli, yoksa 29.30'un kazanimi kaybolur
+kontrol("yon oturunca ondeleme TAM degere donuyor (kalici gecikme geri gelmez)",
+        config.LEAD_DIRECTION_RAMP_FRAMES <= 6,
+        f"{config.LEAD_DIRECTION_RAMP_FRAMES} kare = "
+        f"{config.LEAD_DIRECTION_RAMP_FRAMES/15.0:.2f} sn")
+
+# 29.29/29.30/29.31 kazanimlari duruyor mu
+kontrol("kazanc, ileri besleme, tolerans degismedi",
+        abs(config.KP_YAW - 0.35) < 1e-9
+        and abs(config.FEEDFORWARD_GAIN - 1.0) < 1e-9
+        and config.AIM_TOLERANCE_MIN_PIXELS == 12)
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)

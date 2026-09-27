@@ -841,7 +841,32 @@ AIM_POINT_SNAP_DEG = 1.0      # bu kadar buyuk sicramada suzgec atlanir
 # 0.6 -> 1.2 (29.30): ondeleme 0.22 sn'ye cikinca 3 derece/sn'den hizli
 # hedeflerde eski sinir baglayici oluyordu (0.22 x 3 = 0.66 > 0.6) ve
 # ondeleme tam da en cok gerektigi yerde kirpiliyordu.
-TARGET_LEAD_MAX_DEG = 1.2      # ondelemenin ust siniri (gurultuye karsi)
+TARGET_LEAD_MAX_DEG = 1.2
+
+# --- ONDELEMENIN YON DEGISIMINDE KISILMASI (2026-09-28, 29.32 B72) ---
+#
+# Ondeleme (TARGET_LEAD_TIME_SEC) hedefin DUZGUN gittigi varsayimina dayanir.
+# Hedef yon degistirdigi anda hiz kestirimi birkac kare boyunca ESKI isareti
+# tasir ve ondeleme nisan noktasini TERS tarafa iter:
+#     2.5 derece/sn'de 0.22 sn ondeleme = 0.55 derece = 39 piksel, ters yonde.
+#
+# SAHADA OLCULDU (aşama2son19.mp4, 17 yon degisimi tek tek cikarildi):
+#     tepe nisan hatasi  : ortalama 114 piksel
+#     toleransa donme    : ortalama 0.83 sn (0.17 - 2.90 sn)
+# Kullanicinin "yon degistirdikten sonra tekrar kilitlenme daha hizli
+# olabilir mi, o anda cok az durup sonra kilitleniyor" dedigi sey bu.
+#
+# Cozum ondelemeyi KALDIRMAK degil -- 29.30'da olculdu ki ondeleme olmadan
+# taret hedefin 0.18 sn gerisinde kaliyor. Ondeleme yalnizca yonun HENUZ
+# BELLI OLMADIGI karelerde kisiliyor:
+#     carpan = min(1, yon_ardisik / LEAD_DIRECTION_RAMP_FRAMES)
+# `yon_ardisik` 29.23'te ates kapisi icin zaten tutuluyor (hiz isaretinin
+# kac karedir ayni oldugu). Yon degisiminde 1'e duser -> ondeleme %25'e
+# iner -> ters itme kalkar; yon oturunca 4 karede (0.27 sn) tam degere
+# geri ciikar -> kalici gecikme geri gelmez.
+#
+# 0 = kapali (29.31 oncesi davranis, ondeleme her zaman tam).
+LEAD_DIRECTION_RAMP_FRAMES = 4      # ondelemenin ust siniri (gurultuye karsi)
 
 # Hedefin dünya açısal hızı için üst sınır (derece/sn). Gerçek hedefler
 # 0.5-2.6 derece/sn; bu sınır hesap hatalarına karşı emniyet. Elle test

@@ -5981,3 +5981,84 @@ Kazanclara, ileri beslemeye ve ondelemeye DOKUNULMADI.
 Test: **537 kontrol, 537'si de geciyor.**
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.32 son19: yon degisiminden sonra yeniden kilitlenme (2026-09-28)
+
+Kaynak: `aşama2son19.mp4` (750 kare, 24.97 sn) + `enkoder_20260928_012746.csv`.
+Hizalama: video t = enkoder t0 + 45.756 sn, uyum hatasi **0.0070 derece**.
+Kod 29.31'deki commitli hal.
+
+**3 IMHA**, 24.3 saniye. Kilit -> ilk atis: 0.86 / 3.03 / 1.73 saniye.
+
+#### 29.32.1 "Ilk kilitlenmeye giderken hedefi asip donmesi normal mi?"
+
+Edinim slewlerinde asim 50 Hz enkoderden olculdu:
+
+| edinim | tepe hiz | asim |
+|---|---|---|
+| Drone (ilk kilit) | 40.7 derece/sn | 0.98 derece = **69 px** |
+| Fuze sag (ilk kilit) | 30.8 derece/sn | 0.42 derece = **30 px** |
+| Fuze (ikinci kez) | 114.2 derece/sn | 0.04 derece = 3 px |
+| arama slewi | 40.6 derece/sn | 0.06 derece = 4 px |
+
+Kullanicinin gordugu iki asim (69 ve 30 piksel) yalnizca HEDEFIN ILK
+edinilmesinde oluyor; sonraki yonelmelerde 3-4 piksel. Fark, ilk edinimde
+taretin GOZCUNUN verdigi aciya gitmesi ve avcinin hedefi slew ORTASINDA
+yakalamasi. 114 derece/sn'lik slewde bile asimin 3 piksel olmasi,
+denetleyicinin kendisinin asmadigini gosteriyor.
+
+Maliyeti de olculdu: Drone'da slew baslangicindan atise 1.7 saniye,
+asimi neredeyse hic olmayan ikinci Fuze'de 1.73 saniye. **Asim sureye
+olcum siniri icinde bir sey eklemiyor.** Dolayisiyla normal ve oncelikli
+degil.
+
+#### 29.32.2 B72 — Yon degisiminden sonra yeniden kilitlenme
+
+Kullanicinin isaret ettigi davranis (8-12 saniye arasi, sag fuzenin yon
+degistirmesi) olculdu. Kosumdaki 17 yon degisimi tek tek cikarildi:
+
+| olcut | deger |
+|---|---|
+| tepe nisan hatasi | ortalama **114 piksel** |
+| toleransa geri donme | ortalama **0.83 sn** (0.17 - 2.90) |
+
+Sebep: **ondeleme (TARGET_LEAD_TIME_SEC = 0.22) yon degisiminde nisan
+noktasini TERS tarafa itiyor.** Ondeleme "hedef ayni yone devam edecek"
+varsayimina dayanir; hedef dondugu anda hiz kestirimi birkac kare eski
+isareti tasir ve
+    2.5 derece/sn x 0.22 sn = 0.55 derece = **39 piksel** ters itme
+dogar. Bu, toparlanmayi hem buyutuyor hem uzatiyor.
+
+Ondelemeyi KALDIRMAK cozum degil: 29.30'da olculdu ki ondeleme olmadan
+taret hedefin 0.18 saniye (18 piksel) gerisinde kaliyor ve kullanicinin
+begendigi "yon degistirene kadar ortada takip" ozelligi ondelemeden
+geliyor.
+
+**Duzeltme: ondeleme yalnizca yonun HENUZ BELLI OLMADIGI karelerde
+kisiliyor.**
+
+    carpan = min(1, yon_ardisik / LEAD_DIRECTION_RAMP_FRAMES)
+
+`_yon_ardisik` (hiz isaretinin kac karedir ayni oldugu) 29.23'te ates
+kapisi icin zaten tutuluyordu; yeni bir kestirim gerekmedi. Yon
+degisiminde sayac 1'e duser -> ondeleme %25'e iner -> ters itme 39
+pikselden **10 piksele** duser. Yon oturunca 4 karede (0.27 sn) tam
+degerine geri cikar, yani 29.30'un kazandirdigi sifir gecikme korunur.
+
+`LEAD_DIRECTION_RAMP_FRAMES = 4`; `FIRE_DIRECTION_STABLE_FRAMES` (5)
+degerinden KISA secildi ki ondeleme, ates kapisi acilmadan once tam
+degerine ulassin. `0` verilirse davranis 29.31 oncesiyle ayni olur.
+
+#### 29.32.3 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `config.py` | YENI `LEAD_DIRECTION_RAMP_FRAMES = 4` | yon degisiminde ters itmeyi kisar |
+| `bukrek_main.py` | ondeleme `_yon_ardisik`'e baglandi (`_ond_etkin`), iki eksen de | B72 |
+| `tests_yeni_mimari.py` | 49. bolum (8 kontrol) | ters itmenin kuculdugu ve tam degere dondugu |
+
+Kazanc, ileri besleme ve tolerans DEGISMEDI.
+
+Test: **545 kontrol, hepsi geciyor.**
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**
