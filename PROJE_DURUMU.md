@@ -6583,3 +6583,79 @@ bir sey gorunmuyor.
 Kod degisikligi YOK.
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.40 son22 + son23: FIRE_CONFIRM_DELAY 0.45 ve FIRE_SHOT_LATENCY 0.2 dogrulandi (2026-09-28)
+
+Kullanici 29.39'daki iki oneriyi uyguladi ve iki kosum yapti:
+`FIRE_CONFIRM_DELAY_SEC 0.6 -> 0.45`, `FIRE_SHOT_LATENCY_SEC 0.25 -> 0.2`.
+Baska hicbir sey degismedi.
+
+| kosum | sure | atis | imha | isabet |
+|---|---|---|---|---|
+| son21 (eski ayar) | 15.4 sn | 5 | 3 | %60 |
+| son22 | 18.2 sn | 6 | **2** | %33 |
+| **son23** | **13.6 sn** | **3** | **3** | **%100** |
+
+son23 olculen en iyi kosum: **uc atis, uc imha, 13.6 saniye.**
+
+#### 29.40.1 Iki degisiklik de HEDEFLEDIGI ISI YAPTI
+
+**Dogrulama penceresi** (her atistan sonra durum satirinin degistigi ana
+kadar olculdu):
+
+| kosum | olculen pencere | beklenen (gecikme + 0.7) |
+|---|---|---|
+| son21 | 1.26 - 1.30 sn | 1.30 |
+| son22 | 1.17 - 1.27 sn | 1.15 |
+| son23 | 1.13 - 1.27 sn | 1.15 |
+
+Atis basina **~0.10 saniye** kazanc (29.39'da 0.15 tahmin edilmisti;
+kare kuantalamasi farki).
+
+**Kayma kapisinin engelledigi kare orani:**
+
+| kosum | gecikme ayari | engellenen kare | oran |
+|---|---|---|---|
+| son21 | 0.25 | 12 | %2.4 |
+| son22 | 0.20 | 3 | **%0.5** |
+| son23 | 0.20 | 5 | **%1.1** |
+
+29.39'da olculen "iyi nisanla beklenen 0.66 saniye" kalemi yariya/dortte
+bire indi. Kapinin emniyet islevi duruyor (hala engelliyor, yalnizca
+daha az).
+
+#### 29.40.2 Asil risk denetlendi: YANLIS IMHA YOK
+
+Kisaltilan dogrulama penceresinin riski, balon hala dururken "imha"
+denmesiydi. son23'un uc imha aninin hemen ardindaki kareler tek tek
+incelendi:
+
+- **3.30 sn (imha 1):** merkezdeki Fuze'nin altinda balon YOK, ciplak
+  cubuk goruluyor; soldaki Fuze ve sagdaki Drone balonlu.
+- **6.97 sn (imha 2):** Drone'un balonu gitmis; soldaki Fuze hala balonlu.
+- **13.57 sn (imha 3):** kadrajda balon kutusu kalmamis.
+
+**Uc imha da gercek.** Ayrica son23'te 8.43-9.17 arasi sistem balonsuz
+bir Fuze'ye kilitlenip (imha edilmis hedefin karkasi) `BALON YOK` deyip
+biraktı — emniyet agi da calisiyor.
+
+#### 29.40.3 Ama sonucu belirleyen hala ISABET ORANI
+
+Ayni ayarla son22 %33 (6 atis, 2 imha), son23 %100 (3 atis, 3 imha).
+Iki kosum arasindaki fark, bu iki ayarin etkisinden cok daha buyuk.
+son22'de ucuncu hedef uc atis yedi ve imha edilemeden tur bitti; ayrica
+9.97-11.27 ve 16.90-17.77 arasinda "Ateş engellendi: **hedef yok**"
+yaziyor, yani cift kurulamadigi icin bekleniyor.
+
+Yani bu iki ayar guvenli ve faydali, **ama turun sonucunu hala atisin
+tutup tutmamasi belirliyor.** 29.27'den beri olculen tablo degismedi.
+
+#### 29.40.4 Karar
+
+Her iki degisiklik de **korunuyor** ve commitleniyor:
+- olculebilir kazanc var (atis basina 0.10 sn + kayma kapisi engelinin
+  yarilanmasi),
+- getirdigi risk (yanlis imha) goruntuden denetlendi ve gerceklesmedi,
+- emniyet testlerinin hicbiri kirilmadi (582 kontrol, hepsi geciyor).
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**

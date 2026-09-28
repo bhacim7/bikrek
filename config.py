@@ -1421,7 +1421,7 @@ FIRE_DIRECTION_WAIT_MAX_SEC = 0.8
 # atis isabet eder; taret salinyorsa hata hizli degisir ve atis ıskalar.
 # Kapi: |hata_hizi| x FIRE_SHOT_LATENCY_SEC, nisan toleransini asmamali.
 # 0 = kapali.
-FIRE_SHOT_LATENCY_SEC = 0.25
+FIRE_SHOT_LATENCY_SEC = 0.2
 # 10 -> 14 (2026-09-23 gece, 29.14 B46). Kapinin OLCUMU duzeltildikten
 # sonra esik de gercek gurultu seviyesine gore secildi: egim kestiricisinin
 # p90 gurultusu 0.6 sn'lik pencerede ~11 px, salinyan taretinki 15+ px.
@@ -1577,7 +1577,7 @@ FIRE_CONFIRM_BASELINE_FRAMES = 20   # taban oranin olculdugu pencere (kare)
 # mermi, roleye gore ~0.2 sn (FIRE_SERVO_LEG_SEC) daha gec cikiyor. Pencere
 # o gecikmeyi de kapsamali, yoksa patlamamis balon sayimi erken baslar ve
 # "balon hala orada" yanlisligi geri gelir. Role moduna donulurse 0.4'e cek.
-FIRE_CONFIRM_DELAY_SEC = 0.6
+FIRE_CONFIRM_DELAY_SEC = 0.45
 
 # 'tekrar ates' istendigi halde ates kilidi ARDISIK bu kadar karede izin
 # vermezse hedef birakilir.
