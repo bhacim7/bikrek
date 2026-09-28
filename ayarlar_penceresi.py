@@ -443,25 +443,19 @@ class AyarlarPenceresi(QDialog):
             "Taret bu aralığın DIŞINA çıkmaz — mekanik emniyet ve kablo "
             "koruma için. Sınır TÜM görevlerde ve TÜM hareket yollarında "
             "geçerlidir: otonom takip, nişangâha tıklama ve ok tuşlarıyla "
-            "manuel sürüş.
-
-"
-            "NASIL KULLANILIR — örnek, yaw ve pitch ±45° ile sınırlansın:
-"
-            "  1) 'Hareket sınırını uygula' kutusunu İŞARETLE. Kutu boşken "
-            "aşağıdaki değerler hiçbir şey yapmaz.
-"
-            "  2) En küçük Yaw = -45, En büyük Yaw = +45
-"
-            "  3) En küçük Pitch = -45, En büyük Pitch = +45
-"
-            "Değerler kaydırıcıyı bıraktığın anda CANLI uygulanır; alttaki "
-            "Kaydet yalnızca bir sonraki açılışta da geçerli olması içindir.
-
-"
-            "Taret sınıra dayandığında o yöndeki hareket durur ama İÇERİ "
-            "dönüş serbest kalır. VARSAYILAN KAPALI: kutu işaretli değilken "
-            "hiçbir sınır uygulanmaz."))
+            "manuel sürüş."
+            "<br><br><b>NASIL KULLANILIR</b> — örnek, yaw ve pitch ±45° ile "
+            "sınırlansın:"
+            "<br>1) <b>'Hareket sınırını uygula' kutusunu İŞARETLE.</b> "
+            "Kutu boşken aşağıdaki değerler hiçbir şey yapmaz."
+            "<br>2) En küçük Yaw = -45 &nbsp; En büyük Yaw = +45"
+            "<br>3) En küçük Pitch = -45 &nbsp; En büyük Pitch = +45"
+            "<br><br>Değerler kaydırıcıyı bıraktığın anda CANLI uygulanır; "
+            "alttaki Kaydet yalnızca bir sonraki açılışta da geçerli olması "
+            "içindir."
+            "<br><br>Taret sınıra dayandığında o yöndeki hareket durur ama "
+            "İÇERİ dönüş serbest kalır. VARSAYILAN KAPALI: kutu işaretli "
+            "değilken hiçbir sınır uygulanmaz."))
         self.hareket_aktif = QCheckBox("Hareket sınırını uygula")
         self.hareket_aktif.stateChanged.connect(self._hareket_uygula)
         k.addWidget(self.hareket_aktif)

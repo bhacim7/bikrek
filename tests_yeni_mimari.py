@@ -3072,6 +3072,48 @@ config.HAREKET_SINIRI_AKTIF = _y74
 
 print()
 print("=" * 70)
+print("51. HER KAYNAK DOSYA DERLENIYOR MU (29.35)")
+print("=" * 70)
+# 29.34'te `ayarlar_penceresi.py` sozdizimi bozuldu ve test paketi bunu
+# YAKALAMADI: o dosyaya dair tek test "hata verse bile sistem devam
+# ediyor" idi, yani bozuklugu gormek yerine bozuklugu TOLERE ediyordu.
+# Sahada "Ayarlar penceresi acilamadi: unterminated string literal"
+# olarak goruldu. Artik her kaynak dosya derleniyor.
+import ast as _ast51
+import os as _os51
+
+_KOK51 = _os51.path.dirname(_os51.path.abspath(__file__))
+_ATLA51 = {'denemePro.py'}
+_dosyalar51 = sorted(f for f in _os51.listdir(_KOK51)
+                     if f.endswith('.py') and f not in _ATLA51)
+kontrol("taranacak dosya bulundu", len(_dosyalar51) >= 8,
+        "%d dosya" % len(_dosyalar51))
+
+_bozuk51 = []
+for _f51 in _dosyalar51:
+    try:
+        _ast51.parse(io.open(_os51.path.join(_KOK51, _f51),
+                             encoding='utf-8').read(), filename=_f51)
+    except SyntaxError as _e51:
+        _bozuk51.append("%s:%s %s" % (_f51, _e51.lineno, _e51.msg))
+kontrol("HER .py dosyasi sozdizimsel olarak GECERLI",
+        not _bozuk51, "; ".join(_bozuk51) if _bozuk51 else "%d dosya temiz" % len(_dosyalar51))
+
+# Arayuz dosyalari Qt olmadan ithal edilemez ama DERLENEBILMELI.
+for _f51 in ('ayarlar_penceresi.py', 'bukrek_main.py', 'config.py',
+             'engagement.py', 'spotter_module.py', 'camera_module.py'):
+    try:
+        _ast51.parse(io.open(_os51.path.join(_KOK51, _f51),
+                             encoding='utf-8').read(), filename=_f51)
+        _ok51 = True
+        _not51 = ""
+    except SyntaxError as _e51:
+        _ok51 = False
+        _not51 = "satir %s: %s" % (_e51.lineno, _e51.msg)
+    kontrol("%s derleniyor" % _f51, _ok51, _not51)
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)

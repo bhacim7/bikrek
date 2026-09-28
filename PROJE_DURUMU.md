@@ -6212,3 +6212,40 @@ sonraki acilis icin oldugu).
 Test: **557 kontrol, hepsi geciyor.**
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.35 29.34'te kirilan Ayarlar penceresi + derleme testi (2026-09-28)
+
+**Saha hatasi:** "Ayarlar penceresi acilamadi: unterminated string literal
+(detected at line 446) (ayarlar_penceresi.py, line 446)".
+
+Sebep: 29.34'te "Harekete Yasak Alan" aciklama metnini degistirirken
+metindeki `\n` kacislari dosyaya GERCEK SATIR SONU olarak dustu ve
+string literal'leri ortasindan boldu. Dosya derlenemez hale geldi;
+Ayarlar penceresi hic acilmiyordu. (Diger her sey calisiyordu, cunku
+`ayarlari_ac` ithal hatasini yakalayip durum cubuguna yaziyor.)
+
+Duzeltme: aciklama metni satir sonu KACISI kullanmadan, Qt'nin zaten
+destekledigi `<br>` ile yeniden yazildi. Metin ayrica biraz daha okunakli
+(adim numaralari kalin).
+
+#### 29.35.1 Asil kusur: TEST PAKETI BUNU YAKALAMADI
+
+`ayarlar_penceresi.py` icin tek test "ayarlar penceresi HATA VERSE BILE
+sistem devam ediyor" idi -- yani bozuklugu gormek yerine TOLERE ediyordu.
+Paket 21 "557 kontrol, hepsi geciyor" diyerek yesil verdi, oysa dosya
+derlenmiyordu.
+
+51. bolum eklendi: proje kokundeki HER `.py` dosyasi `ast.parse` ile
+derleniyor (25 dosya). Qt kurulu olmayan ortamda ithal edilemeyen arayuz
+dosyalari da bu testten gecer, cunku derleme ithalden bagimsizdir.
+
+#### 29.35.2 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `ayarlar_penceresi.py` | aciklama metni `<br>` ile yeniden yazildi | 29.34'te kirilan sozdizimi |
+| `tests_yeni_mimari.py` | 51. bolum (8 kontrol) | her kaynak dosyanin derlendigi |
+
+Test: **565 kontrol, hepsi geciyor.**
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**
