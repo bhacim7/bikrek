@@ -3036,10 +3036,13 @@ kontrol("kaldirilma gerekcesi kodda yaziyor",
 
 # B75: hareket siniri MANUEL yolda da
 _i75 = _k74.index('"action": "move_by_direction"')
-_onceki = _k74[max(0, _i75 - 1600):_i75]
+_onceki = _k74[max(0, _i75 - 3000):_i75]   # 29.36'da blok uzadi
+# 29.36'da bu kapi `hareket_sinirla` cagrisindan KOMUT YONU karsilastirmasina
+# cevrildi (bkz. 52. bolum); sinir degerleri dogrudan okunuyor.
 kontrol("HAREKETE YASAK ALAN manuel yon komutunda da uygulaniyor",
         'config.HAREKET_SINIRI_AKTIF' in _onceki
-        and 'config.hareket_sinirla(' in _onceki)
+        and 'config.HAREKET_YAW_MIN' in _onceki
+        and 'config.HAREKET_PITCH_MAX' in _onceki)
 kontrol("sinira dayaninca ICERI donus serbest kaliyor (kilitlenme yok)",
         'ICERI donen yon' in _k74 or 'ICERI' in _onceki)
 
@@ -3111,6 +3114,69 @@ for _f51 in ('ayarlar_penceresi.py', 'bukrek_main.py', 'config.py',
         _ok51 = False
         _not51 = "satir %s: %s" % (_e51.lineno, _e51.msg)
     kontrol("%s derleniyor" % _f51, _ok51, _not51)
+
+print()
+print("=" * 70)
+print("52. MANUEL SINIR: yon kontrolu, kirpilma kontrolu DEGIL (29.36 B76)")
+print("=" * 70)
+# 29.34'teki ilk surum "kirpilmis hedef == mevcut aci" diye bakiyordu.
+# Taret siniri BIR KEZ astiktan sonra bu kosul hicbir zaman saglanmaz ve
+# hareket serbest kalir. Sahada "manuel kontrol butonlari bundan
+# etkilenmemis" olarak goruldu.
+_k76 = io.open('bukrek_main.py', encoding='utf-8').read()
+_i76 = _k76.index('"action": "move_by_direction"')
+_blok76 = _k76[max(0, _i76 - 2600):_i76]
+
+kontrol("manuel sinir KOMUT YONUNE bakiyor (kirpilmaya degil)",
+        'yaw_dir > 0 and self.current_yaw_angle >=' in _blok76
+        and 'yaw_dir < 0 and self.current_yaw_angle <=' in _blok76)
+kontrol("eski (hatali) kirpilma karsilastirmasi kaldirildi",
+        'abs(_hy - self.current_yaw_angle) < 1e-6' not in _k76)
+kontrol("pitch ekseni de ayni bicimde korunuyor",
+        'pitch_dir > 0 and self.current_pitch_angle >=' in _blok76
+        and 'pitch_dir < 0 and self.current_pitch_angle <=' in _blok76)
+kontrol("Pi'nin surekli yurutmesine karsi PAY birakiliyor",
+        '_pay = self.manual_step_size' in _blok76)
+
+
+def _manuel_kapi(aci, yon, alt, ust, pay=1.0):
+    """`_send_manual_direction` icindeki kapinin ayni mantigi."""
+    if yon > 0 and aci >= ust - pay:
+        return 0
+    if yon < 0 and aci <= alt + pay:
+        return 0
+    return yon
+
+
+# Kullanicinin senaryosu: sinir -30/+30, taret disariya kacmis
+kontrol("SINIRI ASMIS taretin DISARI hareketi engelleniyor (asil hata)",
+        _manuel_kapi(80.0, +1, -30.0, 30.0) == 0
+        and _manuel_kapi(-60.0, -1, -30.0, 30.0) == 0)
+kontrol("SINIRI ASMIS taretin ICERI donusu SERBEST (kilitlenme yok)",
+        _manuel_kapi(80.0, -1, -30.0, 30.0) == -1
+        and _manuel_kapi(-60.0, +1, -30.0, 30.0) == 1)
+kontrol("sinir icinde hareket serbest",
+        _manuel_kapi(0.0, +1, -30.0, 30.0) == 1
+        and _manuel_kapi(0.0, -1, -30.0, 30.0) == -1)
+kontrol("sinira BIR ADIM kala duruluyor (tasma payi)",
+        _manuel_kapi(29.5, +1, -30.0, 30.0) == 0)
+# Eski mantik ayni senaryolarda NE yapardi? (hatanin kaniti)
+def _eski_kapi(aci, yon, alt, ust, adim=1.0):
+    hedef = aci + yon * adim
+    kirpik = min(max(hedef, alt), ust)
+    return 0 if abs(kirpik - aci) < 1e-6 else yon
+kontrol("ESKI mantik sinir asilmisken hareketi GECIRIYORDU (hatanin kaniti)",
+        _eski_kapi(80.0, +1, -30.0, 30.0) == 1,
+        "eski: gecer, yeni: engellenir")
+
+# Asama 3 kisitli bolge sekmesi kaldirildi
+_a76 = io.open('ayarlar_penceresi.py', encoding='utf-8').read()
+kontrol("Ayarlar'da 'Kısıtlı Bölge' sekmesi KALMADI",
+        'Kısıtlı Bölge' not in _a76 and '_kisitli_bolge_sekmesi' not in _a76)
+kontrol("sekmeye ait sarkan referans kalmadi",
+        'kisitli_bas' not in _a76 and 'kisitli_bit' not in _a76)
+kontrol("kaldirilma gerekcesi kodda yaziyor",
+        'KISITLI BOLGE SEKMESI KALDIRILDI' in _a76)
 
 print()
 print("=" * 70)

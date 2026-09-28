@@ -6249,3 +6249,64 @@ dosyalari da bu testten gecer, cunku derleme ithalden bagimsizdir.
 Test: **565 kontrol, hepsi geciyor.**
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.36 Manuel sinir gercekten uygulandi + Kisitli Bolge sekmesi kaldirildi (2026-09-28)
+
+#### 29.36.1 B76 — 29.34'teki manuel sinir kontrolu YANLIS yazilmisti
+
+Kullanici bildirdi: "ekrana tiklayarak gittigimde hareket siniri
+uygulaniyor fakat manuel kontrol butonlari bundan etkilenmemis."
+
+29.34'te eklenen kapi sunu soruyordu:
+
+    kirpilmis_hedef == mevcut_aci  ->  hareketi engelle
+
+Bu YANLIS. Pi `move_by_direction` komutunu SUREKLI yurutur, PC ise ancak
+`manual_keepalive_interval` (0.1 sn) sonra yeniden bakabilir. Taret sinira
+tam olarak oturmadan gecer; bir kez disari ciktiktan sonra
+
+    mevcut 80, sinir 30 -> hedef 81 -> kirpik 30 -> kirpik != mevcut
+
+olur ve kosul HICBIR ZAMAN saglanmaz. Yani sinir asildiktan sonra hicbir
+sey engellenmiyordu -- sahada gorulen tam olarak buydu.
+
+Dogru soru "kirpilma oldu mu" degil, **komut yonu DISARI mi bakiyor**:
+
+    yon > 0 ve aci >= ust_sinir - pay   -> engelle
+    yon < 0 ve aci <= alt_sinir + pay   -> engelle
+
+Bu bicim taret sinirin disinda kalmis olsa bile dogru calisir ve **iceri
+donusu serbest birakir** (taret sinira yapisip kilitlenmez). `pay` bir
+manuel adim kadar: Pi surekli yurutup PC 0.1 sn sonra bakabildigi icin
+sinira tam degmeden durulur, yoksa her seferinde biraz disari tasilir.
+
+Teste kullanicinin senaryosu birebir kondu (sinir -30/+30, taret 80 ve
+-60'ta) ve ESKI mantigin ayni senaryoda hareketi GECIRDIGI de test edildi
+-- hata bir daha sessizce geri gelemez.
+
+#### 29.36.2 Kisitli Bolge sekmesi kaldirildi
+
+Asama 3'e ozel yaw dilimi yasagi 29.34'te KODDAN cikarilmisti ama
+Ayarlar'daki SEKMESI kalmisti: operator ayar yapip hicbir sey olmadigini
+goruyordu. Sekme, iki yardimci metodu ve deger yukleme satirlari
+kaldirildi. Hareket kisitlamasi artik tek yerden -- "Harekete Yasak
+Alan" -- ve tum gorevler icin geliyor.
+
+#### 29.36.3 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `bukrek_main._send_manual_direction` | kapi komut YONUNE cevrildi, pay eklendi | B76 |
+| `ayarlar_penceresi.py` | "Kısıtlı Bölge" sekmesi + yardimcilari kaldirildi | 29.34 ile tutarlilik |
+| `tests_yeni_mimari.py` | 52. bolum (12 kontrol) | kullanicinin senaryosu + eski mantigin kaniti |
+| `tests_yeni_mimari.py` | 29.34 testi yeni uygulamaya guncellendi | kapi bicimi degisti |
+
+Test: **576 kontrol, hepsi geciyor.**
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+**NOT (emniyet):** sinir tamamen PC tarafinda uygulaniyor. PC coker ya da
+baglanti koparsa bu koruma devreye girmez; Pi'de yalnizca watchdog var
+(komut akisi kesilirse taret durur). Mekanik emniyet kritikse Pi tarafina
+da sert bir aci siniri konabilir -- `motor_fire_module.py` degisikligi
+olur, kullanicinin yuklemesi gerekir.

@@ -4,7 +4,7 @@ AYARLAR PENCERESI — arayuzun tek ayar noktasi (2026-09-24, 29.20).
 Bu dosya SISTEMIN DAVRANISINA HICBIR SEY EKLEMEZ. Yaptigi tek sey:
   - `config` icindeki sabitleri canli degistirmek (`config.ayar_uygula`),
   - kamera surecine UVC komutu gondermek,
-  - ana pencerenin zaten sahip oldugu ates/kisitli bolge alanlarini
+  - ana pencerenin zaten sahip oldugu atessiz bolge alanlarini
     ayri bir sekmede toplamak.
 
 Tasarim kurali: ana pencere bu dosya olmadan da calisabilmeli. `bukrek_main`
@@ -13,7 +13,6 @@ import'u try/except icinde yapar; pencere acilamazsa sistem aynen devam eder.
 Sekmeler:
   Avci Kamera / Gozcu Kamera : UVC denetimleri (kaydirici + "dokunma" kutusu)
   Ates Kontrolu              : atessiz bolge (ana penceredeki alanlar tasindi)
-  Kisitli Bolge              : Asama 3 hareket kisitlama dilimi
   Harekete Yasak Alan        : taretin CIKAMAYACAGI aci araligi
   Takip / Tanima / Ates      : config sabitleri, aciklamalariyla
 """
@@ -225,7 +224,7 @@ class AyarlarPenceresi(QDialog):
 
     `arayuz` ana pencere nesnesi. Bu sinif ondan YALNIZCA sunlari kullanir:
       - `camera_cmd_q` / `spotter_cmd_q` (UVC komutu)
-      - atessiz bolge ve kisitli bolge alanlari (tasinir, yeniden yaratilmaz)
+      - atessiz bolge alanlari (tasinir, yeniden yaratilmaz)
       - `_update_status_label` (varsa)
     Baska hicbir seye dokunmaz.
     """
@@ -247,7 +246,6 @@ class AyarlarPenceresi(QDialog):
         self.sekmeler.addTab(self._kamera_sekmesi("hunter"), "Avcı Kamera")
         self.sekmeler.addTab(self._kamera_sekmesi("spotter"), "Gözcü Kamera")
         self.sekmeler.addTab(self._ates_sekmesi(), "Ateş Kontrolü")
-        self.sekmeler.addTab(self._kisitli_bolge_sekmesi(), "Kısıtlı Bölge")
         self.sekmeler.addTab(self._hareket_sekmesi(), "Harekete Yasak Alan")
         self.sekmeler.addTab(self._parametre_sekmesi(), "Takip / Tanıma / Ateş")
         ana.addWidget(self.sekmeler)
@@ -352,7 +350,7 @@ class AyarlarPenceresi(QDialog):
         self._kamerayi_gonder(kamera_adi)
 
     # ------------------------------------------------------------------
-    # Ates / kisitli bolge / hareket sekmeleri
+    # Atessiz bolge / harekete yasak alan sekmeleri
     # ------------------------------------------------------------------
     def _ates_sekmesi(self):
         ic = QWidget()
@@ -390,49 +388,11 @@ class AyarlarPenceresi(QDialog):
         duzen.addStretch()
         return _kaydirilabilir(ic)
 
-    def _kisitli_bolge_sekmesi(self):
-        ic = QWidget()
-        duzen = QVBoxLayout(ic)
-        kutu = QGroupBox("Kısıtlı Hareket Bölgesi (Aşama 3)")
-        k = QVBoxLayout(kutu)
-        k.addWidget(_aciklama(
-            "Aşama 3'te taret bu yaw dilimine GİRMEZ; PID o yönde komut "
-            "üretmez. Başlangıç ve bitiş aynı (0) ise kısıtlama yoktur. "
-            "Ateşsiz bölgeden farkı: bu, hareketi engeller."))
-        self.kisitli_bas = _KaydiriciSatir(
-            "Kısıtlı Bölge Başlangıç Yaw (°)", -180, 180, 1, 0,
-            "Dilimin başladığı açı.")
-        self.kisitli_bit = _KaydiriciSatir(
-            "Kısıtlı Bölge Bitiş Yaw (°)", -180, 180, 1, 0,
-            "Dilimin bittiği açı.")
-        k.addWidget(self.kisitli_bas)
-        k.addWidget(self.kisitli_bit)
-        d = QHBoxLayout()
-        uygula = QPushButton("Uygula")
-        uygula.clicked.connect(self._kisitli_uygula)
-        d.addWidget(uygula)
-        temizle = QPushButton("Temizle (kısıtlama yok)")
-        temizle.setObjectName("ikincil")
-        temizle.clicked.connect(self._kisitli_temizle)
-        d.addWidget(temizle)
-        d.addStretch()
-        k.addLayout(d)
-        duzen.addWidget(kutu)
-        duzen.addStretch()
-        return _kaydirilabilir(ic)
-
-    def _kisitli_uygula(self):
-        self.arayuz.movement_restricted_yaw_start = self.kisitli_bas.deger()
-        self.arayuz.movement_restricted_yaw_end = self.kisitli_bit.deger()
-        self._bildir(f"Kısıtlı bölge: {self.kisitli_bas.deger():.0f}° .. "
-                     f"{self.kisitli_bit.deger():.0f}°")
-
-    def _kisitli_temizle(self):
-        self.arayuz.movement_restricted_yaw_start = 0
-        self.arayuz.movement_restricted_yaw_end = 0
-        self.kisitli_bas.degeri_yaz(0)
-        self.kisitli_bit.degeri_yaz(0)
-        self._bildir("Kısıtlı bölge temizlendi.")
+    # KISITLI BOLGE SEKMESI KALDIRILDI (2026-09-28, 29.36).
+    # Asama 3'e ozel yaw dilimi yasagi 29.34'te koddan cikarilmisti ama
+    # sekmesi burada kalmisti: operator ayar yapip hicbir sey olmadigini
+    # goruyordu. Hareket kisitlamasi artik TEK yerden -- asagidaki
+    # "Harekete Yasak Alan" -- ve TUM gorevler icin geliyor.
 
     def _hareket_sekmesi(self):
         ic = QWidget()
@@ -592,10 +552,6 @@ class AyarlarPenceresi(QDialog):
                 s.degeri_yaz(mevcut.get(ad))
         for ad, s in self._param_satirlari.items():
             s.degeri_yaz(config.ayar_oku(ad, s.kutu.value()))
-        self.kisitli_bas.degeri_yaz(
-            getattr(self.arayuz, 'movement_restricted_yaw_start', 0))
-        self.kisitli_bit.degeri_yaz(
-            getattr(self.arayuz, 'movement_restricted_yaw_end', 0))
         self.hareket_aktif.setChecked(bool(config.HAREKET_SINIRI_AKTIF))
         self.hareket_yaw_min.degeri_yaz(config.HAREKET_YAW_MIN)
         self.hareket_yaw_max.degeri_yaz(config.HAREKET_YAW_MAX)

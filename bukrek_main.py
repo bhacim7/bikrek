@@ -2235,15 +2235,35 @@ class HavaSavunmaArayuz(QWidget):
         # gidebiliyordu. Pi bu komutu "su yone su kadar git" diye yurutur,
         # yani PC kirpmazsa sinir hic uygulanmaz.
         if config.HAREKET_SINIRI_AKTIF and (yaw_dir != 0 or pitch_dir != 0):
-            _adim = self.manual_step_size
-            _hy, _hp, _ = config.hareket_sinirla(
-                self.current_yaw_angle + yaw_dir * _adim,
-                self.current_pitch_angle + pitch_dir * _adim)
-            # Sinirin disina cikaracak eksen durdurulur; ICERI donen yon
-            # serbest kalir ki taret sinira yapisip kilitlenmesin.
-            if yaw_dir != 0 and abs(_hy - self.current_yaw_angle) < 1e-6:
+            # 29.34'teki ilk surum YANLISTI (29.36 B76): "kirpilmis hedef
+            # mevcut aciya esit mi" diye bakiyordu. Taret siniri BIR KEZ
+            # astiktan sonra (Pi bu komutu surekli yurutur, PC ancak 0.1
+            # saniyede bir yeniden bakar) kirpilmis hedef ile mevcut aci
+            # ARTIK ESIT OLMAZ ve kosul hicbir zaman saglanmaz -- yani
+            # sinir asildiktan sonra hicbir sey engellenmiyordu. Sahada
+            # "manuel kontrol butonlari bundan etkilenmemis" olarak
+            # goruldu.
+            #
+            # Dogru soru "kirpilma oldu mu" degil, KOMUT YONU DISARI MI
+            # BAKIYOR. Asagidaki bicim taret sinirin disinda kalmis olsa
+            # bile dogru calisir ve ICERI donusu serbest birakir.
+            #
+            # PAY: Pi komutu surekli yurutur, PC ise ancak
+            # `manual_keepalive_interval` (0.1 sn) sonra yeniden bakabilir.
+            # Bu yuzden sinira TAM degmeden, bir manuel adim kala durulur;
+            # aksi halde her seferinde bir miktar disari tasilir.
+            _pay = self.manual_step_size
+            _ymin = min(config.HAREKET_YAW_MIN, config.HAREKET_YAW_MAX)
+            _ymax = max(config.HAREKET_YAW_MIN, config.HAREKET_YAW_MAX)
+            _pmin = min(config.HAREKET_PITCH_MIN, config.HAREKET_PITCH_MAX)
+            _pmax = max(config.HAREKET_PITCH_MIN, config.HAREKET_PITCH_MAX)
+            if yaw_dir > 0 and self.current_yaw_angle >= _ymax - _pay:
                 yaw_dir = 0
-            if pitch_dir != 0 and abs(_hp - self.current_pitch_angle) < 1e-6:
+            elif yaw_dir < 0 and self.current_yaw_angle <= _ymin + _pay:
+                yaw_dir = 0
+            if pitch_dir > 0 and self.current_pitch_angle >= _pmax - _pay:
+                pitch_dir = 0
+            elif pitch_dir < 0 and self.current_pitch_angle <= _pmin + _pay:
                 pitch_dir = 0
             if yaw_dir == 0 and pitch_dir == 0:
                 self._update_status_label(
