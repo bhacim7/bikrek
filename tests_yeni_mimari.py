@@ -3201,12 +3201,28 @@ kontrol("18, tetikteki sapmayla birlikte EN KUCUK balonu asardi (takas)",
 kontrol("bu yuzden sinir 12'DE BIRAKILDI",
         config.FIRE_MAX_ERROR_DRIFT_PIXELS == 12,
         str(config.FIRE_MAX_ERROR_DRIFT_PIXELS))
-# Asil kaldirac: gecikme olculursa ayni anlar mevcut sinirla gecer
-_varsayim = 0.15
-_yeni = [k / config.FIRE_SHOT_LATENCY_SEC * _varsayim for k in _OLCULEN78]
-kontrol("gecikme 0.15 cikarsa ayni anlarin cogu MEVCUT sinirla gecer",
-        sum(1 for k in _yeni if k <= config.FIRE_MAX_ERROR_DRIFT_PIXELS) >= 3,
-        "%d/6" % sum(1 for k in _yeni if k <= config.FIRE_MAX_ERROR_DRIFT_PIXELS))
+# Yukaridaki degerler FIRE_SHOT_LATENCY_SEC = 0.25 iken kaydedildi;
+# olcegi guncel ayardan DEGIL, kaydedildigi andaki degerden almali.
+_OLCUM_GECIKMESI78 = 0.25
+
+
+def _kayma_su_gecikmede(gecikme):
+    return [k / _OLCUM_GECIKMESI78 * gecikme for k in _OLCULEN78]
+
+
+# 29.40: kullanici gecikmeyi 0.20'ye cekti; ayni anlarin kaymasi %20
+# kuculdu ve sahada engellenen kare orani %2.4'ten %0.5-1.1'e indi.
+_su_an = _kayma_su_gecikmede(config.FIRE_SHOT_LATENCY_SEC)
+_gecen_su_an = sum(1 for k in _su_an
+                   if k <= config.FIRE_MAX_ERROR_DRIFT_PIXELS)
+kontrol("gecikme dustukce ayni anlarin kaymasi da duser (olcek dogru)",
+        all(a <= b + 1e-9 for a, b in
+            zip(_kayma_su_gecikmede(0.20), _kayma_su_gecikmede(0.25))))
+kontrol("gecikme 0.15 olsaydi alti andan UCU mevcut sinirla gecerdi",
+        sum(1 for k in _kayma_su_gecikmede(0.15)
+            if k <= config.FIRE_MAX_ERROR_DRIFT_PIXELS) >= 3,
+        "%d/6" % sum(1 for k in _kayma_su_gecikmede(0.15)
+                     if k <= config.FIRE_MAX_ERROR_DRIFT_PIXELS))
 kontrol("kazanc, ileri besleme, ondeleme, tolerans degismedi",
         abs(config.KP_YAW - 0.35) < 1e-9
         and abs(config.FEEDFORWARD_GAIN - 1.0) < 1e-9
