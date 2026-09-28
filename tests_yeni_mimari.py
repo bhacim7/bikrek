@@ -2888,8 +2888,16 @@ print("=" * 70)
 _FPS70 = 15.0
 _Kv70 = config.KP_YAW * _FPS70
 
-kontrol("ileri besleme kazanci TAM (hedefin hareketinin tamamini tasiyor)",
-        abs(config.FEEDFORWARD_GAIN - 1.0) < 1e-9,
+# 29.41: kazanc 1.0'DAN BUYUK olabilir. 29.38'de olculdu ki tahrik komut
+# edilen yolun ancak %53-70'ini yapiyor; ileri besleme 1.0 iken duz giden
+# hedefte 41.6 pikselllik kalici gecikme kaliyor (son24). 1.15 bunu 6.5
+# piksele indirdi (son25) ve ISARET DEGISMEDI, yani asiri surus yok.
+# Sart: en az 1.0 (hedefin hareketini tam tasisin), ama asiri degil.
+kontrol("ileri besleme kazanci hedefin hareketini EN AZ tam tasiyor",
+        config.FEEDFORWARD_GAIN >= 1.0,
+        str(config.FEEDFORWARD_GAIN))
+kontrol("ileri besleme asiri surmuyor (tahrik eksigini telafi payi makul)",
+        config.FEEDFORWARD_GAIN <= 1.5,
         str(config.FEEDFORWARD_GAIN))
 # Kalici hiz hatasi = (1-g)/Kv saniye
 _kalici70 = (1.0 - config.FEEDFORWARD_GAIN) / _Kv70
@@ -2957,8 +2965,8 @@ kontrol("olu bant hala toleransin altinda",
         config.PID_DEADBAND_PIXELS < config.AIM_TOLERANCE_MIN_PIXELS,
         f"{config.PID_DEADBAND_PIXELS} < {config.AIM_TOLERANCE_MIN_PIXELS}")
 # 29.30'un kazanimi korunmali
-kontrol("ileri besleme ve ondeleme 29.30'daki gibi duruyor",
-        abs(config.FEEDFORWARD_GAIN - 1.0) < 1e-9
+kontrol("ileri besleme ve ondeleme 29.30'un kazanimini koruyor",
+        config.FEEDFORWARD_GAIN >= 1.0
         and config.TARGET_LEAD_TIME_SEC >= 0.15)
 kontrol("kazanc 29.29'daki kararlilik payinda duruyor",
         config.KP_YAW * 15.0 / (2 * _math.pi) < 1.0,
@@ -3003,10 +3011,11 @@ kontrol("yon oturunca ondeleme TAM degere donuyor (kalici gecikme geri gelmez)",
         f"{config.LEAD_DIRECTION_RAMP_FRAMES/15.0:.2f} sn")
 
 # 29.29/29.30/29.31 kazanimlari duruyor mu
-kontrol("kazanc, ileri besleme, tolerans degismedi",
-        abs(config.KP_YAW - 0.35) < 1e-9
-        and abs(config.FEEDFORWARD_GAIN - 1.0) < 1e-9
-        and config.AIM_TOLERANCE_MIN_PIXELS == 12)
+kontrol("kazanc kararlilik siniri altinda, ileri besleme tam, tolerans 12",
+        config.KP_YAW * 15.0 / (2 * _math.pi) < 1.0
+        and config.FEEDFORWARD_GAIN >= 1.0
+        and config.AIM_TOLERANCE_MIN_PIXELS == 12,
+        f"dongu kazanci {config.KP_YAW*15.0/(2*_math.pi):.2f}")
 
 print()
 print("=" * 70)
@@ -3223,11 +3232,13 @@ kontrol("gecikme 0.15 olsaydi alti andan UCU mevcut sinirla gecerdi",
             if k <= config.FIRE_MAX_ERROR_DRIFT_PIXELS) >= 3,
         "%d/6" % sum(1 for k in _kayma_su_gecikmede(0.15)
                      if k <= config.FIRE_MAX_ERROR_DRIFT_PIXELS))
-kontrol("kazanc, ileri besleme, ondeleme, tolerans degismedi",
-        abs(config.KP_YAW - 0.35) < 1e-9
-        and abs(config.FEEDFORWARD_GAIN - 1.0) < 1e-9
+kontrol("kazanc kararli, ileri besleme >=1, ondeleme ve tolerans yerinde",
+        config.KP_YAW * 15.0 / (2 * _math.pi) < 1.0
+        and config.FEEDFORWARD_GAIN >= 1.0
         and abs(config.TARGET_LEAD_TIME_SEC - 0.22) < 1e-9
-        and config.AIM_TOLERANCE_MIN_PIXELS == 12)
+        and config.AIM_TOLERANCE_MIN_PIXELS == 12,
+        f"KP {config.KP_YAW} -> kazanc "
+        f"{config.KP_YAW*15.0/(2*_math.pi):.2f}, ff {config.FEEDFORWARD_GAIN}")
 
 print()
 print("=" * 70)

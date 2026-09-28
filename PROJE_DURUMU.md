@@ -6659,3 +6659,106 @@ Her iki degisiklik de **korunuyor** ve commitleniyor:
 - emniyet testlerinin hicbiri kirilmadi (582 kontrol, hepsi geciyor).
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.41 son24 vs son25: yarisma oncesi son karar (2026-09-29)
+
+Kullanici iki aday ayar denedi ve yarismadan once son bir deneme yapacak.
+Endisesi: **hedef duzgun giderken taret geride kalir mi.**
+
+| | son24 | son25 |
+|---|---|---|
+| KP_YAW / KP_PITCH | 0.35 / 0.30 | **0.40 / 0.35** |
+| FEEDFORWARD_GAIN | 1.0 | **1.15** |
+| FIRE_CONFIRM_DELAY_SEC | 0.4 | 0.4 |
+
+Hizalama: son24 uyum 0.0099 derece, son25 0.0112 derece.
+
+#### 29.41.1 Sonuc tablosu
+
+| olcut | son24 | son25 | kazanan |
+|---|---|---|---|
+| sure | **12.7 sn** | 14.0 sn | son24 |
+| atis / imha | **3 / 3** | 5 / 3 | son24 |
+| **takip gecikmesi** | 0.14 sn (11 px) | **0.04 sn (3 px)** | **son25** |
+| **duz giden hedefte geride kalma** | **41.6 px** | **6.5 px** | **son25** |
+| **tolerans (12 px) icinde kalan kare** | 28% | **50%** | **son25** |
+| yon degisimi toparlanmasi | 1.04 sn | **0.57 sn** | **son25** |
+| yon degisimi tepe hatasi | 122 px | 116 px | esit |
+| salinim RMS | **0.57 derece** | 0.76 derece | son24 |
+| salinim frekansi | 1.07 Hz | 1.69 Hz | — |
+| dongu kazanci (1 Hz'de) | **0.84** | 0.95 | son24 |
+
+#### 29.41.2 Kullanicinin gozlemi DOGRU
+
+"son25'te hedef takip daha iyi gibiydi" degerlendirmesi olcumle
+dogrulandi ve tam da endise ettigi yerde:
+
+**Duz giden hedefte isaretli hata** (hedef >=0.5 saniye ayni yonde
+giderken, hedefin gidis yonune gore ortalama):
+
+    son24 : taret hedefin 41.6 piksel GERISINDE
+    son25 : taret hedefin  6.5 piksel gerisinde
+
+Yani yarismadaki "stabil hareketli hedefte arkada kalma" endisesi
+son24'te GERCEK (41.6 piksel, toleransin 3.5 kati), son25'te pratik
+olarak yok.
+
+**Sebep ve neden ileri besleme 1.0'dan buyuk olmali:** 29.38'de olculdu
+ki tahrik komut edilen yolun ancak %53-70'ini yapiyor. Ileri besleme 1.0
+iken hedefin hareketinin tamami KOMUT ediliyor ama yalnizca ucte ikisi
+GERCEKLESIYOR; aradaki fark kalici gecikmeye donusuyor. 1.15 bu eksigin
+bir kismini kapatiyor. Isaret DEGISMEDI (hala +6.5, yani hafif geride),
+yani asiri surus yok — 1.15 fazla degil, hatta tam telafi icin daha
+yuksek bile olabilirdi.
+
+**Onemli: ileri besleme dongu kararliligina girmez** (hedefin olculen
+hizindan turetilir, taretin acisindan degil). Yani 1.0 -> 1.15
+degisikligi salinimi ARTIRMAZ; salinimdaki artis KP'den geliyor.
+
+#### 29.41.3 Bedeli: salinim %33 artti
+
+son25'te salinim 0.57 -> 0.76 derece. Dongu kazanci 0.84 -> 0.95,
+kararlilik sinirina (1.00) yaklasildi.
+
+AMA operasyonel olcut bunu telafi ediyor: **toleransin icinde kalan kare
+orani %28'den %50'ye cikti.** Ates kapisini acan sey budur. Salinim
+artmasina ragmen nisan daha cok zaman tolerans icinde kaliyor, cunku
+kalici gecikme kalkinca hata sifir etrafinda salinmaya basladi (son24'te
+41 piksel kaymis bir merkez etrafinda saliniyordu).
+
+#### 29.41.4 Atis sayisi farki (3 vs 5) yaniltici
+
+son24 3 atisla, son25 5 atisla 3 imha aldi. Bu isabet oranindaki
+DOGAL DEGISKENLIK: ayni ayarla olculen oranlar %33 (son22), %60 (son21),
+%100 (son23, son24). Uc atislik bir ornekle iki ayari ayirt etmek
+istatistiksel olarak mumkun degil.
+
+Takip olcutleri ise yuzlerce kareden hesaplaniyor ve aralarindaki fark
+(gecikme 3.5 kat, tolerans icinde kalma ~2 kat) gurultunun cok otesinde.
+**Karar takip olcutlerine gore verilmeli.**
+
+#### 29.41.5 KARAR: son25 degerleri
+
+`KP_YAW = 0.40`, `KP_PITCH = 0.35`, `FEEDFORWARD_GAIN = 1.15`
+commitlendi. Gerekce: kullanicinin yarisma endisesi tam olarak "duzgun
+giden hedefte geride kalma" ve bu olcutte fark 41.6 -> 6.5 piksel.
+
+**Uyari — sicaklik bagimliligi:** 29.38'de olculdu ki tahrik, uzun
+kullanimdan sonra komutun %70 yerine %53'unu yapiyor. Etkin dongu
+kazanci = KP x bu oran. Yani yarismada motorlar isindikca sistem
+KENDILIGINDEN daha kararli ama daha gecikmeli hale gelir. KP 0.40 bu
+yuzden dinlenmis sistemde sinira yakin, isinmis sistemde guvenli.
+Salinim sahada rahatsiz ederse ilk denenecek KP 0.35'e donmek (ileri
+beslemeyi 1.15'te BIRAKARAK) -- gecikmeyi ileri besleme tasidigi icin
+kazanimin cogu korunur.
+
+#### 29.41.6 Testler ozellik testine cevrildi
+
+Dort test `FEEDFORWARD_GAIN == 1.0` ve `KP_YAW == 0.35` diye SABIT DEGER
+kilitliyordu; olcumle degisen degerleri kilitlemek testin isi degil.
+Artik OZELLIK sinaniyor: ileri besleme >= 1.0 (ve <= 1.5), kazanc
+kararlilik siniri altinda, ondeleme ve tolerans yerinde.
+
+Test: **584 kontrol, hepsi geciyor.**
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**

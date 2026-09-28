@@ -626,8 +626,8 @@ SPOTTER_PITCH_OFFSET = 0.0
 # kapatiyor. Kapanma zaman sabiti 1/Kv = 0.19 sn.
 # Sisirse yavas gelirse merdiven: 0.35 -> 0.45 -> 0.50. Ayarlar
 # sekmesinden canli denenebilir.
-KP_YAW = 0.35
-KP_PITCH = 0.3
+KP_YAW = 0.4
+KP_PITCH = 0.35
 
 # --- İleri besleme (feedforward) ---
 # Saf oransal denetim hareketli hedefte kalıcı olarak geride kalır. Bu terim
@@ -673,7 +673,7 @@ KP_PITCH = 0.3
 # o %20'nin bedeli kucuktu; KP 0.35'e inince ayni %20 kalici gecikmeye
 # donustu:  gecikme = (1-g)/Kv = 0.2/5.25 = 0.038 sn.
 # 1.0 ile bu terim TAMAMEN sifirlaniyor.
-FEEDFORWARD_GAIN = 1.0
+FEEDFORWARD_GAIN = 1.15
 
 # Duyarga gecikmesi (saniye): kamera + çıkarım + açı raporu + motor tepkisi.
 # EKRAN KAYDINDAN ÖLÇÜLDÜ: hedef sabit hızla giderken kalan piksel hatası
@@ -1577,7 +1577,7 @@ FIRE_CONFIRM_BASELINE_FRAMES = 20   # taban oranin olculdugu pencere (kare)
 # mermi, roleye gore ~0.2 sn (FIRE_SERVO_LEG_SEC) daha gec cikiyor. Pencere
 # o gecikmeyi de kapsamali, yoksa patlamamis balon sayimi erken baslar ve
 # "balon hala orada" yanlisligi geri gelir. Role moduna donulurse 0.4'e cek.
-FIRE_CONFIRM_DELAY_SEC = 0.45
+FIRE_CONFIRM_DELAY_SEC = 0.4
 
 # 'tekrar ates' istendigi halde ates kilidi ARDISIK bu kadar karede izin
 # vermezse hedef birakilir.
