@@ -6310,3 +6310,96 @@ baglanti koparsa bu koruma devreye girmez; Pi'de yalnizca watchdog var
 (komut akisi kesilirse taret durur). Mekanik emniyet kritikse Pi tarafina
 da sert bir aci siniri konabilir -- `motor_fire_module.py` degisikligi
 olur, kullanicinin yuklemesi gerekir.
+
+### 29.37 son21: en iyi kosum + "motorlar yorgun muydu" sorusu (2026-09-28)
+
+Kaynak: `aşama2son21.mp4` (494 kare, **16.43 sn**) +
+`enkoder_20260928_185341.csv`. Hizalama uyum hatasi 0.0149 derece.
+Kod 29.36'daki commitli hal.
+
+**3 IMHA, 5 atis, ~15.4 saniye** — olculen en iyi sonuc.
+
+| olcut | deger |
+|---|---|
+| kilit -> ilk atis (Drone) | **1.10 sn** |
+| kilit -> ilk atis (Fuze 1) | **1.47 sn** |
+| isabet orani | **3/5 = %60** (olculen en yuksek) |
+| takip gecikmesi | 0.14 sn (16 px), hedef 1.66 derece/sn |
+| salinim RMS | 0.46 derece (32 px) |
+| yon degisimi toparlanmasi | 0.68 sn, tepe hata 131 px |
+
+#### 29.37.1 "Motorlari uzun suredir kullaniyordum, sebebi o olabilir mi?"
+
+Kullanicinin hipotezi olculdu. Yon degisiminde kaybedilen hareket:
+
+| kosum | saat | kaybedilen hareket | kayip sure |
+|---|---|---|---|
+| son19 | 01:27 | 0.86 derece (61 px) | 0.21 sn |
+| **son20** | **01:50 (uzun kullanim sonu)** | **1.91 derece (136 px)** | **0.45 sn** |
+| **son21** | **18:53 (dinlenmis)** | **0.49 derece (35 px)** | **0.11 sn** |
+
+Yon dogru: dinlenmis sistemde kayip dortte bire inmis. **Ama bu kanit
+zayif** — son21'de olculebilen yalnizca 1 yon degisimi olayi var,
+son20'de 2. Bu sayilarla "sicaklik sebep" demek olcumun tasiyabilecegi
+yukun otesinde.
+
+#### 29.37.2 Daha onemlisi: olctugumuz sey saf BOSLUK degil
+
+29.33'te "boşluk" diye olculen sey (sayac ilerlerken enkoder kimildamiyor)
+IKI ayri olguyu birden kapsiyor: geometrik bosluk ve KACIRILAN ADIM.
+Ayirt etmek icin fark'in (enkoder - sayac) kosum boyunca NET kaymasina
+bakildi — bosluk salinir ve basa doner, kacirilan adim kalicidir:
+
+| kosum | bas fark | son fark | **NET kayma** | tepe-tepe |
+|---|---|---|---|---|
+| son10 | -0.03 | -0.74 | **-0.71** | 5.16 |
+| son17 | +0.63 | -0.07 | **-0.70** | 5.88 |
+| son19 | -0.20 | -1.28 | **-1.08** | 6.06 |
+| son20 | +0.93 | +2.39 | **+1.47** | 7.23 |
+| son21 | +0.13 | +3.38 | **+3.25** | 6.36 |
+
+**Her kosumda adim sayaci ile enkoder 0.7-3.3 derece KALICI olarak
+ayrisiyor.** Yani sistem her turda birkac derecelik adim kaybediyor ve
+bu geri gelmiyor.
+
+Bunun onemi: **enkoder tam da bunu yutuyor.** PC hatayi enkoderden
+hesapladigi icin kaybedilen adimlar kalici bir nisan sapmasina
+donusmuyor; sistem yalnizca biraz daha komut vererek telafi ediyor.
+Enkoder olmasaydi bu 3.3 derece dogrudan nisana yansirdi (235 piksel,
+balon yaricapinin 9 kati). Enkoderin ne ise yaradigi sorusunun somut
+cevabi budur.
+
+Enkoderin kapatamadigi tek sey, olu bolgeyi GECERKEN kaybedilen zaman;
+hicbir olcum motorsuz o yolu kat edemez.
+
+#### 29.37.3 Bosluk telafisi eklensin mi? — HAYIR, su an gerekmiyor
+
+son21'de yon degisimi basina kaybedilen hareket 0.49 derece / 0.11
+saniye. 29.33'te onerilen enkoder onayli telafinin beklenen kazanci
+"0.45 -> 0.25 sn" idi; simdiki deger zaten 0.11 saniye, yani kazanilacak
+alan kalmadi. Kullanicinin karari ("iyiyse eklemeyelim") olcumle
+ortusuyor. **Eklenmedi.**
+
+son20'deki 0.45 saniye tekrar ederse bu karar yeniden bakilmali; o zaman
+olcum zaten elimizde.
+
+#### 29.37.4 Geriye ne kaldi
+
+Yazilim tarafinda olculebilir bir darbogaz kalmadi: kilit-ates 1.1-1.5
+saniye, gecikme 16 piksel, salinim 32 piksel, hepsi 12 pikselllik
+toleransin mertebesinde ya da altinda.
+
+Kalan iki acik kalem ikisi de YAZILIM DISI ya da olcum bekliyor:
+
+1. **Isabet orani.** 5 atisin 3'u tuttu (%60, olculen en iyi). Onceki
+   olcumler (29.27) nisangah balonun ICINDEYKEN bile oranin ~%50 oldugunu
+   gostermisti. 15 metrede sabit balona 10 atislik bir deneme bu sayiyi
+   netlestirir; yuksek cikarsa sorun dinamikte, dusuk cikarsa besleme/
+   mermi tarafinda.
+2. **`FIRE_SHOT_LATENCY_SEC = 0.25` hala olculmedi.** Kayma kapisini
+   dogrudan iki kat siki tutuyor. Olcum: "Atesleme basarili" ile balonun
+   patladigi kare arasi (15 fps'te kare basina 67 ms).
+
+Kod degisikligi YOK; bu bolum olcum kaydidir.
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**
