@@ -6403,3 +6403,82 @@ Kalan iki acik kalem ikisi de YAZILIM DISI ya da olcum bekliyor:
 Kod degisikligi YOK; bu bolum olcum kaydidir.
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.38 son21 10-13 sn: geride kalma BOSLUK DEGIL, TAHRIK GUCU (2026-09-28)
+
+Kullanicinin iki sorusu: (a) `FIRE_SHOT_LATENCY_SEC` olculdu mu, (b)
+10-13 saniyedeki geride kalma boşluktan mi.
+
+#### 29.38.1 FIRE_SHOT_LATENCY_SEC — HAYIR, olculmemisti
+
+Deger config'de duran, dogrulanmamis bir varsayim. Onceki raporlarda
+(29.23.1) "muhtemelen iki kat fazla" denmisti; o cikarim tek bir isabetli
+atistan yapilmis zayif bir akil yurutmeydi.
+
+Simdi ELDEKI KAYITLARDAN olculmeye calisildi (son17/18/21, tetik karesi
+-> balonun kirmizi alaninin cokme ani, 6 isabetli atis):
+
+| kosum | tetik | cokme | gecikme |
+|---|---|---|---|
+| son17 | 16.40 | 16.57 | 0.17 sn |
+| son18 | 3.47 | 3.73 | 0.27 sn |
+| son17 | 7.20 | 7.60 | 0.40 sn |
+| son21 | 2.00 | 2.53 | 0.53 sn |
+| son21 | 13.50 | 14.67 | 1.17 sn |
+| son21 | 5.30 | 7.10 | 1.80 sn |
+
+Medyan 0.53 sn, aralik 0.17-1.80. **Bu yayilma ile bir sabit
+belirlenemez.** Ustelik olculen sure yalnizca mermi ucusu degil; tetik
+dizisinin servo hareketi de (29.15'te 0.60 sn olculmustu) icinde. Yuksek
+uctaki degerler muhtemelen balonun kadraj disina cikmasindan.
+
+**Sonuc: 0.25 ne dogrulandi ne curutuldu; DEGISTIRILMEDI.** Guvenilir
+olcum ancak yuksek hizli kayitla ya da sabit hedefe kontrollu atisla
+yapilabilir.
+
+#### 29.38.2 B77 — 10-13 sn'deki geride kalma: tahrik komutun yarisini yapiyor
+
+Kullanicinin isaret ettigi pencere 50 Hz'de sayac/enkoder yan yana
+okundu:
+
+| pencere | sayac yolu | enkoder yolu | gerceklesen |
+|---|---|---|---|
+| 10.08 - 11.88 | -2.36 derece | -1.12 derece | %47 |
+| 11.98 - 12.35 | +2.85 derece | +1.14 derece | %40 |
+| 12.44 - 13.18 | +1.80 derece | +1.18 derece | %65 |
+
+**Bu bosluk DEGIL.** Bosluk yon degisiminde BIR KEZ sabit bir miktar
+kaybettirir; burada kayip SUREKLI ve duz giderken de var.
+
+Olcum tum kosumlara genisletildi (kosum penceresinde mutlak yol toplami):
+
+| kosum | komut yolu | gerceklesen yol | oran |
+|---|---|---|---|
+| son17 (00:34) | 72.9 derece | 47.2 derece | **%65** |
+| son19 (01:27) | 104.5 derece | 63.4 derece | **%61** |
+| **son20 (01:50, uzun kullanim sonu)** | 66.2 derece | 35.1 derece | **%53** |
+| **son21 (18:53, dinlenmis)** | 62.8 derece | 43.8 derece | **%70** |
+
+**Taret komut edilen yolun ancak %53-70'ini yapiyor** — ve oran gece
+seansi ilerledikce dusuyor (%65 -> %61 -> %53), dinlendikten sonra
+%70'e cikiyor.
+
+**Kullanicinin "motorlari uzun suredir kullaniyordum" hipotezi bu
+olcumle destekleniyor** — ve bu, 29.37'deki 1-2 olaylik bosluk
+olcumunden cok daha saglam bir temel (tum kosum boyunca yol toplami).
+Tablo, sabit geometrik bir bosluktan cok, yuk altinda adim kaybeden bir
+surucuye isaret ediyor (isindikca tork dusmesi).
+
+**Yazilim bunu telafi EDEMEZ**, cunku kayip tork kaynakli; PC zaten
+enkoderden hatayi gorup daha fazla komut vererek ustunu ortuyor (29.37.2:
+kalici ayrisma 0.7-3.3 derece ve enkoder bunu yutuyor). Yapilabilecek
+sey surucu tarafinda: **akim ayari ve sogutma**. Surucu isinip akimi
+kistiginda oran dogrudan duser.
+
+Ikincil etki: etkin dongu kazanci `KP x oran`. Oran %53-70 arasinda
+oynadigi icin etkin kazanc da kosumdan kosuma ~%30 degisiyor; sistemin
+bazi seanslarda "daha tembel" hissettirmesinin olculmus sebebi budur.
+
+Kod degisikligi YOK; bu bolum olcum kaydidir.
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**
