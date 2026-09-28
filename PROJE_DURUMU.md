@@ -6482,3 +6482,104 @@ bazi seanslarda "daha tembel" hissettirmesinin olculmus sebebi budur.
 Kod degisikligi YOK; bu bolum olcum kaydidir.
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.39 son21 10-13 sn: zaman butcesi ve nerede gelistirme payi var (2026-09-28)
+
+Kullanicinin sorusu: DINLENMIS motorlu kosumda (son21), hedefler arasi
+gecis ve yon degisiminde daha hizli tepki verebilir miyiz.
+
+Pencere kare kare cikarildi (kamera karesi basina bir satir). 9.87-13.47
+saniye arasi tam zaman butcesi:
+
+| pencere | sure | ne oluyor |
+|---|---|---|
+| 9.93 - 11.20 | **1.27 sn** | ates kapisi KAPALI |
+| 11.27 | — | **ATIS 2** |
+| 11.27 - 12.53 | **1.26 sn** | imha dogrulama penceresi |
+| 12.60 - 13.40 | **0.80 sn** | ates kapisi KAPALI |
+| 13.47 | — | **ATIS 3** |
+
+Yani atis basina dongu: ~1.3 sn dogrulama + ~1.0 sn kapali kapi.
+
+#### 29.39.1 Kapali kapinin ICINDE ne var
+
+Engelleme sebepleri kare kare okundu (toplam 2.07 sn kapali):
+
+| sebep | sure | azaltilabilir mi |
+|---|---|---|
+| nisan tolerans DISINDA | 1.41 sn | **HAYIR** (asagida) |
+| **kayma kapisi, nisan tolerans ICINDEYKEN** | **0.66 sn** | kismen |
+
+Ikinci satir olculen tek "bosa gecen" kalem:
+
+    10.33-10.73 : hata  5, 7, 6, -2 px | kayma 16/12, 24/12, 22/12
+    12.87-13.00 : hata -0, 7 px        | kayma 20/12, 13/12
+    13.33-13.40 : hata -3 px           | kayma 29/12
+
+#### 29.39.2 Tolerans disinda kalan 1.41 saniye NEDEN azaltilamaz
+
+Ayni pencerede hedefin dunya acisi cozumlendi (5 karelik kayan ortalama
+= gercek hareket, kalan = tespit gurultusu):
+
+| bilesen | RMS |
+|---|---|
+| hedefin toplam acisal degisimi | 0.842 derece = **60 px** |
+| **yumusak bilesen (GERCEK hareket)** | 0.832 derece = **59 px** |
+| yuksek frekansli artik (tespit gurultusu) | 0.075 derece = **5 px** |
+| taretin kendi yuksek frekansli artigi | 0.026 derece = **2 px** |
+
+**Hedef gercekten +-60 piksel salinıyor; tespit gurultusu yalnizca 5
+piksel.** Yani daha fazla SUZME ise yaramaz — gercek bir sinyali
+geciktirmekten baska bir sey yapmaz. Taretin kendi artigi (2 px) hedefin
+gurultusundan kucuk, yani denetleyici zaten suzuyor.
+
+Nisan hatasi bu pencerede RMS 30 piksel, karelerin %44'u tolerans icinde.
+60 pikselllik gercek hedef hareketine karsi 30 piksel artik hata, dongu
+bant genisliginin sinirida oldugu anlamina gelir. Daha fazla bant
+genisligi = daha yuksek KP; ama KP zaten 29.29'da olculen kararlilik
+siniri (olu zaman 0.25 sn) nedeniyle tavanda. Kullanici bunu bagimsiz
+dogruladi: KP'yi 0.5/0.45'e cikardiginda imha 3'ten 1'e dustu.
+
+**Sonuc: bu 1.41 saniye donguyun fiziksel siniri. Tek gercek kaldirac
+OLU ZAMANI dusurmek** (daha hizli kamera / daha hizli cikarim); o zaman
+kararlilik siniri yukselir ve KP artirilabilir.
+
+#### 29.39.3 Kayma kapisi denendi ve GERI ALINDI
+
+`FIRE_MAX_ERROR_DRIFT_PIXELS` 12 -> 18 denendi. Sonuc:
+- alti engelleme aninin yalnizca **ikisi** kurtuluyor (16 ve 13 px),
+- ama 31. bolumdeki emniyet testi kirildi: 60 px/sn ile GERCEKTEN kayan
+  bir nisan da geciyor (60 x 0.25 = 15 < 18),
+- bu kosumda balon yaricapi 25-38 px; 12 (tetikteki sapma) + 18
+  (ucustaki kayma) = 30 px, en kucuk balonun yaricapini asiyor.
+
+Kucuk bir kazanc icin kucuk/uzak balonlarda iskalama riski alinmadi.
+**12'de birakildi.**
+
+Bu kalemi gercekten acmanin yolu `FIRE_SHOT_LATENCY_SEC`i OLCMEK: kayma
+tahmini o sayiyla dogrudan carpiliyor ve hala dogrulanmadi (29.38.1).
+Gercek gecikme 0.15 cikarsa ayni anlarin kaymasi 16->10, 24->14 olur ve
+**mevcut 12'lik sinirla bile alti andan ucu gecer** — hem de hicbir
+emniyet payi verilmeden.
+
+#### 29.39.4 Imha dogrulama penceresi (1.30 sn)
+
+`FIRE_CONFIRM_DELAY_SEC` (0.6) + `FIRE_CONFIRM_SEC` (0.7) = 1.30 sn;
+olculen 1.26 ile birebir. Kosumda 5 atis oldugu icin toplam ~6.5 saniye,
+yani 15.4 saniyelik turun **en buyuk tek blogu**.
+
+Gecikme kismi (0.6 sn) "patlamis balon bir sure daha gorunuyor" diye
+konmustu. 29.38.1'deki olcumde kirmizi alanin cokmesi 0.17-0.53 saniyede
+gerceklesti, yani 0.6 biraz comert olabilir — ama ayni olcumun yayilmasi
+buyuk oldugu icin kisaltmak YANLIS IMHA riskini artirir. Bu bir takas;
+DEGISTIRILMEDI, karar kullanicinin.
+
+#### 29.39.5 Hedefler arasi gecis
+
+Olculdu: imha 1 -> sonraki kilit **0.00 sn** (ayni kare), imha 2 ->
+sonraki kilit **0.37 sn**. Gecislerde kayip yok; bu tarafta yapilacak
+bir sey gorunmuyor.
+
+Kod degisikligi YOK.
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**

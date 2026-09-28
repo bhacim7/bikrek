@@ -1426,6 +1426,27 @@ FIRE_SHOT_LATENCY_SEC = 0.25
 # sonra esik de gercek gurultu seviyesine gore secildi: egim kestiricisinin
 # p90 gurultusu 0.6 sn'lik pencerede ~11 px, salinyan taretinki 15+ px.
 # 14 px ikisini ayiriyor. Balon yaricapi 15 metrede ~15 px.
+# 12'DE BIRAKILDI — 18 DENENDI VE GERI ALINDI (2026-09-28, 29.39).
+#
+# son21'in 9.9-13.6 saniyesi kare kare cikarildi (kullanicinin isaret
+# ettigi pencere). Ates kapisinin kapali kaldigi 2.07 saniyenin
+# 0.66 saniyesinde nisan TOLERANS ICINDEYDI ve engelleyen tek sey bu
+# kapiydi (olculen kayma degerleri: 16, 24, 22, 20, 13, 29 px).
+#
+# Sinir 18'e cikarilinca o alti anin yalnizca IKISI kurtuluyor (16 ve 13)
+# ama 31. bolumdeki emniyet testi kirildi: 60 px/sn ile GERCEKTEN kayan
+# bir nisan da gecmeye basliyor (60 x 0.25 = 15 < 18). Bu kosumda balon
+# yaricapi 25-38 piksel; 12 (tetikteki sapma) + 18 (ucustaki kayma) = 30
+# piksel, en kucuk balonun yaricapini asiyor.
+#
+# Yani 0.66 saniyelik kazanc, kucuk/uzak balonlarda iskalama riskiyle
+# takas edilmeden alinamiyor. TAKAS YAPILMADI.
+#
+# Bu kalemi gercekten acmanin yolu `FIRE_SHOT_LATENCY_SEC`i OLCMEK:
+# kayma tahmini o sayiyla dogrudan carpiliyor ve o sayi hala
+# dogrulanmadi (29.38.1: eldeki kayitlardan 0.17-1.80 sn, yayilma cok
+# buyuk). Gercek gecikme 0.15 cikarsa ayni anlarin kaymasi 16->10,
+# 24->14 olur ve mevcut 12'lik sinirla bile cogu gecer.
 FIRE_MAX_ERROR_DRIFT_PIXELS = 12
 # Kaymayi olcmek icin kullanilan pencere (saniye). Nisan hatasina EKSEN
 # BASINA en kucuk kareler dogrusu uydurulup EGIMI alinir.

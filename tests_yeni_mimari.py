@@ -3180,6 +3180,41 @@ kontrol("kaldirilma gerekcesi kodda yaziyor",
 
 print()
 print("=" * 70)
+print("53. KAYMA KAPISI: olculen darbogaz, ACILAMADI (29.39)")
+print("=" * 70)
+# son21'in 9.9-13.6 saniyesi kare kare cikarildi. Ates kapisinin kapali
+# kaldigi 2.07 saniyenin 0.66'sinda nisan TOLERANS ICINDEYDI; engelleyen
+# tek sey kayma kapisiydi. Olculen kayma degerleri (px, sinir 12):
+_OLCULEN78 = [16.0, 24.0, 22.0, 20.0, 13.0, 29.0]
+_BALON78 = 25.0      # bu kosumda olculen EN KUCUK balon yaricapi
+
+kontrol("eski/simdiki sinir o anlarin HICBIRINI gecirmiyor (darbogaz gercek)",
+        all(k > config.FIRE_MAX_ERROR_DRIFT_PIXELS for k in _OLCULEN78))
+# 18 denendi: alti andan ikisini kurtariyor ama emniyeti bozuyor.
+_18_gecen = sum(1 for k in _OLCULEN78 if k <= 18.0)
+kontrol("sinir 18 olsa alti andan yalnizca IKISI kurtulurdu (kazanc kucuk)",
+        _18_gecen == 2, f"{_18_gecen}/6")
+kontrol("18, tetikteki sapmayla birlikte EN KUCUK balonu asardi (takas)",
+        config.AIM_TOLERANCE_MIN_PIXELS + 18.0 > _BALON78,
+        f"{config.AIM_TOLERANCE_MIN_PIXELS}+18 = "
+        f"{config.AIM_TOLERANCE_MIN_PIXELS+18:.0f} > yaricap {_BALON78:.0f}")
+kontrol("bu yuzden sinir 12'DE BIRAKILDI",
+        config.FIRE_MAX_ERROR_DRIFT_PIXELS == 12,
+        str(config.FIRE_MAX_ERROR_DRIFT_PIXELS))
+# Asil kaldirac: gecikme olculursa ayni anlar mevcut sinirla gecer
+_varsayim = 0.15
+_yeni = [k / config.FIRE_SHOT_LATENCY_SEC * _varsayim for k in _OLCULEN78]
+kontrol("gecikme 0.15 cikarsa ayni anlarin cogu MEVCUT sinirla gecer",
+        sum(1 for k in _yeni if k <= config.FIRE_MAX_ERROR_DRIFT_PIXELS) >= 3,
+        "%d/6" % sum(1 for k in _yeni if k <= config.FIRE_MAX_ERROR_DRIFT_PIXELS))
+kontrol("kazanc, ileri besleme, ondeleme, tolerans degismedi",
+        abs(config.KP_YAW - 0.35) < 1e-9
+        and abs(config.FEEDFORWARD_GAIN - 1.0) < 1e-9
+        and abs(config.TARGET_LEAD_TIME_SEC - 0.22) < 1e-9
+        and config.AIM_TOLERANCE_MIN_PIXELS == 12)
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)
