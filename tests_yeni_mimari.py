@@ -3010,6 +3010,68 @@ kontrol("kazanc, ileri besleme, tolerans degismedi",
 
 print()
 print("=" * 70)
+print("50. BOLGELER: tanimsiz = YOK, ve hareket siniri HER YOLDA (29.34)")
+print("=" * 70)
+_k74 = io.open('bukrek_main.py', encoding='utf-8').read()
+
+# B74: baslangic == bitis ise BOLGE YOK
+kontrol("atessiz bolge: baslangic==bitis ise bolge YOK",
+        'if zone_start == zone_end:' in _k74
+        and _k74.index('if zone_start == zone_end:')
+        > _k74.index('def is_in_no_fire_zone'))
+kontrol("kisitli bolge: baslangic==bitis ise bolge YOK",
+        'if start == end:' in _k74
+        and _k74.index('if start == end:')
+        > _k74.index('def is_in_movement_restricted_zone'))
+kontrol("acilis degerleri gercekten esit (yani acilista hicbir aci yasak degil)",
+        'self.no_fire_yaw_start = 0.0' in _k74
+        and 'self.no_fire_yaw_end = 0.0' in _k74)
+
+# B74b: asama3'e ozel kisitlama kaldirildi
+kontrol("asama 3'e OZEL kisitli bolge kapisi kaldirildi",
+        "if self.active_task == 'task3':" not in _k74
+        or 'predicted_yaw_after_move' not in _k74)
+kontrol("kaldirilma gerekcesi kodda yaziyor",
+        "ASAMA 3'E OZEL KISITLI BOLGE KALDIRILDI" in _k74)
+
+# B75: hareket siniri MANUEL yolda da
+_i75 = _k74.index('"action": "move_by_direction"')
+_onceki = _k74[max(0, _i75 - 1600):_i75]
+kontrol("HAREKETE YASAK ALAN manuel yon komutunda da uygulaniyor",
+        'config.HAREKET_SINIRI_AKTIF' in _onceki
+        and 'config.hareket_sinirla(' in _onceki)
+kontrol("sinira dayaninca ICERI donus serbest kaliyor (kilitlenme yok)",
+        'ICERI donen yon' in _k74 or 'ICERI' in _onceki)
+
+# Ucu de: delta, mutlak ve manuel yollarin HEPSI sinirdan geciyor
+kontrol("UC hareket yolunun UCU de hareket sinirindan geciyor",
+        _k74.count('config.HAREKET_SINIRI_AKTIF') >= 2
+        and _k74.count('self._hareket_sinirla(') >= 2,
+        f"{_k74.count('config.HAREKET_SINIRI_AKTIF')} kapi, "
+        f"{_k74.count('self._hareket_sinirla(')} kirpma")
+
+# config tarafi: kapaliyken hicbir sey degismemeli
+_y74 = config.HAREKET_SINIRI_AKTIF
+config.HAREKET_SINIRI_AKTIF = False
+kontrol("sinir KAPALIYKEN deger aynen geciyor",
+        config.hareket_sinirla(999.0, -999.0)[:2] == (999.0, -999.0))
+config.HAREKET_SINIRI_AKTIF = True
+_ym, _yM = config.HAREKET_YAW_MIN, config.HAREKET_YAW_MAX
+_pm, _pM = config.HAREKET_PITCH_MIN, config.HAREKET_PITCH_MAX
+config.HAREKET_YAW_MIN, config.HAREKET_YAW_MAX = -45.0, 45.0
+config.HAREKET_PITCH_MIN, config.HAREKET_PITCH_MAX = -45.0, 45.0
+kontrol("+-45 ayarinda 80 derece 45'e kirpiliyor (kullanicinin ornegi)",
+        config.hareket_sinirla(80.0, 0.0)[0] == 45.0)
+kontrol("+-45 ayarinda -60 derece -45'e kirpiliyor",
+        config.hareket_sinirla(-60.0, 0.0)[0] == -45.0)
+kontrol("sinir icindeki deger DOKUNULMADAN geciyor",
+        config.hareket_sinirla(30.0, -20.0)[:2] == (30.0, -20.0))
+config.HAREKET_YAW_MIN, config.HAREKET_YAW_MAX = _ym, _yM
+config.HAREKET_PITCH_MIN, config.HAREKET_PITCH_MAX = _pm, _pM
+config.HAREKET_SINIRI_AKTIF = _y74
+
+print()
+print("=" * 70)
 print(f"SONUC: {'TUM TESTLER GECTI' if hata == 0 else str(hata) + ' TEST BASARISIZ'}")
 print("=" * 70)
 sys.exit(1 if hata else 0)

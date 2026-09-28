@@ -6141,3 +6141,74 @@ karari olmali.
 Kod degisikligi YOK; bu bolum olcum kaydidir.
 
 **Raspberry Pi tarafi: DEGISIKLIK YOK.**
+
+### 29.34 Bolgeler: tanimsiz = YOK, hareket siniri HER YOLDA (2026-09-28)
+
+Kullanicinin uc istegi ve bir saha hatasi.
+
+#### 29.34.1 B74 — Tanimsiz bolge "sifir genislikte bolge" sayiliyordu
+
+`is_in_no_fire_zone` ve `is_in_movement_restricted_zone`, baslangic ile
+bitis ESITKEN bunu "tam o acida yasak" diye yorumluyordu. Acilis
+degerleri ikisinde de 0.0 oldugu icin:
+
+- sistem ACILISTA tam 0.0 derecede ATES ETMIYORDU,
+- Asama 3'te tam 0.0 derecede yaw hareketi engelleniyordu,
+- "Ateşsiz Bölgeyi Temizle" dugmesi ikisini 0.0 yaptigi icin bolgeyi
+  gercekte TEMIZLEMIYOR, sifir genislikte biri birakiyordu.
+
+Duzeltme: `baslangic == bitis` ise bolge YOK sayilir. Operator bir bolge
+TANIMLAMADAN hicbir aci yasak degil.
+
+#### 29.34.2 Asama 3'e ozel kisitli bolge kaldirildi
+
+Kullanici istegi. Hareket kisitlamasi artik TEK yerden geliyor:
+"Harekete Yasak Alan" (`config.HAREKET_SINIRI_AKTIF` + `hareket_sinirla`).
+O kapi tum gorevlerde ve tum komut yollarinda ayni sekilde uygulanir.
+Asamaya gore degisen ikinci bir kisitlama, hangi kuralin gecerli oldugunu
+belirsiz hale getiriyordu.
+
+#### 29.34.3 B75 — Hareket siniri MANUEL yolda uygulanmiyordu
+
+**Sahada gorulen:** kullanici yaw sinirini -30/+30 yapip uyguladi, taret
+yine -60 ve +80 derecelere donebildi.
+
+Sebep bulundu: PC'den Pi'ye giden UC hareket yolu var ve sinir yalnizca
+IKISINDE vardi:
+
+| yol | komut | sinir |
+|---|---|---|
+| otonom takip | `set_proportional_angles_delta` | VARDI |
+| tiklama / gozcu yonelmesi | mutlak `set_angles` | VARDI |
+| **manuel ok tuslari** | **`move_by_direction`** | **YOKTU** |
+
+`move_by_direction` Pi'ye "su yone su kadar git" der; PC kirpmazsa sinir
+hic uygulanmaz. Ayarin kendisi dogru uygulanmisti (kaydirici birakildigi
+anda `config`'e yaziliyor) — kacan yalnizca bu yoldu.
+
+Duzeltme: manuel yon komutu gonderilmeden once varilacak aci
+`hareket_sinirla`'dan gecirilir; sinirin disina cikaracak eksenin yonu
+sifirlanir. **Iceri donen yon serbest birakilir** ki taret sinira yapisip
+kilitlenmesin.
+
+#### 29.34.4 Arayuz aciklamasi
+
+"Harekete Yasak Alan" sekmesindeki aciklama, kullanimin adim adim
+anlatildigi bir metinle degistirildi (kutu isaretlenmeden degerlerin
+hicbir sey yapmadigi, degerlerin canli uygulandigi, Kaydet'in yalnizca
+sonraki acilis icin oldugu).
+
+#### 29.34.5 Degisiklikler
+
+| dosya | ne | neden |
+|---|---|---|
+| `bukrek_main.py` | `is_in_no_fire_zone`: start==end -> bolge yok | B74 |
+| `bukrek_main.py` | `is_in_movement_restricted_zone`: start==end -> bolge yok | B74 |
+| `bukrek_main.py` | asama3'e ozel kisitli bolge blogu kaldirildi | kullanici istegi |
+| `bukrek_main.py` | `_send_manual_direction`: hareket siniri uygulandi | B75 |
+| `ayarlar_penceresi.py` | Harekete Yasak Alan aciklamasi | kullanim netligi |
+| `tests_yeni_mimari.py` | 50. bolum (12 kontrol) | uc yolun da sinirdan gectigi, +-45 ornegi dahil |
+
+Test: **557 kontrol, hepsi geciyor.**
+
+**Raspberry Pi tarafi: DEGISIKLIK YOK.**

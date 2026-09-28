@@ -2227,6 +2227,29 @@ class HavaSavunmaArayuz(QWidget):
         if not (force or degisti or canlilik_zamani):
             return
 
+        # HAREKETE YASAK ALAN MANUEL YOLDA DA GECERLI (29.34 B75).
+        # BU YOL ATLANMISTI: `set_proportional_angles_delta` ve mutlak
+        # `set_angles` sinirdan geciyordu ama `move_by_direction` gecmiyordu.
+        # Sahada gorulen sonuc: kullanici -30/+30 sinirini uygulayip ok
+        # tuslariyla tareti cevirdiginde taret -60 ve +80 derecelere kadar
+        # gidebiliyordu. Pi bu komutu "su yone su kadar git" diye yurutur,
+        # yani PC kirpmazsa sinir hic uygulanmaz.
+        if config.HAREKET_SINIRI_AKTIF and (yaw_dir != 0 or pitch_dir != 0):
+            _adim = self.manual_step_size
+            _hy, _hp, _ = config.hareket_sinirla(
+                self.current_yaw_angle + yaw_dir * _adim,
+                self.current_pitch_angle + pitch_dir * _adim)
+            # Sinirin disina cikaracak eksen durdurulur; ICERI donen yon
+            # serbest kalir ki taret sinira yapisip kilitlenmesin.
+            if yaw_dir != 0 and abs(_hy - self.current_yaw_angle) < 1e-6:
+                yaw_dir = 0
+            if pitch_dir != 0 and abs(_hp - self.current_pitch_angle) < 1e-6:
+                pitch_dir = 0
+            if yaw_dir == 0 and pitch_dir == 0:
+                self._update_status_label(
+                    "Uyarı: Harekete yasak alan sınırındasınız, bu yönde "
+                    "hareket engellendi.")
+
         hareket_var = yaw_dir != 0 or pitch_dir != 0
         self.send_command_to_rpi({
             "action": "move_by_direction",
@@ -3340,6 +3363,16 @@ class HavaSavunmaArayuz(QWidget):
     def is_in_no_fire_zone(self, current_yaw_angle):
         zone_start = self.no_fire_yaw_start
         zone_end = self.no_fire_yaw_end
+
+        # TANIMSIZ BOLGE = BOLGE YOK (2026-09-28, 29.34 B74).
+        # Baslangic ve bitis esitken eski kod bunu "sifir genislikte bir
+        # bolge" sayiyordu; varsayilan ikisi de 0.0 oldugu icin sistem
+        # ACILISTA tam 0.0 derecede ATES ETMIYORDU. Operator bir atessiz
+        # bolge TANIMLAMADAN hicbir aci yasak olmamali. "Temizle" dugmesi
+        # de ikisini 0.0 yaptigi icin bolgeyi gercekte temizlemiyordu.
+        if zone_start == zone_end:
+            return False
+
         normalized_yaw = (current_yaw_angle + 180) % 360 - 180
 
         if zone_start <= zone_end:
@@ -3353,6 +3386,12 @@ class HavaSavunmaArayuz(QWidget):
         is_within_zone = False
         start = self.movement_restricted_yaw_start
         end = self.movement_restricted_yaw_end
+
+        # TANIMSIZ BOLGE = BOLGE YOK (29.34 B74), atessiz bolgedeki ile
+        # ayni hata: varsayilan start=end=0 iken "tam 0.0 derecede hareket
+        # yasak" anlamina geliyordu.
+        if start == end:
+            return False
 
         target_yaw_angle = target_yaw_angle % 360
         if target_yaw_angle < 0:
@@ -3937,11 +3976,12 @@ class HavaSavunmaArayuz(QWidget):
         output_yaw = max(min(output_yaw, self.MAX_OUTPUT_DEGREE), -self.MAX_OUTPUT_DEGREE)
         output_pitch = max(min(output_pitch, self.MAX_OUTPUT_DEGREE), -self.MAX_OUTPUT_DEGREE)
 
-        if self.active_task == 'task3':
-            predicted_yaw_after_move = self.current_yaw_angle + output_yaw
-            if self.is_in_movement_restricted_zone(predicted_yaw_after_move):
-                output_yaw = 0.0
-                print("Uyarı: Hedef Yaw açısı kısıtlı hareket bölgesinde! Yaw hareketi engellendi.")
+        # ASAMA 3'E OZEL KISITLI BOLGE KALDIRILDI (29.34, kullanici istegi).
+        # Hareket kisitlamasi artik TEK yerden geliyor: "Harekete Yasak Alan"
+        # (`config.HAREKET_SINIRI_AKTIF` + `hareket_sinirla`). O kapi TUM
+        # gorevlerde ve TUM komut yollarinda ayni sekilde uygulanir; asamaya
+        # gore degisen ikinci bir kisitlama, hangi kuralin gecerli oldugunu
+        # belirsiz hale getiriyordu.
 
         # BOSLUK ENJEKSIYONU (29.11 B33): komut isareti bir onceki sifir-disi
         # komuta gore degistiyse o yonde bir kez bosluk kadar ek delta.

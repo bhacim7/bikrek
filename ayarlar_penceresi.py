@@ -440,11 +440,28 @@ class AyarlarPenceresi(QDialog):
         kutu = QGroupBox("Harekete Yasak Alan (çalışma sınırları)")
         k = QVBoxLayout(kutu)
         k.addWidget(_aciklama(
-            "Taret bu aralığın DIŞINA çıkmaz. Kısıtlı bölge bir dilimi "
-            "yasaklar; bu ise çalışılabilecek tüm aralığı sınırlar "
-            "(mekanik emniyet, kablo koruma). Gönderilen her açı komutu "
-            "bu aralığa kırpılır. VARSAYILAN KAPALI: kapalıyken sistem "
-            "bugünkü gibi davranır, hiçbir sınır uygulanmaz."))
+            "Taret bu aralığın DIŞINA çıkmaz — mekanik emniyet ve kablo "
+            "koruma için. Sınır TÜM görevlerde ve TÜM hareket yollarında "
+            "geçerlidir: otonom takip, nişangâha tıklama ve ok tuşlarıyla "
+            "manuel sürüş.
+
+"
+            "NASIL KULLANILIR — örnek, yaw ve pitch ±45° ile sınırlansın:
+"
+            "  1) 'Hareket sınırını uygula' kutusunu İŞARETLE. Kutu boşken "
+            "aşağıdaki değerler hiçbir şey yapmaz.
+"
+            "  2) En küçük Yaw = -45, En büyük Yaw = +45
+"
+            "  3) En küçük Pitch = -45, En büyük Pitch = +45
+"
+            "Değerler kaydırıcıyı bıraktığın anda CANLI uygulanır; alttaki "
+            "Kaydet yalnızca bir sonraki açılışta da geçerli olması içindir.
+
+"
+            "Taret sınıra dayandığında o yöndeki hareket durur ama İÇERİ "
+            "dönüş serbest kalır. VARSAYILAN KAPALI: kutu işaretli değilken "
+            "hiçbir sınır uygulanmaz."))
         self.hareket_aktif = QCheckBox("Hareket sınırını uygula")
         self.hareket_aktif.stateChanged.connect(self._hareket_uygula)
         k.addWidget(self.hareket_aktif)
